@@ -14,6 +14,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_real_ime_diagnostic_checkout_is_read_only_and_targets_main(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        pull_request = workflow.split("  pull_request:", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("      - main\n", pull_request)
+        self.assertIn("      - codex/serea-g4-final-integration-candidate-20261027\n", pull_request)
+        self.assertIn("  workflow_dispatch:\n", workflow)
+        self.assertIn("permissions:\n  contents: read\n", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
+
+        checkout_starts = list(re.finditer(r"(?m)^      - uses: actions/checkout@[^\n]*", workflow))
+        self.assertEqual(len(checkout_starts), 2)
+        for checkout in checkout_starts:
+            next_step = re.search(r"(?m)^      - ", workflow[checkout.end():])
+            stop = checkout.end() + next_step.start() if next_step else len(workflow)
+            self.assertIn("persist-credentials: false", workflow[checkout.start():stop])
+
     def test_personal_beta_identity_preflight_waits_for_stable_disposable_emulator(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
         self.assertIn('discovery_deadline=$((SECONDS + 60))', script)
@@ -550,11 +568,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
         self.assertIn("connectedIsolatedAndroidTest", script.read_text(encoding="utf-8"))
         self.assertNotIn("connectedDebugAndroidTest", script.read_text(encoding="utf-8"))
-        self.assertRegex(
-            workflow,
-            r"android/\*\|[^\n]*tools/run_android_process_death_harness\.sh[^\n]*android_changed=true",
-        )
-        self.assertIn("tools/prepare_isolated_instrumentation_target.sh", workflow)
+        self.assertIn("python3 tools/classify_android_changes.py", workflow)
+        self.assertIn('git diff --no-renames --name-only -z "$PR_BASE_SHA...$PR_HEAD_SHA"', workflow)
+        self.assertEqual(workflow.count("uses: actions/checkout@"), workflow.count("name: Verify exact checkout commit"))
+        self.assertEqual(2, workflow.count("python3 tools/verify_pr_merge_result.py"))
+        self.assertEqual(2, workflow.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
+        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha", workflow)
+        self.assertEqual(3, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
+        scope_helper = (ROOT / "tools/classify_android_changes.py").read_text(encoding="utf-8")
+        self.assertIn('"tools/"', scope_helper)
+        self.assertIn('".github/"', scope_helper)
         self.assertIn("Test Android update emulator guard with Mock ADB", workflow)
         self.assertIn("tools/test_android_update_compatibility_guard.sh", workflow)
         api35_campaign = (ROOT / "tools/run_android_api35_campaign.sh").read_text(encoding="utf-8")

@@ -20,11 +20,25 @@ git config --local push.default nothing
 git config --local serea.identityProfile codex
 git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
+git fetch origin main
+base_sha=$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')
+head_sha=$(git rev-parse --verify 'HEAD^{commit}')
+test "$(git rev-parse --verify 'HEAD^{commit}')" = "$head_sha"
+SEREA_EVENT_NAME=pull_request \
+SEREA_PR_BASE_SHA="$base_sha" \
+SEREA_PR_HEAD_SHA="$head_sha" \
 python3 tools/check_commit_identity.py
 ```
 
-Both `git var` commands must show `Codex <noreply@github.com>`. The history
-guard must pass before editing. Do not “fix” a mismatch by changing global or
+Both `git var` commands must show `Codex <noreply@github.com>`. The identity
+guard checks commits introduced by the explicit Base SHA → HEAD SHA range; it
+does not scan all reachable history. The command above fetches and resolves the
+Base and HEAD as commits, verifies that the selected HEAD is the checked-out
+HEAD, and checks only commits introduced after that Base. Use the exact Base
+and HEAD intended for review. Missing or malformed SHAs, unavailable commits,
+an unrelated history, or a HEAD mismatch fail closed. Running the checker
+without event scope is intentionally rejected with exit code 2. The guard must
+pass before editing. Do not “fix” a mismatch by changing global or
 system config. Inspect effective settings and their source without dumping
 credential-bearing remotes:
 
@@ -44,8 +58,9 @@ the stored value and `git var` before any commit. The preflight prints setting
 scope/source labels but redacts identity emails and remote URL values.
 
 Before every commit, run `python3 tools/git_preflight.py --mode commit`.
-After the commit, run `python3 tools/check_commit_identity.py`; it scans all
-reachable history, including the new HEAD, and reports only offending SHAs.
+After the commit, resolve the intended Base and new HEAD as above and rerun
+the event-scoped identity check; it validates the newly introduced range and
+reports only offending SHAs.
 
 Before pushing, fetch and review the base, then run an explicit-target check:
 
@@ -76,11 +91,11 @@ git config --show-origin --show-scope --get core.hooksPath
 ```
 
 The installer writes only repository-local `core.hooksPath`. The pre-commit
-hook runs commit preflight; the pre-push hook first runs the reachable-history
-identity guard and then checks the actual remote name, URL, pushed branch,
-local HEAD, and live remote HEAD. It rejects deletion records whose local
-object ID is all zeroes. Always run explicit commands too: hooks can be skipped
-or absent in another clone.
+hook runs commit preflight; the pre-push hook first validates commits
+introduced by each supplied pre-push ref range, then checks the actual remote
+name, URL, pushed branch, local HEAD, and live remote HEAD. It rejects deletion
+records whose local object ID is all zeroes. Always run explicit commands too:
+hooks can be skipped or absent in another clone.
 
 Hooks invoke `tools/run_python.sh`, which checks `python3`, then `python`, then
 the Windows `py -3` launcher for a working Python 3 interpreter. It passes the
@@ -108,6 +123,13 @@ git config --local serea.approvedName 'Your GitHub display name'
 git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
 python3 tools/git_preflight.py --mode commit
+git fetch origin main
+base_sha=$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')
+head_sha=$(git rev-parse --verify 'HEAD^{commit}')
+test "$(git rev-parse --verify 'HEAD^{commit}')" = "$head_sha"
+SEREA_EVENT_NAME=pull_request \
+SEREA_PR_BASE_SHA="$base_sha" \
+SEREA_PR_HEAD_SHA="$head_sha" \
 python3 tools/check_commit_identity.py
 ```
 
@@ -138,6 +160,13 @@ git config --local push.default nothing
 git config --local serea.identityProfile codex
 git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
+git fetch origin main
+$baseSha = git rev-parse --verify 'refs/remotes/origin/main^{commit}'
+$headSha = git rev-parse --verify 'HEAD^{commit}'
+if ((git rev-parse --verify 'HEAD^{commit}') -ne $headSha) { throw 'HEAD changed' }
+$env:SEREA_EVENT_NAME = 'pull_request'
+$env:SEREA_PR_BASE_SHA = $baseSha
+$env:SEREA_PR_HEAD_SHA = $headSha
 python tools/check_commit_identity.py
 python tools/git_preflight.py --mode commit
 ```

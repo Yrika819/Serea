@@ -26,7 +26,6 @@ jobs:
       name: serea-personal-beta
     permissions:
       actions: read
-      administration: read
       attestations: write
       checks: read
       contents: read

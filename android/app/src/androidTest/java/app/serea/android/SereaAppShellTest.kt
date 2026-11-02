@@ -1625,9 +1625,19 @@ class SereaAppShellTest {
                 compose.activity.chatViewModel.state.value.editorValue.selection)
             val startsBeforeRecreatedFocus = imeSnapshot().getStringArrayList("events").orEmpty()
                 .count { it.contains(" onStartInput restarting=") }
-            recreatedComposer.performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
+            // ActivityScenario recreation can leave a RESUMED Activity without Android window
+            // focus. A Compose-only RequestFocus does not reliably ask the system to create a
+            // fresh InputConnection in that state, so recover the window and use a real system
+            // touch before waiting for the new Test IME session.
+            ensureChatWindowFocus("after activity recreation")
+            tapComposerThroughSystemInput()
+            awaitComposerWindowFocus("after activity recreation")
             recreatedComposer.assertIsFocused()
             session = awaitTestImeSession(startsBeforeRecreatedFocus)
+            imeOperation("setSelection", session, selectionStart = 8, selectionEnd = 8)
+            awaitComposerImeState("R4-recreation-focus-restored", null) {
+                compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+            }
             imeOperation("commitText", session, "!")
             awaitComposerImeState("R4-recreation-insertion", null) {
                 compose.activity.chatViewModel.state.value.editorValue.let {

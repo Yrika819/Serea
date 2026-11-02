@@ -1,0 +1,20 @@
+G7 SQLite cross-architecture exact-head closure evidence
+
+Repository: Yrika819/Serea
+Run: https://github.com/Yrika819/Serea/actions/runs/40749231272 (attempt 3, SUCCESS)
+Source SHA: 00384eb6468214362435140c9a2d848fa2e0f12e
+Tree SHA: 10d07a8ec57d7f67fc94663c489347938cccbd58
+Previously unresolved direction: Intel DB -> macOS ARM64 open.
+
+All four exact-G7 directions passed:
+- Produce closed DB on macOS Intel x86_64 — job 123182727042 — SUCCESS.
+- Produce closed DB on macOS ARM64 — job 123182743251 — SUCCESS.
+- Open ARM64-produced DB on macOS Intel x86_64 — job 123182690038 — SUCCESS.
+- Open Intel-produced DB on macOS ARM64 — job 123182687879 — SUCCESS, runner 1000022879, started 2026-10-29T00:46:46Z, completed 2026-10-29T00:47:41Z.
+
+The final job asserted the exact source checkout, downloaded the Intel artifact, compiled the portability test on macOS ARM64, and ran `closed_serea_database_can_be_produced_or_consumed_cross_architecture`: 1 passed, 0 failed, ignored, measured, or filtered out. Its input Intel artifact is ID 12843411146 (`portable-db-intel`); output ARM64 validation artifact is ID 12843930249 (`portable-db-arm64`). The downloaded archives were independently inspected after upload:
+- Intel ZIP SHA-256 `a949aec7af20dcceb46e83f702b36fed2ac6194e43f8bb066b6d250ece73600b`.
+- ARM64 ZIP SHA-256 `d37cdb542c0543cacf197d84711f5a03f7dff33bb0ce17108c347f2be90b91f0`.
+- Both contain `portable.sqlite`, 626,688 bytes, SHA-256 `1a248d00016ed601c3c718e48389d3aec64804e0a2e48ab82cb7b33315fe5383`; local read-only `PRAGMA integrity_check` returned `ok` for both.
+
+Earlier runner-unassigned/cancelled attempts remain recorded in the ledger. This completed exact-G7 run attempt closes that evidence gap; it does not use G6 evidence. No source code or Required gate changed. This evidence does not change Personal Beta status (NO-GO).

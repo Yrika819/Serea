@@ -70,7 +70,7 @@ class ChatHttpE2ETest {
         val router = AdaptiveModelRouter(catalog)
         var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
         val usagePort = UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage,
-            attributionResolver = CatalogUsageAttributionResolver(catalog))
+            attributionResolver = CatalogUsageAttributionResolver(catalog, clock = { catalogNow }))
         // Router must be outside accounting so its explicit selectedModelId reaches the atomic reservation.
         val routedPort = RoutedModelChatPort(usagePort, router) { policy }
         activeVm = ChatViewModel(routedPort,

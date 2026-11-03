@@ -1575,9 +1575,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertFalse(any("android-emulator-runner" in step.get("uses", "") for step in aggregate["steps"]))
         self.assertEqual(aggregate["outputs"]["instrumentation"], "${{ steps.instrumentation.outputs.result }}")
         verification = next(step for step in aggregate["steps"] if step.get("id") == "instrumentation")["run"]
-        for required in ("API26_JOB_RESULT", "API35_JOB_RESULT", "--exact-count 105", "--required-count 103", "--additional-count 2", "process-death-status.txt", "data-isolation-status.txt"):
-            self.assertIn(required, verification)
-        self.assertIn('echo "result=FAIL" >> "$GITHUB_OUTPUT"', verification)
+        self.assertIn("verify_android_formal_aggregate.py", verification)
+        module = (ROOT / "tools/verify_android_formal_aggregate.py").read_text(encoding="utf-8")
+        for required in ("api26_result", "api35_result", "105", "skipped", "process-death-status.txt", "data-isolation-status.txt", "source_sha", "run_id"):
+            self.assertIn(required, module)
+        self.assertIn("result=PASS", module)
+        self.assertIn("result=FAIL", module)
 
     def test_wrong_emulator_api_level_fails_closed_as_not_run(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"

@@ -535,59 +535,20 @@ jobs:
           EXPECTED_BUILD_SHA: ${{ github.sha }}
           EXPECTED_RUN_ID: ${{ github.run_id }}
         run: |
-          set -euo pipefail
-          root='android/app/build/outputs/androidTest-results'
-          test -d "$root/api26" && test -d "$root/api35"
-          verify_api() {
-            local api="$1" job_result="$2" evidence="$root/api$1"
-            local provenance="$root/api$api/api${api}-build-provenance.txt"
-            test "$job_result" = success
-            test -s "$evidence/api-result.txt" && grep -Fxq PASS "$evidence/api-result.txt"
-            grep -Fx "source_sha=$EXPECTED_SOURCE_SHA" "$provenance"
-            grep -Fx "build_checkout_sha=$EXPECTED_BUILD_SHA" "$provenance"
-            grep -Fx "run_id=$EXPECTED_RUN_ID" "$provenance"
-            grep -Fx "artifact_producer=android-emulator-api$api" "$provenance"
-            grep -Eq '^target_sha256=[0-9a-f]{64}$' "$provenance"
-            grep -Eq '^test_sha256=[0-9a-f]{64}$' "$provenance"
-            grep -Fx 'target_package=app.serea.android.isolated' "$provenance"
-            grep -Fx 'test_package=app.serea.android.isolated.test' "$provenance"
-            producer_attempt="$(sed -n 's/^producer_attempt=//p' "$provenance")"
-            campaign_attempt="$(sed -n 's/^campaign_attempt=//p' "$evidence/build-provenance.txt")"
-            [[ "$producer_attempt" =~ ^[1-9][0-9]*$ && "$campaign_attempt" == "$producer_attempt" ]]
-            grep -Fx "source_checkout_sha=$EXPECTED_BUILD_SHA" "$evidence/build-provenance.txt"
-            grep -Fx "campaign_run_id=$EXPECTED_RUN_ID" "$evidence/build-provenance.txt"
-            grep -Fx "campaign_attempt=$producer_attempt" "$evidence/build-provenance.txt"
-            test -s "$evidence/instrumentation-status.txt" && grep -Fxq PASS "$evidence/instrumentation-status.txt"
-            test -s "$evidence/process-death-status.txt" && grep -Fxq PASS "$evidence/process-death-status.txt"
-            test -s "$evidence/data-isolation-status.txt" && grep -Fxq PASS "$evidence/data-isolation-status.txt"
-            test -s "$evidence/google-demo-ui-status.txt" && grep -Fxq PASS "$evidence/google-demo-ui-status.txt"
-            python3 tools/verify_android_instrumentation.py "$evidence/junit" \
-              --source-root android/app/src/androidTest/java --minimum 105 --exact-count 105 \
-              --required-test-manifest tools/android-instrumentation-required-tests.txt \
-              --additional-test-manifest tools/android-instrumentation-additional-tests.txt \
-              --non-required-test-manifest android/app/src/androidTest/assets/serea-non-required-test-identities.txt \
-              --required-count 103 --additional-count 2 --api-level "$api" \
-              --require-class app.serea.android.EncryptedHistoryTest=17 \
-              --require-class app.serea.android.ChatScreenTest=16 \
-              --require-class app.serea.android.ChatHttpE2ETest=4 \
-              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
-              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
-              --require-class app.serea.android.tasks.TaskScreenTest=6 \
-              --require-class app.serea.android.InstrumentationStorageIsolationTest=1 \
-              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
-              --require-class app.serea.android.ChatHistoryUxTest=4
-            echo "API $api: 105/105 with isolation evidence PASS"
-          }
-          result26=1
-          result35=1
-          if (set -e; verify_api 26 "$API26_JOB_RESULT"); then result26=0; else result26=$?; fi
-          if (set -e; verify_api 35 "$API35_JOB_RESULT"); then result35=0; else result35=$?; fi
-          if [ "$BUILD_JOB_RESULT" = success ] && [ "$result26" -eq 0 ] && [ "$result35" -eq 0 ]; then
-            echo 'result=PASS' >> "$GITHUB_OUTPUT"
-          else
-            echo "result=FAIL" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
+          python3 tools/verify_android_formal_aggregate.py \
+            --root android/app/build/outputs/androidTest-results \
+            --source-sha "$EXPECTED_SOURCE_SHA" \
+            --build-sha "$EXPECTED_BUILD_SHA" \
+            --run-id "$EXPECTED_RUN_ID" \
+            --api26-result "$API26_JOB_RESULT" \
+            --api35-result "$API35_JOB_RESULT" \
+            --build-result "$BUILD_JOB_RESULT" \
+            --output "$GITHUB_OUTPUT" \
+            --junit-verifier tools/verify_android_instrumentation.py \
+            --source-root android/app/src/androidTest/java \
+            --required-manifest tools/android-instrumentation-required-tests.txt \
+            --additional-manifest tools/android-instrumentation-additional-tests.txt \
+            --non-required-manifest android/app/src/androidTest/assets/serea-non-required-test-identities.txt
       - name: Republish validated API 26 evidence under stable artifact name
         if: always() && steps.instrumentation.outputs.result == 'PASS' && needs.android-emulator-api26.result == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

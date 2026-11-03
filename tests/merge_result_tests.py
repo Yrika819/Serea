@@ -138,8 +138,11 @@ class MergeResultTests(unittest.TestCase):
         self.git("checkout", "-q", "--detach", self.base)
         third_parent = self.commit("third parent")
         self.git("checkout", "-q", "--detach", self.merge)
+        one_parent = self.commit_tree(self.tree, [self.base], "one parent")
         three_parent = self.commit_tree(self.tree, [self.base, self.head, third_parent], "three parents")
-        for merge, expected_count in ((self.base, 1), (three_parent, 3)):
+        self.assertEqual(len(self.git("show", "-s", "--format=%P", one_parent).split()), 1)
+        self.assertEqual(len(self.git("show", "-s", "--format=%P", three_parent).split()), 3)
+        for merge, expected_count in ((one_parent, 1), (three_parent, 3)):
             with self.subTest(expected_count=expected_count):
                 self.git("update-ref", "refs/pull/1/merge", merge)
                 with self.assertRaisesRegex(verifier.VerificationError, "expected exactly two"):

@@ -29,6 +29,8 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -83,6 +85,38 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals("/calendar/v3/users/me/calendarList", first.requestUrl!!.encodedPath)
         assertEquals("next +/=", second.requestUrl!!.queryParameter("pageToken"))
         assertEquals(2, tokenRequests)
+    }
+
+    @Test fun httpsLoopbackFixtureUsesExplicitlyTrustedTestCertificate() = runBlocking {
+        val secureServer = MockWebServer()
+        val certificate = HeldCertificate.Builder()
+            .addSubjectAlternativeName("localhost")
+            .addSubjectAlternativeName("127.0.0.1")
+            .build()
+        val serverTrust = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val clientTrust = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        secureServer.useHttps(serverTrust.sslSocketFactory(), false)
+        secureServer.start()
+        try {
+            secureServer.enqueue(MockResponse().setBody("""{"items":[{"id":"fixture","timeZone":"UTC","accessRole":"reader"}]}"""))
+            val trustedClient = OkHttpClient.Builder()
+                .sslSocketFactory(clientTrust.sslSocketFactory(), clientTrust.trustManager)
+                .build()
+            val httpsPort = GoogleCalendarHttpReadPort(
+                authorization,
+                CalendarAccessTokenPort { tokenRequests++; freshToken() },
+                trustedClient,
+                secureServer.url("/calendar/v3/"),
+            )
+
+            assertEquals("fixture", httpsPort.listCalendars().single().id.value)
+            val request = secureServer.takeRequest()
+            assertTrue(request.requestUrl!!.isHttps)
+            assertEquals("localhost", request.requestUrl!!.host)
+            assertEquals("Bearer fixture-token-never-valid", request.getHeader("Authorization"))
+        } finally {
+            secureServer.shutdown()
+        }
     }
 
     @Test fun eventUrlsUseEncodedPathAndHalfOpenSingleExpandedRange() = runBlocking {

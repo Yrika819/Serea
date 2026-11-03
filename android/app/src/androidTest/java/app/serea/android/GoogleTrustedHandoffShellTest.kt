@@ -24,6 +24,7 @@ class GoogleTrustedHandoffShellTest {
         assertChatHandoff(
             destinationTag = "destination_gmail",
             selectedTitle = "Project Finch schedule",
+            expectedComposerText = "The made-up Finch review starts at noon.",
             handoffAction = "このメールをChatへ渡す",
             expectedOrigin = DataOrigin.GMAIL,
         )
@@ -62,6 +63,7 @@ class GoogleTrustedHandoffShellTest {
     private fun assertChatHandoff(
         destinationTag: String,
         selectedTitle: String,
+        expectedComposerText: String = selectedTitle,
         handoffAction: String,
         expectedOrigin: DataOrigin,
         selectedCalendarName: String? = null,
@@ -96,7 +98,10 @@ class GoogleTrustedHandoffShellTest {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()
         }
         val composer = compose.onNodeWithTag("chat-composer")
-        composer.assertTextContains(selectedTitle, substring = true)
+        composer.assertTextContains(expectedComposerText, substring = true)
+        if (expectedOrigin == DataOrigin.GMAIL) {
+            assertTrue("Gmail subject must not be transferred to Chat", !compose.activity.chatViewModel.state.value.input.contains(selectedTitle))
+        }
         compose.onAllNodesWithText("Demo response:", substring = true).assertCountEquals(0)
         val imported = compose.activity.chatViewModel.state.value.editorSourceLineage
         assertTrue(imported.contains(expectedOrigin))

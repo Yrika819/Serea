@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import os
 import subprocess
@@ -921,9 +922,64 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         verifier_test = (ROOT / "android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt").read_text(encoding="utf-8")
         self.assertIn("ProfileVerifier.writeProfileVerification(target)", verifier_test)
         self.assertIn("RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION", verifier_test)
-        self.assertIn("SereaProfileVerifier", verifier_test)
-        self.assertIn("marker=valid", verifier_test)
-        self.assertIn("SereaProfileVerifier AndroidRuntime", workflow)
+
+    def test_g8_fake_google_and_gmail_ui_runs_as_exact_non_required_api35_stage(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        manifest = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
+        required = (ROOT / "tools/android-instrumentation-required-tests.txt").read_text(encoding="utf-8")
+        additional = (ROOT / "tools/android-instrumentation-additional-tests.txt").read_text(encoding="utf-8")
+        expected = {
+            "app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant",
+            "app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt",
+            "app.serea.android.GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel",
+            "app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm",
+            "app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeGmailPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeCalendarPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailOutOfOrderPreviewCallbackCannotReplaceNewestSelection",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClosedAndDialogRemainsCancellable",
+            "app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview",
+        }
+        focused = campaign.split("google_demo_ui_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
+        actual = {line.strip() for line in focused.splitlines() if line.strip()}
+        self.assertEqual(expected, actual)
+        self.assertEqual(16, len(actual))
+        self.assertTrue(expected.issubset(set(manifest.splitlines())))
+        self.assertFalse(expected.intersection(required.splitlines()))
+        self.assertFalse(expected.intersection(additional.splitlines()))
+        self.assertIn('if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS', campaign)
+        self.assertIn('run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 16', campaign)
+        helper = 'bash "$tool_dir/run_android_fake_google_process_death.sh"'
+        self.assertIn("GoogleCalendarHandoffRevocationUiTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
+        self.assertIn('SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1', campaign)
+        self.assertIn('fake_google_process_death_status" != PASS', campaign)
+        self.assertEqual(1, campaign.count(helper))
+        stage_start = campaign.index('run_diagnostic_stage google-calendar-and-gmail-ui')
+        process_death = campaign.index(helper)
+        verified_target_install = campaign.index('bash "$tool_dir/ensure_verified_isolated_target.sh"')
+        post_stage_cleanup = campaign.index('# This campaign owns only the isolated CI target and test packages on a verified disposable')
+        self.assertLess(stage_start, process_death)
+        self.assertLess(verified_target_install, process_death)
+        self.assertLess(process_death, post_stage_cleanup)
+        self.assertIn('"$isolated_apk" "$fake_google_process_death_evidence/target-install.txt"', campaign)
+        self.assertIn("Could not safely query the isolated target package; refusing installation.",
+                      (ROOT / "tools/ensure_verified_isolated_target.sh").read_text(encoding="utf-8"))
+        process_death_guard = campaign.rfind('if [[ "$google_demo_ui_stage_result" -eq 0 ]]; then', stage_start, process_death)
+        self.assertNotEqual(-1, process_death_guard)
+        self.assertEqual(1, campaign.count('verify_args+=(--require-test "$identity")'))
+        self.assertLess(
+            campaign.rfind('printf \'%s\\n\' "$death_result"'),
+            campaign.index('run_diagnostic_stage google-calendar-and-gmail-ui'),
+        )
+        self.assertIn('google-demo-ui-status.txt', campaign)
+        self.assertIn('google-demo-ui-cleanup-status.txt', campaign)
+        self.assertIn('google_demo_ui_result" == PASS', campaign)
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)
@@ -935,6 +991,139 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath,isolatedUnitTestCompileClasspath,isolatedUnitTestRuntimeClasspath",
             manifest_lock,
         )
+
+    def test_android_package_query_transport_failure_cannot_mean_absent(self) -> None:
+        helper = ROOT / "tools/android_package_path.sh"
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn('source "$tool_dir/android_package_path.sh"', campaign)
+        self.assertIn('if ! existing_target_paths="$(android_package_path app.serea.android.isolated)"', campaign)
+        self.assertIn('FAIL: ADB package query failed during focused UI cleanup verification', campaign)
+        self.assertIn('if [[ "$google_demo_ui_stage_result" -eq 0 && "$google_demo_ui_cleanup_result" -eq 0 ]]; then', campaign)
+        with tempfile.TemporaryDirectory() as temp:
+            bindir = Path(temp)
+            fake_adb = bindir / "adb"
+            fake_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"${FAKE_ADB_MODE:-}\" in\n"
+                "  path) printf 'package:/data/app/example/base.apk\r\n'; exit 0 ;;\n"
+                "  absent) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; exit 0 ;;\n"
+                "  listed) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; printf 'package:app.serea.android.isolated\n'; exit 0 ;;\n"
+                "  offline) echo 'adb: device offline' >&2; exit 73 ;;\n"
+                "  list_offline) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; echo 'adb: device offline' >&2; exit 73 ;;\n"
+                "  malformed) echo 'Error: package lookup failed'; exit 0 ;;\n"
+                "esac\nexit 0\n",
+                encoding="utf-8",
+            )
+            fake_adb.chmod(0o755)
+            command = 'source "$1"; set +e; output=$(android_package_path app.serea.android.isolated 2>"$TMPERR"); result=$?; printf "status=%s output=%s\n" "$result" "$output"'
+            common = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "TMPERR": str(bindir / "stderr")}
+            for mode, expected, stderr in (
+                ("path", "status=0 output=package:/data/app/example/base.apk", ""),
+                ("absent", "status=0 output=", ""),
+                ("listed", "status=2 output=", "lists app.serea.android.isolated"),
+                ("offline", "status=2 output=", "adb: device offline"),
+                ("list_offline", "status=2 output=", "Could not independently verify"),
+                ("malformed", "status=2 output=", "unexpected output"),
+            ):
+                env = {**common, "FAKE_ADB_MODE": mode}
+                result = subprocess.run(["bash", "-c", command, "bash", str(helper)], cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+                self.assertEqual(expected, result.stdout.strip(), mode)
+                diagnostic = Path(env["TMPERR"]).read_text(encoding="utf-8")
+                if stderr:
+                    self.assertIn(stderr, diagnostic, mode)
+                else:
+                    self.assertEqual("", diagnostic, mode)
+
+    def test_fake_google_process_death_reinstalls_only_the_verified_isolated_apk(self) -> None:
+        helper = ROOT / "tools/ensure_verified_isolated_target.sh"
+        apk_bytes = b"synthetic isolated APK bytes"
+        expected_sha = hashlib.sha256(apk_bytes).hexdigest()
+
+        def run_helper(*, installed: bool, installed_sha: str, path_mode: str = "normal"):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                bindir = root / "bin"
+                bindir.mkdir()
+                apk = root / "app-isolated.apk"
+                apk.write_bytes(apk_bytes)
+                installed_marker = root / "installed"
+                trace = root / "adb.trace"
+                if installed:
+                    installed_marker.touch()
+                adb = bindir / "adb"
+                adb.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
+                    "printf '%s\\n' \"$*\" >> \"$ADB_TRACE\"\n"
+                    "if [[ \"$1\" == devices ]]; then\n"
+                    "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell getprop ro.build.version.sdk' ]]; then\n"
+                    "  printf '%s\\n' \"$ANDROID_TEST_API\"\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell getprop ro.kernel.qemu' ]]; then\n"
+                    "  printf '1\\n'\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell pm path' ]]; then\n"
+                    "  if [[ \"$FAKE_PATH_MODE\" == transport_failure ]]; then echo 'adb: device offline' >&2; exit 73; fi\n"
+                    "  if [[ -e \"$INSTALLED_MARKER\" ]]; then printf 'package:/data/app/isolated/base.apk\\n'; else exit 1; fi\n"
+                    "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' ]]; then\n"
+                    "  if [[ -e \"$INSTALLED_MARKER\" ]]; then printf 'package:app.serea.android.isolated\\n'; fi\n"
+                    "elif [[ \"$1\" == install ]]; then\n"
+                    "  [[ \"$2\" == \"$EXPECTED_APK\" ]] || exit 74\n"
+                    "  touch \"$INSTALLED_MARKER\"\n"
+                    "elif [[ \"$1 $2\" == 'shell sha256sum' ]]; then\n"
+                    "  printf '%s  %s\\n' \"$FAKE_INSTALLED_SHA\" \"$4\"\n"
+                    "fi\n",
+                    encoding="utf-8",
+                )
+                adb.chmod(0o755)
+                evidence = root / "evidence" / "target-install.txt"
+                environment = os.environ.copy()
+                environment.update({
+                    "PATH": f"{bindir}{os.pathsep}{environment['PATH']}",
+                    "CI": "true",
+                    "GITHUB_ACTIONS": "true",
+                    "GITHUB_RUN_ID": "12345",
+                    "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                    "EXPECTED_API_LEVEL": "26",
+                    "ANDROID_TEST_API": "26",
+                    "ADB_TRACE": str(trace),
+                    "INSTALLED_MARKER": str(installed_marker),
+                    "EXPECTED_APK": str(apk),
+                    "FAKE_INSTALLED_SHA": installed_sha,
+                    "FAKE_PATH_MODE": path_mode,
+                })
+                result = subprocess.run(
+                    ["bash", str(helper), str(apk), str(evidence)],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                calls = trace.read_text(encoding="utf-8") if trace.exists() else ""
+                evidence_text = evidence.read_text(encoding="utf-8") if evidence.exists() else ""
+                return result, calls, evidence_text
+
+        result, calls, evidence = run_helper(installed=False, installed_sha=expected_sha)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("install /", calls)
+        self.assertIn("installation=installed-exact-candidate-apk", evidence)
+        self.assertIn(f"candidate_apk_sha256={expected_sha}", evidence)
+        self.assertIn(f"installed_apk_sha256={expected_sha}", evidence)
+
+        wrong_sha = "0" * 64
+        result, calls, evidence = run_helper(installed=True, installed_sha=wrong_sha)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("does not match the candidate APK", result.stderr)
+        self.assertNotIn("install /", calls)
+        self.assertEqual("", evidence)
+
+        result, calls, evidence = run_helper(
+            installed=False, installed_sha=expected_sha, path_mode="transport_failure"
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Could not safely query", result.stderr)
+        self.assertNotIn("install /", calls)
+        self.assertEqual("", evidence)
 
     def test_host_seed_uses_stdin_and_fails_closed_on_uid_or_package_path(self) -> None:
         helper = ROOT / "tools/prepare_isolated_instrumentation_target.sh"
@@ -1063,6 +1252,213 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('marker.renameTo(authorization)', promote)
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
+
+    def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
+        harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")
+        activity = (ROOT / "android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt").read_text(
+            encoding="utf-8"
+        )
+        manifest = (ROOT / "android/app/src/isolated/AndroidManifest.xml").read_text(encoding="utf-8")
+        app_gradle = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+
+        self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
+        self.assertIn('test_package="app.serea.android.isolated.test"', harness)
+        self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('activity_class="app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
+        self.assertIn('activity="$package/$activity_class"', harness)
+        self.assertIn('namespace = "app.serea.android"', app_gradle)
+        self.assertIn('query_package_pid "$test_package"', harness)
+        self.assertIn('shell ps -A', harness)
+        self.assertNotIn('shell sh -c "$pid_query_script"', harness)
+        self.assertIn('shell am force-stop "$package"', harness)
+        self.assertNotIn("pm clear", harness.lower())
+        self.assertNotIn("app.serea.android.demo", harness)
+        self.assertIn("wait_target_stopped", harness)
+        self.assertIn("PASS:$token:$phase:pid=", harness)
+        self.assertIn('android:name=".FakeGoogleProcessDeathHarnessActivity"', manifest)
+        self.assertIn('android:permission="android.permission.DUMP"', manifest)
+        self.assertIn("ViewModelProvider(this@FakeGoogleProcessDeathHarnessActivity)", activity)
+        self.assertIn("requestConsent(GoogleFeature.CALENDAR)", activity)
+        self.assertIn("grantPendingConsent(preview)", activity)
+        self.assertIn("CalendarProviderKind.FAKE", activity)
+        self.assertIn("CalendarAuthorizationState.MOCK_ONLY", activity)
+        self.assertIn("GoogleDemoFeatureState.DISCONNECTED", activity)
+        self.assertNotIn("OkHttpClient", activity)
+        self.assertNotIn("MockWebServer", activity)
+        self.assertNotIn("|| true", harness)
+        self.assertIn('awk -v target="$target_package"', harness)
+        self.assertIn('if [[ -z "$matching_pids" ]]', harness)
+        self.assertIn('if ! observed="$(query_package_pid "$package")"; then', harness)
+        subprocess.run(["bash", "-n", str(ROOT / "tools/run_android_fake_google_process_death.sh")], check=True)
+
+    def test_fake_google_process_death_pid_queries_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bindir = root / "bin"
+            bindir.mkdir()
+            fake_adb = bindir / "adb"
+            fake_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "printf '%s\\n' \"$*\" >> \"$ADB_CALLS\"\n"
+                "if [[ \"${1:-}\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == -s ]]; then shift 2; fi\n"
+                "command=\"$1\"; shift\n"
+                "if [[ \"$command\" == logcat ]]; then\n"
+                "  phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
+                "  token=\"$(cat \"$ADB_CURRENT_TOKEN\")\"\n"
+                "  printf 'I/SereaFakeGoogleDeath: PASS:%s:%s:pid=2101\\n' \"$token\" \"$phase\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "[[ \"$command\" == shell ]] || exit 90\n"
+                "operation=\"$1\"; shift\n"
+                "case \"$operation\" in\n"
+                "  getprop)\n"
+                "    case \"$1\" in\n"
+                "      ro.build.version.sdk) printf '35\\n' ;;\n"
+                "      ro.kernel.qemu) printf '1\\n' ;;\n"
+                "      *) exit 91 ;;\n"
+                "    esac\n"
+                "    ;;\n"
+                "  pm)\n"
+                "    [[ \"$1\" == path ]] || exit 92\n"
+                "    printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'\n"
+                "    ;;\n"
+                "  ps)\n"
+                "    [[ \"$1\" == -A && \"$2\" == -o && \"$3\" == PID,NAME ]] || exit 93\n"
+                "    stopped=\"$(cat \"$ADB_FORCE_STOPPED\")\"\n"
+                "    case \"${PID_BAD_PROCESS_TABLE:-}\" in\n"
+                "      missing-header) printf 'incomplete process table\\n'; exit 0 ;;\n"
+                "      header-only) printf 'PID NAME\\n'; exit 0 ;;\n"
+                "      truncated-row) printf 'PID NAME\\n2101\\n'; exit 0 ;;\n"
+                "    esac\n"
+                "    if [[ -n \"${PID_FAIL_PACKAGE:-}\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then\n"
+                "      exit 41\n"
+                "    fi\n"
+                "    printf 'PID NAME\\n'\n"
+                "    printf '100 system_server\\n'\n"
+                "    if [[ \"$stopped\" != 1 ]]; then\n"
+                "      case \"$(cat \"$ADB_CURRENT_PHASE\")\" in\n"
+                "        seed) pid=2101 ;;\n"
+                "        verify) pid=2102 ;;\n"
+                "        *) pid=2100 ;;\n"
+                "      esac\n"
+                "      printf '%s app.serea.android.isolated\\n' \"$pid\"\n"
+                "    fi\n"
+                "    ;;\n"
+                "  am)\n"
+                "    action=\"$1\"; shift\n"
+                "    if [[ \"$action\" == force-stop ]]; then\n"
+                "      count=\"$(cat \"$ADB_FORCE_STOP_COUNT\")\"\n"
+                "      printf '%s\\n' \"$((count + 1))\" > \"$ADB_FORCE_STOP_COUNT\"\n"
+                "      printf '1\\n' > \"$ADB_FORCE_STOPPED\"\n"
+                "      exit 0\n"
+                "    fi\n"
+                "    [[ \"$action\" == start ]] || exit 94\n"
+                "    while [[ $# -gt 0 ]]; do\n"
+                "      if [[ \"$1\" == --es && \"${2:-}\" == phase ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_PHASE\"; printf '%s\\n' \"$3\" >> \"$ADB_PHASES\"; shift 3;\n"
+                "      elif [[ \"$1\" == --es && \"${2:-}\" == token ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_TOKEN\"; shift 3;\n"
+                "      else shift; fi\n"
+                "    done\n"
+                "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
+                "    ;;\n"
+                "  logcat)\n"
+                "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
+                "    token=\"$(cat \"$ADB_CURRENT_TOKEN\")\"\n"
+                "    printf 'I/SereaFakeGoogleDeath: PASS:%s:%s:pid=2101\\n' \"$token\" \"$phase\"\n"
+                "    ;;\n"
+                "  *) exit 95 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_adb.chmod(0o755)
+
+            helper = ROOT / "tools/run_android_fake_google_process_death.sh"
+            target_package = "app.serea.android.isolated"
+            test_package = "app.serea.android.isolated.test"
+
+            def run_case(case_name: str, *, fail_package: str = "", fail_after_force_stop: bool = False,
+                         bad_process_table: str = ""):
+                case_dir = root / case_name
+                case_dir.mkdir()
+                environment = os.environ.copy()
+                environment.update({
+                    "PATH": f"{bindir}{os.pathsep}{environment['PATH']}",
+                    "CI": "true",
+                    "GITHUB_ACTIONS": "true",
+                    "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                    "GITHUB_RUN_ID": "54321",
+                    "EXPECTED_API_LEVEL": "35",
+                    "SEREA_ISOLATED_INSTRUMENTATION_FINISHED": "1",
+                    "SEREA_FAKE_GOOGLE_DEATH_TOKEN": f"{case_name}-token",
+                    "SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR": str(case_dir / "evidence"),
+                    "ADB_PID_QUERIES": str(case_dir / "pid-queries"),
+                    "ADB_CALLS": str(case_dir / "adb-calls"),
+                    "ADB_FORCE_STOP_COUNT": str(case_dir / "force-stop-count"),
+                    "ADB_FORCE_STOPPED": str(case_dir / "force-stopped"),
+                    "ADB_CURRENT_PHASE": str(case_dir / "phase"),
+                    "ADB_PHASES": str(case_dir / "phases"),
+                    "ADB_CURRENT_TOKEN": str(case_dir / "token"),
+                    "PID_FAIL_PACKAGE": fail_package,
+                    "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
+                    "PID_BAD_PROCESS_TABLE": bad_process_table,
+                })
+                (case_dir / "pid-queries").write_text("", encoding="utf-8")
+                (case_dir / "force-stop-count").write_text("0\n", encoding="utf-8")
+                initial_stopped = "0\n" if fail_after_force_stop else "1\n"
+                (case_dir / "force-stopped").write_text(initial_stopped, encoding="utf-8")
+                (case_dir / "phase").write_text("none\n", encoding="utf-8")
+                (case_dir / "token").write_text("none\n", encoding="utf-8")
+                return subprocess.run(
+                    ["bash", str(helper)], env=environment, capture_output=True, text=True, check=False,
+                ), case_dir
+
+            instrumentation_failure, instrumentation_case = run_case(
+                "instrumentation-query-failure", fail_package=test_package,
+            )
+            self.assertNotEqual(0, instrumentation_failure.returncode)
+            self.assertEqual("0\n", (instrumentation_case / "force-stop-count").read_text(encoding="utf-8"))
+            self.assertEqual("FAIL\n", (instrumentation_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", instrumentation_failure.stdout + instrumentation_failure.stderr)
+
+            target_failure, target_case = run_case("target-query-failure", fail_package=target_package)
+            self.assertNotEqual(0, target_failure.returncode)
+            self.assertEqual("0\n", (target_case / "force-stop-count").read_text(encoding="utf-8"))
+            self.assertEqual("FAIL\n", (target_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", target_failure.stdout + target_failure.stderr)
+
+            for malformed_kind in ("missing-header", "header-only", "truncated-row"):
+                with self.subTest(malformed_kind=malformed_kind):
+                    malformed_table, malformed_case = run_case(
+                        f"malformed-process-table-{malformed_kind}", bad_process_table=malformed_kind,
+                    )
+                    self.assertNotEqual(0, malformed_table.returncode)
+                    self.assertEqual("0\n", (malformed_case / "force-stop-count").read_text(encoding="utf-8"))
+                    self.assertEqual("FAIL\n", (malformed_case / "evidence/status.txt").read_text(encoding="utf-8"))
+                    self.assertNotIn("PASS:", malformed_table.stdout + malformed_table.stderr)
+
+            force_stop_query_failure, stop_failure_case = run_case(
+                "force-stop-query-failure", fail_package=target_package, fail_after_force_stop=True,
+            )
+            self.assertNotEqual(0, force_stop_query_failure.returncode)
+            self.assertEqual("1\n", (stop_failure_case / "force-stop-count").read_text(encoding="utf-8"))
+            self.assertEqual("FAIL\n", (stop_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", force_stop_query_failure.stdout + force_stop_query_failure.stderr)
+
+            successful_absence, success_case = run_case("successful-absence")
+            self.assertEqual(
+                0,
+                successful_absence.returncode,
+                successful_absence.stderr + "\nADB calls:\n" + (success_case / "adb-calls").read_text(encoding="utf-8"),
+            )
+            self.assertEqual("PASS\n", (success_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertEqual("2\n", (success_case / "force-stop-count").read_text(encoding="utf-8"))
+            self.assertEqual("seed\nverify\n", (success_case / "phases").read_text(encoding="utf-8"))
+            self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
+            self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
 
     def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")

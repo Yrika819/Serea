@@ -51,7 +51,10 @@ class GoogleCalendarHttpReadPort internal constructor(
 
     init {
         val production = baseUrl.scheme == "https" && baseUrl.host == GOOGLE_API_HOST
-        val loopbackTest = baseUrl.scheme == "http" && baseUrl.host in TEST_HOSTS
+        // Test fixtures may use TLS with an explicitly test-trusted certificate. Keep the
+        // loopback host and fixed API path allowlisted; never permit cleartext off loopback
+        // or arbitrary HTTPS hosts.
+        val loopbackTest = baseUrl.host in TEST_HOSTS && baseUrl.scheme in setOf("http", "https")
         require((production || loopbackTest) && baseUrl.encodedPath == "/calendar/v3/")
     }
 

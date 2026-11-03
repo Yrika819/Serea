@@ -284,6 +284,9 @@ class GoogleCalendarDemoLoopbackUiTest {
         // Leaving the Calendar view and selecting Account A invalidates Account B's session.
         val accountBSession = session
         compose.onNodeWithText("戻る").performClick()
+        compose.onNodeWithText("Loopback UI event").assertIsDisplayed()
+        // The first Back leaves event detail for the agenda; the second leaves Calendar.
+        compose.onNodeWithText("戻る").performClick()
         compose.onNodeWithTag("google_auth_demo_account_account_a").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
             .assertTextContains("失効（デモ）", substring = true)

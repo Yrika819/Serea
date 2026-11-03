@@ -860,8 +860,8 @@ jobs:
 
   android-personal-beta-identity:
     name: Personal Beta Identity Isolation (temporary signing keys)
-    needs: [android-changes, android-build, android-storage-emulator]
-    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success' && needs.android-storage-emulator.result == 'success'
+    needs: [android-changes, android-build]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -908,12 +908,15 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: .
           script: bash tools/test_personal_beta_identity.sh
+      - name: Verify required temporary-key Identity evidence
+        if: always()
+        run: python3 tools/verify_personal_beta_identity_evidence.py android/app/build/outputs/androidTest-results/personal-beta-identity.txt
       - name: Upload temporary-key Beta isolation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-personal-beta-identity-isolation
-          if-no-files-found: warn
+          if-no-files-found: error
           path: android/app/build/outputs/androidTest-results/personal-beta-identity.txt
 
   android-emulator-required-gate:

@@ -107,6 +107,7 @@ jobs:
           mkdir -p "$bundle"
           cp "$apk" "$bundle/serea-debug.apk"
           build_checkout_sha="$(git rev-parse --verify 'HEAD^{commit}')"
+          # shellcheck disable=SC2153 # supplied through this step's env mapping
           test "$build_checkout_sha" = "$BUILD_CHECKOUT_SHA"
           {
             echo "source_commit=$SOURCE_SHA"
@@ -114,7 +115,7 @@ jobs:
             echo "github_run_id=${GITHUB_RUN_ID}"
             echo "github_run_attempt=${GITHUB_RUN_ATTEMPT}"
             echo "workflow=${GITHUB_WORKFLOW}"
-            echo "package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+            echo "package=$("${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
             echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
             echo 'build_lint_instrumentation_compile=PASS'
             echo 'full_android_ci=see Android Emulator Required Gate and workflow run'
@@ -123,12 +124,26 @@ jobs:
             for isolated_apk in android/app/build/outputs/apk/isolated/app-isolated.apk android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk; do
               test -s "$isolated_apk"
               echo "isolated_apk_path=$isolated_apk"
-              echo "isolated_apk_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$isolated_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+              echo "isolated_apk_package=$("${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/aapt" dump badging "$isolated_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
               echo "isolated_apk_sha256=$(sha256sum "$isolated_apk" | awk '{print $1}')"
-              "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose --print-certs "$isolated_apk"
+              "${ANDROID_HOME}/build-tools/${BUILD_TOOLS_VERSION}/apksigner" verify --verbose --print-certs "$isolated_apk"
             done
           } > "$bundle/provenance.txt"
-          cat "$bundle/provenance.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$bundle/provenance.txt"
+      - name: Validate exact Build APK provenance and target/test bindings
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 tools/verify_android_build_provenance.py \
+            --provenance android/app/build/outputs/pixel7a-reacceptance/provenance.txt \
+            --source-sha "$EXPECTED_SOURCE_SHA" \
+            --build-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --debug-apk android/app/build/outputs/apk/debug/app-debug.apk \
+            --target-apk android/app/build/outputs/apk/isolated/app-isolated.apk \
+            --test-apk android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt"
       - name: Upload APKs and lint report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -287,33 +302,22 @@ jobs:
           set -euo pipefail
           target='android/app/build/outputs/apk/isolated/app-isolated.apk'
           test_apk='android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk'
-          test -s "$target" && test -s "$test_apk"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           provenance='android/app/build/outputs/pixel7a-reacceptance/provenance.txt'
-          test -s "$provenance"
-          grep -Fx "source_commit=$EXPECTED_SOURCE_SHA" "$provenance"
-          grep -Fx "build_checkout_commit=$GITHUB_SHA" "$provenance"
-          grep -Fx "github_run_id=$GITHUB_RUN_ID" "$provenance"
-          grep -Fx "isolated_apk_path=android/app/build/outputs/apk/isolated/app-isolated.apk" "$provenance"
-          grep -Fx "isolated_apk_path=android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated.test" "$provenance"
-          printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
-            "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/api26-build-provenance.txt"
-          : > "$RUNNER_TEMP/api26-apk-checksums.txt"
-          index=0
-          for apk in "$target" "$test_apk"; do
-            index=$((index + 1))
-            sha256sum "$apk" | tee -a "$RUNNER_TEMP/api26-apk-checksums.txt"
-            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$apk"
-            expected_sha="$(sed -n "${index}p" <(grep '^isolated_apk_sha256=' "$provenance" | cut -d= -f2))"
-            actual_sha="$(sha256sum "$apk" | awk '{print $1}')"
-            test -n "$expected_sha" && test "$actual_sha" = "$expected_sha"
-          done
-          echo "target_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
-          echo "test_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$test_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
-          echo "target_sha256=$(sed -n '1s/ .*//p' "$RUNNER_TEMP/api26-apk-checksums.txt")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
-          echo "test_sha256=$(sed -n '2s/ .*//p' "$RUNNER_TEMP/api26-apk-checksums.txt")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 tools/verify_android_build_provenance.py \
+            --api-level 26 --provenance "$provenance" --source-sha "$EXPECTED_SOURCE_SHA" \
+            --build-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --debug-apk android/app/build/outputs/apk/debug/app-debug.apk \
+            --target-apk "$target" --test-apk "$test_apk" \
+            --aapt "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" \
+            --output "$RUNNER_TEMP/api26-verified-build-provenance.txt"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$target"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$test_apk"
+          {
+            printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
+              "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            cat "$RUNNER_TEMP/api26-verified-build-provenance.txt"
+          } > "$RUNNER_TEMP/api26-build-provenance.txt"
       - name: Install API 26 emulator image and host runtime
         run: |
           sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86' 'build-tools;35.0.0' emulator
@@ -410,33 +414,22 @@ jobs:
           set -euo pipefail
           target='android/app/build/outputs/apk/isolated/app-isolated.apk'
           test_apk='android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk'
-          test -s "$target" && test -s "$test_apk"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           provenance='android/app/build/outputs/pixel7a-reacceptance/provenance.txt'
-          test -s "$provenance"
-          grep -Fx "source_commit=$EXPECTED_SOURCE_SHA" "$provenance"
-          grep -Fx "build_checkout_commit=$GITHUB_SHA" "$provenance"
-          grep -Fx "github_run_id=$GITHUB_RUN_ID" "$provenance"
-          grep -Fx "isolated_apk_path=android/app/build/outputs/apk/isolated/app-isolated.apk" "$provenance"
-          grep -Fx "isolated_apk_path=android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated.test" "$provenance"
-          printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
-            "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/api35-build-provenance.txt"
-          : > "$RUNNER_TEMP/api35-apk-checksums.txt"
-          index=0
-          for apk in "$target" "$test_apk"; do
-            index=$((index + 1))
-            sha256sum "$apk" | tee -a "$RUNNER_TEMP/api35-apk-checksums.txt"
-            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$apk"
-            expected_sha="$(grep '^isolated_apk_sha256=' "$provenance" | sed -n "${index}p" | cut -d= -f2)"
-            actual_sha="$(sha256sum "$apk" | awk '{print $1}')"
-            test -n "$expected_sha" && test "$actual_sha" = "$expected_sha"
-          done
-          echo "target_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
-          echo "test_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$test_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
-          echo "target_sha256=$(sed -n '1s/ .*//p' "$RUNNER_TEMP/api35-apk-checksums.txt")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
-          echo "test_sha256=$(sed -n '2s/ .*//p' "$RUNNER_TEMP/api35-apk-checksums.txt")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 tools/verify_android_build_provenance.py \
+            --api-level 35 --provenance "$provenance" --source-sha "$EXPECTED_SOURCE_SHA" \
+            --build-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --debug-apk android/app/build/outputs/apk/debug/app-debug.apk \
+            --target-apk "$target" --test-apk "$test_apk" \
+            --aapt "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" \
+            --output "$RUNNER_TEMP/api35-verified-build-provenance.txt"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$target"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$test_apk"
+          {
+            printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
+              "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            cat "$RUNNER_TEMP/api35-verified-build-provenance.txt"
+          } > "$RUNNER_TEMP/api35-build-provenance.txt"
       - name: Install API 35 emulator image and host runtime
         run: |
           sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0' emulator
@@ -764,6 +757,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install tools for APK provenance verification
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Download Debug APK and provenance
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -808,18 +814,18 @@ jobs:
           INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
         run: |
           set -euo pipefail
-          provenance_path="$(find "$RUNNER_TEMP/serea-candidate" -type f -name provenance.txt -print -quit)"
-          test -n "$provenance_path" && test -s "$provenance_path"
-          provenance_source_sha="$(sed -n 's/^source_commit=//p' "$provenance_path")"
-          provenance_checkout_sha="$(sed -n 's/^build_checkout_commit=//p' "$provenance_path")"
-          if [[ "$provenance_source_sha" != "$SOURCE_SHA" || \
-                "$provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA" || \
-                "$provenance_checkout_sha" != "$GITHUB_SHA" ]]; then
-            echo "APK provenance does not match the PR source and tested merge-result." >&2
-            echo "Expected source=$SOURCE_SHA checkout=$BUILD_CHECKOUT_SHA" >&2
-            echo "Artifact source=$provenance_source_sha checkout=$provenance_checkout_sha" >&2
-            exit 1
-          fi
+          candidate="$RUNNER_TEMP/serea-candidate/build/outputs"
+          provenance_path="$candidate/pixel7a-reacceptance/provenance.txt"
+          python3 tools/verify_android_build_provenance.py \
+            --provenance "$provenance_path" \
+            --source-sha "$SOURCE_SHA" \
+            --build-sha "$BUILD_CHECKOUT_SHA" \
+            --run-id "$RUN_ID" \
+            --debug-apk "$candidate/apk/debug/app-debug.apk" \
+            --target-apk "$candidate/apk/isolated/app-isolated.apk" \
+            --test-apk "$candidate/apk/androidTest/isolated/app-isolated-androidTest.apk" \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt"
+          provenance_checkout_sha="$BUILD_CHECKOUT_SHA"
           bundle="$RUNNER_TEMP/serea-pixel7a-final-bundle"
           mkdir -p "$bundle/build" "$bundle/android-ci" "$bundle/api-tests-and-process-death"
           cp -R "$RUNNER_TEMP/serea-candidate/." "$bundle/build/"

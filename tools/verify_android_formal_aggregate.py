@@ -14,16 +14,18 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
-def read_value(path: Path, key: str) -> str:
-    require(path.is_file(), f"missing evidence file: {path}")
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(key + "="):
-            return line.split("=", 1)[1]
-    raise ValueError(f"missing {key} in {path}")
+def read_value(path: Path, key: str, api: int) -> str:
+    require(path.is_file(), f"API {api} missing evidence file {path} (key {key})")
+    values = [line.split("=", 1)[1] for line in path.read_text(encoding="utf-8").splitlines()
+              if line.startswith(key + "=")]
+    require(len(values) == 1,
+            f"API {api} {path}: key {key} occurs {len(values)} times; expected exactly 1")
+    require(values[0] != "", f"API {api} {path}: key {key} has an empty value")
+    return values[0]
 
 
-def read_status(path: Path) -> str:
-    require(path.is_file(), f"missing evidence file: {path}")
+def read_status(path: Path, api: int) -> str:
+    require(path.is_file(), f"API {api} missing evidence file {path}")
     return path.read_text(encoding="utf-8").strip()
 
 
@@ -48,24 +50,34 @@ def verify_api(api: int, root: Path, job_result: str, args: argparse.Namespace) 
     evidence = root / f"api{api}"
     require(job_result == "success", f"API {api} job result is {job_result}")
     provenance = evidence / f"api{api}-build-provenance.txt"
-    require(read_status(evidence / "api-result.txt") == "PASS", f"API {api} api-result is not PASS")
+    require(read_status(evidence / "api-result.txt", api) == "PASS",
+            f"API {api} {evidence / 'api-result.txt'}: key api-result is not PASS")
     for key, expected in (("source_sha", args.source_sha), ("build_checkout_sha", args.build_sha),
                           ("run_id", args.run_id), ("artifact_producer", f"android-emulator-api{api}")):
-        require(read_value(provenance, key) == expected, f"API {api} {key} mismatch")
+        require(read_value(provenance, key, api) == expected,
+                f"API {api} {provenance}: key {key} does not match expected value")
     for key, expected in (("target_package", "app.serea.android.isolated"),
                           ("test_package", "app.serea.android.isolated.test")):
-        require(read_value(provenance, key) == expected, f"API {api} {key} mismatch")
+        require(read_value(provenance, key, api) == expected,
+                f"API {api} {provenance}: key {key} does not match expected value")
     for key in ("target_sha256", "test_sha256"):
-        value = read_value(provenance, key)
-        require(len(value) == 64 and all(c in "0123456789abcdef" for c in value), f"API {api} invalid {key}")
-    producer_attempt = read_value(provenance, "producer_attempt")
-    require(producer_attempt.isdigit() and int(producer_attempt) > 0, f"API {api} invalid producer_attempt")
+        value = read_value(provenance, key, api)
+        require(len(value) == 64 and all(c in "0123456789abcdef" for c in value),
+                f"API {api} {provenance}: key {key} is not a lowercase SHA-256")
+    producer_attempt = read_value(provenance, "producer_attempt", api)
+    require(producer_attempt.isdigit() and int(producer_attempt) > 0,
+            f"API {api} {provenance}: key producer_attempt is invalid")
+    build_artifact_attempt = read_value(provenance, "build_artifact_attempt", api)
+    require(build_artifact_attempt.isdigit() and int(build_artifact_attempt) > 0,
+            f"API {api} {provenance}: key build_artifact_attempt is invalid")
     campaign = evidence / "build-provenance.txt"
-    require(read_value(campaign, "source_checkout_sha") == args.build_sha, f"API {api} campaign checkout SHA mismatch")
-    require(read_value(campaign, "campaign_run_id") == args.run_id, f"API {api} campaign Run ID mismatch")
-    require(read_value(campaign, "campaign_attempt") == producer_attempt, f"API {api} campaign Attempt mismatch")
+    for key, expected in (("source_checkout_sha", args.build_sha), ("campaign_run_id", args.run_id),
+                          ("campaign_attempt", producer_attempt)):
+        require(read_value(campaign, key, api) == expected,
+                f"API {api} {campaign}: key {key} does not match expected value")
     for filename in ("instrumentation-status.txt", "process-death-status.txt", "data-isolation-status.txt", "google-demo-ui-status.txt"):
-        require(read_status(evidence / filename) == "PASS", f"API {api} {filename} is not PASS")
+        require(read_status(evidence / filename, api) == "PASS",
+                f"API {api} {evidence / filename}: status is not PASS")
     require((evidence / "process-death.log").is_file() and (evidence / "process-death.log").stat().st_size > 0,
             f"API {api} Process Death log missing")
     verify_junit(evidence / "junit")

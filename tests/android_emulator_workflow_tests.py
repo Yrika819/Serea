@@ -39,8 +39,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertEqual(2, required.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
         self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", required)
         self.assertIn("BUILD_CHECKOUT_SHA: ${{ github.sha }}", required)
-        self.assertIn('provenance_source_sha" != "$SOURCE_SHA"', required)
-        self.assertIn('provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', required)
+        self.assertIn("python3 tools/verify_android_build_provenance.py", required)
+        self.assertIn('--source-sha "$SOURCE_SHA"', required)
+        self.assertIn('--build-sha "$BUILD_CHECKOUT_SHA"', required)
 
     def test_android_scope_job_verifies_pr_merge_result_before_classifying(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
@@ -806,7 +807,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", workflow)
         self.assertEqual(1, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
         self.assertEqual(2, workflow.count("BUILD_CHECKOUT_SHA: ${{ github.sha }}"))
-        self.assertIn('provenance_checkout_sha" != "$GITHUB_SHA"', workflow)
+        self.assertIn("python3 tools/verify_android_build_provenance.py", workflow)
+        self.assertIn('--build-sha "$BUILD_CHECKOUT_SHA"', workflow)
         scope_helper = (ROOT / "tools/classify_android_changes.py").read_text(encoding="utf-8")
         self.assertIn('"tools/"', scope_helper)
         self.assertIn('".github/"', scope_helper)
@@ -824,6 +826,18 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("serea-android-instrumentation-api35", workflow)
         self.assertIn("Save API 26 campaign logcat diagnostics", workflow)
         self.assertIn("Save API 35 campaign logcat diagnostics", workflow)
+
+    def test_build_provenance_validator_is_shared_by_build_formal_and_reacceptance(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        self.assertEqual(4, workflow.count("python3 tools/verify_android_build_provenance.py"))
+        self.assertIn("Validate exact Build APK provenance and target/test bindings", workflow)
+        self.assertIn("--provenance \"$provenance\" --source-sha \"$EXPECTED_SOURCE_SHA\"", workflow)
+        self.assertIn("--provenance \"$provenance_path\"", workflow)
+        self.assertEqual(2, workflow.count("apksigner\" verify --verbose \"$target\""))
+        verifier = (ROOT / "tools/verify_android_build_provenance.py").read_text(encoding="utf-8")
+        for key in ("source_commit", "build_checkout_commit", "github_run_id", "github_run_attempt",
+                    "isolated_apk_path", "isolated_apk_package", "isolated_apk_sha256"):
+            self.assertIn(key, verifier)
 
 
     def test_direct_instrumentation_requires_fresh_isolated_campaign_before_tests(self) -> None:

@@ -38,7 +38,8 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
         (evidence / f"api{api}-build-provenance.txt").write_text(
             f"source_sha=source\nbuild_checkout_sha=merge\nrun_id=77\n"
             f"artifact_producer=android-emulator-api{api}\ntarget_sha256={'a'*64}\ntest_sha256={'b'*64}\n"
-            "target_package=app.serea.android.isolated\ntest_package=app.serea.android.isolated.test\nproducer_attempt=2\n"
+            "target_package=app.serea.android.isolated\ntest_package=app.serea.android.isolated.test\n"
+            "build_artifact_attempt=1\nproducer_attempt=2\n"
         )
         (evidence / "build-provenance.txt").write_text(
             "source_checkout_sha=merge\ncampaign_run_id=77\ncampaign_attempt=2\n"
@@ -110,6 +111,50 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
         p.write_text(original)
         p.unlink()
         self.assert_fail_closed()
+
+    def test_duplicate_or_empty_provenance_keys_fail_for_both_apis(self):
+        api_keys = (
+            "source_sha", "build_checkout_sha", "run_id", "artifact_producer", "producer_attempt",
+            "build_artifact_attempt", "target_package", "test_package", "target_sha256", "test_sha256",
+        )
+        campaign_keys = ("source_checkout_sha", "campaign_run_id", "campaign_attempt")
+        for api in (26, 35):
+            provenance = self.root / f"api{api}/api{api}-build-provenance.txt"
+            campaign = self.root / f"api{api}/build-provenance.txt"
+            for path, keys in ((provenance, api_keys), (campaign, campaign_keys)):
+                original = path.read_text()
+                for key in keys:
+                    line = next(line for line in original.splitlines() if line.startswith(key + "="))
+                    for duplicate in (line, f"{key}=conflicting-value"):
+                        with self.subTest(api=api, key=key, duplicate=duplicate):
+                            path.write_text(original + duplicate + "\n")
+                            result = self.invoke()
+                            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                            self.assertNotIn("result=PASS", self.output.read_text() if self.output.exists() else "")
+                            self.assertIn(f"API {api}", result.stderr)
+                            self.assertIn(key, result.stderr)
+                    with self.subTest(api=api, key=key, empty=True):
+                        path.write_text("\n".join(item for item in original.splitlines()
+                                                      if not item.startswith(key + "=")) + f"\n{key}=\n")
+                        result = self.invoke()
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertNotIn("result=PASS", self.output.read_text() if self.output.exists() else "")
+                    with self.subTest(api=api, key=key, missing=True):
+                        path.write_text("\n".join(item for item in original.splitlines()
+                                                      if not item.startswith(key + "=")) + "\n")
+                        result = self.invoke()
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertNotIn("result=PASS", self.output.read_text() if self.output.exists() else "")
+                path.write_text(original)
+        # Even when one API's artifact is rejected, the other API's independent result is reported.
+        provenance = self.root / "api26/api26-build-provenance.txt"
+        original = provenance.read_text()
+        provenance.write_text(original + "source_sha=conflicting-value\n")
+        result = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PASS: API 35 evidence validated", result.stdout)
+        self.assertNotIn("result=PASS", self.output.read_text() if self.output.exists() else "")
+        provenance.write_text(original)
 
     def test_junit_under_count_and_skipped_are_rejected(self):
         xml = self.root / "api35/junit/results.xml"

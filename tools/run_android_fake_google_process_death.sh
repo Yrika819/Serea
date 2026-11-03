@@ -31,33 +31,51 @@ if [[ -z "$package_path" ]]; then
   exit 1
 fi
 
-# Normalize pidof's documented no-match status to a sentinel on-device. The host still sees
-# nonzero for adb transport failures, pidof errors, malformed output, and other query failures.
-pid_query_script='
-pids=$(pidof "$1" 2>/dev/null)
-pidof_status=$?
-case "$pidof_status" in
-  0) [ -n "$pids" ] || exit 2; printf "%s\\n" "$pids" ;;
-  1) [ -z "$pids" ] || exit 2; printf "__SEREA_PID_ABSENT__\\n" ;;
-  *) exit 2 ;;
-esac
-'
-
 query_package_pid() {
-  local target_package="$1" query_result
-  if ! query_result="$("${adb_cmd[@]}" shell sh -c "$pid_query_script" serea-pid-query "$target_package")"; then
-    printf 'PID query failed for %s.\n' "$target_package" >&2
+  local target_package="$1" process_table matching_pids
+  # Use one remote command and parse the named PID/NAME columns. Passing a multiline script
+  # through the remote `sh -c` command is not reliable: Android's shell transport can split it
+  # and positional arguments, turning a valid process check into an ambiguous command failure.
+  if ! process_table="$("${adb_cmd[@]}" shell ps -A 2>&1)"; then
+    printf 'Process table query failed while checking %s: %s\n' "$target_package" "$process_table" >&2
     return 1
   fi
-  query_result="${query_result//$'\r'/}"
-  if [[ "$query_result" == '__SEREA_PID_ABSENT__' ]]; then
+  process_table="${process_table//$'\r'/}"
+  if ! matching_pids="$(printf '%s\n' "$process_table" | awk -v target="$target_package" '
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "PID") {
+          if (pid_column) exit 2
+          pid_column = i
+        }
+        if ($i == "NAME") {
+          if (name_column) exit 2
+          name_column = i
+        }
+      }
+      if (!pid_column || !name_column || pid_column == name_column) exit 2
+      next
+    }
+    {
+      if (NF < pid_column || NF < name_column || $pid_column !~ /^[0-9]+$/) exit 2
+      process_rows++
+      if ($name_column == target) {
+        print $pid_column
+      }
+    }
+    END { if (!pid_column || !name_column || !process_rows) exit 2 }
+  ')"; then
+    printf 'Process table was malformed while checking %s.\n' "$target_package" >&2
+    return 1
+  fi
+  if [[ -z "$matching_pids" ]]; then
     return 0
   fi
-  if [[ "$query_result" =~ ^[0-9]+([[:space:]]+[0-9]+)*$ ]]; then
-    printf '%s' "$query_result"
+  if [[ "$matching_pids" =~ ^[0-9]+([[:space:]]+[0-9]+)*$ ]]; then
+    printf '%s' "$matching_pids"
     return 0
   fi
-  printf 'PID query returned malformed output for %s.\n' "$target_package" >&2
+  printf 'Process table returned malformed PID data for %s.\n' "$target_package" >&2
   return 1
 }
 

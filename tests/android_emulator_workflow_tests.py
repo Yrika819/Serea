@@ -1264,7 +1264,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
         self.assertIn('package="app.serea.android.isolated"', harness)
         self.assertIn('query_package_pid "$test_package"', harness)
-        self.assertIn('shell sh -c "$pid_query_script"', harness)
+        self.assertIn('shell ps -A', harness)
+        self.assertNotIn('shell sh -c "$pid_query_script"', harness)
         self.assertIn('shell am force-stop "$package"', harness)
         self.assertNotIn("pm clear", harness.lower())
         self.assertNotIn("app.serea.android.demo", harness)
@@ -1281,7 +1282,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertNotIn("OkHttpClient", activity)
         self.assertNotIn("MockWebServer", activity)
         self.assertNotIn("|| true", harness)
-        self.assertIn("__SEREA_PID_ABSENT__", harness)
+        self.assertIn('awk -v target="$target_package"', harness)
+        self.assertIn('if [[ -z "$matching_pids" ]]', harness)
         self.assertIn('if ! observed="$(query_package_pid "$package")"; then', harness)
         subprocess.run(["bash", "-n", str(ROOT / "tools/run_android_fake_google_process_death.sh")], check=True)
 
@@ -1321,22 +1323,26 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "    [[ \"$1\" == path ]] || exit 92\n"
                 "    printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'\n"
                 "    ;;\n"
-                "  sh)\n"
-                "    [[ \"$1\" == -c ]] || exit 93\n"
-                "    target=\"${@: -1}\"\n"
-                "    printf '%s\\n' \"$target\" >> \"$ADB_PID_QUERIES\"\n"
+                "  ps)\n"
+                "    [[ \"$1\" == -A ]] || exit 93\n"
                 "    stopped=\"$(cat \"$ADB_FORCE_STOPPED\")\"\n"
-                "    if [[ \"$target\" == \"${PID_FAIL_PACKAGE:-}\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then\n"
+                "    case \"${PID_BAD_PROCESS_TABLE:-}\" in\n"
+                "      missing-header) printf 'incomplete process table\\n'; exit 0 ;;\n"
+                "      header-only) printf 'USER PID PPID VSZ RSS WCHAN ADDR S NAME\\n'; exit 0 ;;\n"
+                "      truncated-row) printf 'USER PID PPID VSZ RSS WCHAN ADDR S NAME\\nu0_a87 2101\\n'; exit 0 ;;\n"
+                "    esac\n"
+                "    if [[ -n \"${PID_FAIL_PACKAGE:-}\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then\n"
                 "      exit 41\n"
                 "    fi\n"
-                "    if [[ \"$target\" == app.serea.android.isolated.test || \"$stopped\" == 1 ]]; then\n"
-                "      printf '__SEREA_PID_ABSENT__\\n'\n"
-                "    elif [[ \"$(cat \"$ADB_CURRENT_PHASE\")\" == seed ]]; then\n"
-                "      printf '2101\\n'\n"
-                "    elif [[ \"$(cat \"$ADB_CURRENT_PHASE\")\" == verify ]]; then\n"
-                "      printf '2102\\n'\n"
-                "    else\n"
-                "      printf '2100\\n'\n"
+                "    printf 'USER PID PPID VSZ RSS WCHAN ADDR S NAME\\n'\n"
+                "    printf 'system 100 1 0 0 do_epoll_wait 0 S system_server\\n'\n"
+                "    if [[ \"$stopped\" != 1 ]]; then\n"
+                "      case \"$(cat \"$ADB_CURRENT_PHASE\")\" in\n"
+                "        seed) pid=2101 ;;\n"
+                "        verify) pid=2102 ;;\n"
+                "        *) pid=2100 ;;\n"
+                "      esac\n"
+                "      printf 'u0_a87 %s 1 0 0 do_epoll_wait 0 S app.serea.android.isolated\\n' \"$pid\"\n"
                 "    fi\n"
                 "    ;;\n"
                 "  am)\n"
@@ -1370,7 +1376,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             target_package = "app.serea.android.isolated"
             test_package = "app.serea.android.isolated.test"
 
-            def run_case(case_name: str, *, fail_package: str = "", fail_after_force_stop: bool = False):
+            def run_case(case_name: str, *, fail_package: str = "", fail_after_force_stop: bool = False,
+                         bad_process_table: str = ""):
                 case_dir = root / case_name
                 case_dir.mkdir()
                 environment = os.environ.copy()
@@ -1393,6 +1400,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "ADB_CURRENT_TOKEN": str(case_dir / "token"),
                     "PID_FAIL_PACKAGE": fail_package,
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
+                    "PID_BAD_PROCESS_TABLE": bad_process_table,
                 })
                 (case_dir / "pid-queries").write_text("", encoding="utf-8")
                 (case_dir / "force-stop-count").write_text("0\n", encoding="utf-8")
@@ -1417,6 +1425,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("0\n", (target_case / "force-stop-count").read_text(encoding="utf-8"))
             self.assertEqual("FAIL\n", (target_case / "evidence/status.txt").read_text(encoding="utf-8"))
             self.assertNotIn("PASS:", target_failure.stdout + target_failure.stderr)
+
+            for malformed_kind in ("missing-header", "header-only", "truncated-row"):
+                with self.subTest(malformed_kind=malformed_kind):
+                    malformed_table, malformed_case = run_case(
+                        f"malformed-process-table-{malformed_kind}", bad_process_table=malformed_kind,
+                    )
+                    self.assertNotEqual(0, malformed_table.returncode)
+                    self.assertEqual("0\n", (malformed_case / "force-stop-count").read_text(encoding="utf-8"))
+                    self.assertEqual("FAIL\n", (malformed_case / "evidence/status.txt").read_text(encoding="utf-8"))
+                    self.assertNotIn("PASS:", malformed_table.stdout + malformed_table.stderr)
 
             force_stop_query_failure, stop_failure_case = run_case(
                 "force-stop-query-failure", fail_package=target_package, fail_after_force_stop=True,

@@ -39,8 +39,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertEqual(2, required.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
         self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", required)
         self.assertIn("BUILD_CHECKOUT_SHA: ${{ github.sha }}", required)
-        self.assertIn('provenance_source_sha" != "$SOURCE_SHA"', required)
-        self.assertIn('provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', required)
+        self.assertIn("python3 tools/verify_android_build_provenance.py", required)
+        self.assertIn('--source-sha "$SOURCE_SHA"', required)
+        self.assertIn('--build-sha "$BUILD_CHECKOUT_SHA"', required)
 
     def test_android_scope_job_verifies_pr_merge_result_before_classifying(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
@@ -806,7 +807,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", workflow)
         self.assertEqual(1, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
         self.assertEqual(2, workflow.count("BUILD_CHECKOUT_SHA: ${{ github.sha }}"))
-        self.assertIn('provenance_checkout_sha" != "$GITHUB_SHA"', workflow)
+        self.assertIn("python3 tools/verify_android_build_provenance.py", workflow)
+        self.assertIn('--build-sha "$BUILD_CHECKOUT_SHA"', workflow)
         scope_helper = (ROOT / "tools/classify_android_changes.py").read_text(encoding="utf-8")
         self.assertIn('"tools/"', scope_helper)
         self.assertIn('".github/"', scope_helper)
@@ -815,34 +817,27 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         api35_campaign = (ROOT / "tools/run_android_api35_campaign.sh").read_text(encoding="utf-8")
         self.assertIn("run_android_instrumentation_campaign.sh\" 35", api35_campaign)
         self.assertIn("test_android_update_compatibility.sh", api35_campaign)
-        self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
-        self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
-        self.assertLess(
-            workflow.index("Run API 26 Pixel emulator and all instrumentation tests"),
-            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
-        )
-        self.assertEqual(2, workflow.count("live='android/app/build/outputs/androidTest-results/api"))
-        self.assertEqual(2, workflow.count("' \"$live\" >> \"$output\""))
-        self.assertIn("Emulator detached after test step; captured instrumentation logcat is preserved above.", workflow)
-        self.assertIn("font-scale-gmail-heading", workflow)
-        self.assertIn("chat-draft-gmail-search-timeout", workflow)
-        self.assertLess(
-            workflow.index("Save API 26 failure semantics and safety logcat"),
-            workflow.index("Clear API 26 emulator state before API 35 campaign"),
-        )
-        self.assertLess(
-            workflow.index("Clear API 26 emulator state before API 35 campaign"),
-            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
-        )
-        api35_step = workflow.split("Run API 35 Pixel emulator and all instrumentation tests", 1)[1].split(
-            "\n      - name:", 1
-        )[0]
-        self.assertIn("if: always() && !cancelled()", api35_step)
-        for step_name in (
-            "Run API 35 Pixel emulator and all instrumentation tests",
-            "Run API 26 Pixel emulator and all instrumentation tests",
-        ):
-            self.assertIn("SEREA_DISPOSABLE_CI_EMULATOR: '1'", workflow.split(step_name, 1)[1].split("\n      - name:", 1)[0])
+        for api in ("26", "35"):
+            self.assertIn(f"android-emulator-api{api}", workflow)
+            self.assertIn(f"serea-android-formal-api{api}-provisional", workflow)
+            self.assertIn(f"api{api}-build-provenance.txt", workflow)
+        self.assertIn("Verify API evidence provenance, JUnit, and isolation results", workflow)
+        self.assertIn("serea-android-instrumentation-api26", workflow)
+        self.assertIn("serea-android-instrumentation-api35", workflow)
+        self.assertIn("Save API 26 campaign logcat diagnostics", workflow)
+        self.assertIn("Save API 35 campaign logcat diagnostics", workflow)
+
+    def test_build_provenance_validator_is_shared_by_build_formal_and_reacceptance(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        self.assertEqual(4, workflow.count("python3 tools/verify_android_build_provenance.py"))
+        self.assertIn("Validate exact Build APK provenance and target/test bindings", workflow)
+        self.assertIn("--provenance \"$provenance\" --source-sha \"$EXPECTED_SOURCE_SHA\"", workflow)
+        self.assertIn("--provenance \"$provenance_path\"", workflow)
+        self.assertEqual(2, workflow.count("apksigner\" verify --verbose \"$target\""))
+        verifier = (ROOT / "tools/verify_android_build_provenance.py").read_text(encoding="utf-8")
+        for key in ("source_commit", "build_checkout_commit", "github_run_id", "github_run_attempt",
+                    "isolated_apk_path", "isolated_apk_package", "isolated_apk_sha256"):
+            self.assertIn(key, verifier)
 
 
     def test_direct_instrumentation_requires_fresh_isolated_campaign_before_tests(self) -> None:
@@ -1570,53 +1565,36 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='campaign-seed'", helper)
         self.assertIn('PASS:$token:$phase:$request_id', helper)
 
-    def test_api26_campaign_runs_first_and_survives_api35_image_failure(self) -> None:
-        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
-        steps = {
-            match.group(1): match.group(0)
-            for match in re.finditer(
-                r"^      - name: ([^\n]+)\n(?:(?!^      - name: ).*\n)*",
-                workflow,
-                flags=re.MULTILINE,
-            )
-        }
-        always = "if: always() && !cancelled()"
-        for name in (
-            "Diagnose KVM before permission changes",
-            "Apply official KVM udev permissions",
-            "Initialize API-specific evidence as NOT_RUN",
-            "Install API 26 emulator image",
-            "Run API 26 Pixel emulator and all instrumentation tests",
-        ):
-            self.assertIn(name, steps)
-            self.assertIn(always, steps[name], name)
-        self.assertLess(
-            workflow.index("- name: Apply official KVM udev permissions"),
-            workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
+    def test_formal_api_jobs_are_independent_and_aggregate_fail_closed(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
+        jobs = workflow["jobs"]
+        for api in ("26", "35"):
+            job = jobs[f"android-emulator-api{api}"]
+            self.assertEqual(job["needs"], ["android-changes", "android-build"])
+            self.assertTrue(any("android-emulator-runner" in step.get("uses", "") for step in job["steps"]))
+            artifact_names = [
+                step.get("with", {}).get("name")
+                for step in job["steps"]
+                if "upload-artifact" in step.get("uses", "")
+            ]
+            self.assertEqual(artifact_names, [f"serea-android-formal-api{api}-provisional"])
+
+        aggregate = jobs["android-storage-emulator"]
+        self.assertEqual(
+            aggregate["needs"],
+            ["android-changes", "android-build", "android-emulator-api26", "android-emulator-api35"],
         )
-        self.assertLess(
-            workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
-            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
-        )
-        self.assertLess(
-            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
-            workflow.index("- name: Run API 35 Pixel emulator and all instrumentation tests"),
-        )
-        api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
-        self.assertIn(always, api35)
-        combine = workflow.split("name: Combine API-specific required evidence", 1)[1].split(
-            "\n      - name:", 1
-        )[0]
-        self.assertIn(
-            'if [ "$api35" = PASS ] && [ "$api26" = PASS ] '
-            '&& [ "$API35_STEP_RESULT" = success ] && [ "$API26_STEP_RESULT" = success ]; then',
-            combine,
-        )
-        for required in (
-            'echo "FAIL: API 35=$api35',
-            "exit 1",
-        ):
-            self.assertIn(required, combine)
+        self.assertFalse(any("android-emulator-runner" in step.get("uses", "") for step in aggregate["steps"]))
+        self.assertEqual(aggregate["outputs"]["instrumentation"], "${{ steps.instrumentation.outputs.result }}")
+        verification = next(step for step in aggregate["steps"] if step.get("id") == "instrumentation")["run"]
+        self.assertIn("verify_android_formal_aggregate.py", verification)
+        module = (ROOT / "tools/verify_android_formal_aggregate.py").read_text(encoding="utf-8")
+        for required in ("api26_result", "api35_result", "105", "skipped", "process-death-status.txt", "data-isolation-status.txt", "source_sha", "run_id"):
+            self.assertIn(required, module)
+        self.assertIn("result=PASS", module)
+        self.assertIn("result=FAIL", module)
 
     def test_wrong_emulator_api_level_fails_closed_as_not_run(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"

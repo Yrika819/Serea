@@ -74,7 +74,8 @@ def verify_api(api: int, root: Path, job_result: str, args: argparse.Namespace) 
                "--required-test-manifest", str(args.required_manifest),
                "--additional-test-manifest", str(args.additional_manifest),
                "--non-required-test-manifest", str(args.non_required_manifest),
-               "--required-count", "103", "--additional-count", "2", "--api-level", str(api)]
+               "--required-count", "103", "--additional-count", "2", "--api-level", str(api),
+               "--profile-verifier-log", str(evidence / "logcat-live.txt")]
     for test_class, count in (("app.serea.android.EncryptedHistoryTest", 17),
                               ("app.serea.android.ChatScreenTest", 16),
                               ("app.serea.android.ChatHttpE2ETest", 4),

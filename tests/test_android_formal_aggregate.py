@@ -18,7 +18,13 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.output = self.root / "github-output.txt"
         self.verifier = self.root / "fake_verifier.py"
-        self.verifier.write_text("import os, sys; api=os.getenv('VERIFY_FAIL_API'); raise SystemExit(7 if api and any(api in arg for arg in sys.argv) else 0)\n")
+        self.verifier.write_text(
+            "import os, sys; from pathlib import Path; "
+            "api=os.getenv('VERIFY_FAIL_API'); "
+            "log=sys.argv[sys.argv.index('--profile-verifier-log') + 1]; "
+            "assert Path(log).is_file(); "
+            "raise SystemExit(7 if api and any(api in arg for arg in sys.argv) else 0)\n"
+        )
         for api in (26, 35):
             self.make_api(api)
 
@@ -40,6 +46,12 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
         for name in ("instrumentation-status.txt", "process-death-status.txt", "data-isolation-status.txt", "google-demo-ui-status.txt"):
             (evidence / name).write_text("PASS\n")
         (evidence / "process-death.log").write_text("PASS: process death observed\n")
+        profile = (
+            "api=26 status=UNSUPPORTED resultCode=262144 embedded=false marker=absent\n"
+            if api == 26 else
+            "api=35 status=COMPLETED resultCode=2 embedded=true marker=valid\n"
+        )
+        (evidence / "logcat-live.txt").write_text(f"I SereaProfileVerifier: {profile}")
         cases = "".join(f'<testcase classname="C{i}" name="t{i}"/>' for i in range(105))
         (evidence / "junit/results.xml").write_text(f"<testsuite tests=\"105\">{cases}</testsuite>")
 

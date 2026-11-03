@@ -2,6 +2,7 @@ package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -9,11 +10,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.ui.CalendarAgendaLoadedEventCountKey
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.gmail.GmailProviderKind
 import kotlinx.coroutines.runBlocking
@@ -67,8 +70,10 @@ class GoogleAuthorizationAppIntegrationTest {
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
         compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-20")
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().singleOrNull()
+                ?.config?.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { 0 }?.let { it > 0 } == true
         }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Design review"))
         compose.onNodeWithText("Design review").assertIsDisplayed()
 
         // The nested route is transient across configuration recreation. The Activity ViewModel

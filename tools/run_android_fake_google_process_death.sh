@@ -36,7 +36,7 @@ query_package_pid() {
   # Use one remote command and parse the named PID/NAME columns. Passing a multiline script
   # through the remote `sh -c` command is not reliable: Android's shell transport can split it
   # and positional arguments, turning a valid process check into an ambiguous command failure.
-  if ! process_table="$("${adb_cmd[@]}" shell ps -A 2>&1)"; then
+  if ! process_table="$("${adb_cmd[@]}" shell ps -A -o PID,NAME 2>&1)"; then
     printf 'Process table query failed while checking %s: %s\n' "$target_package" "$process_table" >&2
     return 1
   fi

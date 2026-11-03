@@ -11,7 +11,8 @@ test "$SEREA_ISOLATED_INSTRUMENTATION_FINISHED" = 1
 
 package="app.serea.android.isolated"
 test_package="app.serea.android.isolated.test"
-activity="$package/.FakeGoogleProcessDeathHarnessActivity"
+activity_class="app.serea.android.FakeGoogleProcessDeathHarnessActivity"
+activity="$package/$activity_class"
 tag="SereaFakeGoogleDeath"
 token="$SEREA_FAKE_GOOGLE_DEATH_TOKEN"
 evidence="${SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/fake-google-process-death}"

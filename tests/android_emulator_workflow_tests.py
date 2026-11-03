@@ -1259,10 +1259,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             encoding="utf-8"
         )
         manifest = (ROOT / "android/app/src/isolated/AndroidManifest.xml").read_text(encoding="utf-8")
+        app_gradle = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
 
         self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
         self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('activity_class="app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
+        self.assertIn('activity="$package/$activity_class"', harness)
+        self.assertIn('namespace = "app.serea.android"', app_gradle)
         self.assertIn('query_package_pid "$test_package"', harness)
         self.assertIn('shell ps -A', harness)
         self.assertNotIn('shell sh -c "$pid_query_script"', harness)

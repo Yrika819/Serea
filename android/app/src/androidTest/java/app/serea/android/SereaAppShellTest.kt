@@ -185,6 +185,81 @@ class SereaAppShellTest {
         assertTrue("Neither UiAutomator nor Android shell dispatched a touchscreen tap to the Chat Composer.", accepted)
     }
 
+    /** Wait for the Compose focus transition and the fresh system IME connection as one boundary. */
+    private fun awaitRecreatedComposerFocus(
+        stage: String,
+        startsBefore: Int,
+        previousSession: TestImeSession,
+    ): TestImeSession {
+        var focusSnapshot = "unobserved"
+        var imeSnapshot = "unobserved"
+
+        fun restoredFocusAndImeSession(): Boolean {
+            val semanticsFocused = runCatching {
+                compose.onNodeWithTag("chat-composer").fetchSemanticsNode().config
+                    .getOrElse(SemanticsProperties.Focused) { false }
+            }.getOrDefault(false)
+            val state = imeSnapshot()
+            val events = state.getStringArrayList("events").orEmpty()
+            val session = state.getLong("session")
+            val connection = state.getString("connectionIdentity")
+            val packageName = state.getString("editorPackage")
+            val inputType = state.getInt("inputType")
+            focusSnapshot = "semanticsFocused=$semanticsFocused"
+            imeSnapshot = "serviceBound=${state.getBoolean("serviceBound")} " +
+                "connectionBound=${state.getBoolean("connectionBound")} session=$session " +
+                "connection=$connection package=$packageName inputType=$inputType " +
+                "startInputCount=${events.count { it.contains(" onStartInput restarting=") }}"
+            return semanticsFocused && state.getBoolean("serviceBound") &&
+                state.getBoolean("connectionBound") &&
+                events.count { it.contains(" onStartInput restarting=") } > startsBefore &&
+                session > previousSession.generation && connection != null &&
+                connection != previousSession.connection && packageName == ISOLATED_PACKAGE &&
+                inputType != android.text.InputType.TYPE_NULL
+        }
+
+        val firstTouchSettled = runCatching {
+            compose.waitUntil(5_000) { restoredFocusAndImeSession() }
+        }.isSuccess
+        if (!firstTouchSettled) {
+            Log.w(COMPOSER_IME_DIAGNOSTICS_TAG,
+                "RECREATION_FOCUS_RETRY uptimeNanos=${SystemClock.elapsedRealtimeNanos()} " +
+                    "stage=$stage $focusSnapshot $imeSnapshot")
+            // A successful UiAutomator injection only confirms dispatch, not that Compose's
+            // pointer/focus transaction and Android's new InputConnection have both settled.
+            // Re-dispatch once while the Activity remains resumed and window-focused.
+            var activityFocused = false
+            compose.activityRule.scenario.onActivity { activity ->
+                activityFocused = activity.lifecycle.currentState.isAtLeast(
+                    androidx.lifecycle.Lifecycle.State.RESUMED,
+                ) && activity.window.decorView.hasWindowFocus()
+            }
+            assertTrue("Cannot retry composer focus while its Activity/Window is not focused.", activityFocused)
+            compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            tapComposerThroughSystemInput()
+        }
+
+        var restored = false
+        val settled = runCatching {
+            compose.waitUntil(5_000) {
+                restored = restoredFocusAndImeSession()
+                restored
+            }
+        }.isSuccess
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "RECREATION_FOCUS_RESULT uptimeNanos=${SystemClock.elapsedRealtimeNanos()} " +
+                "stage=$stage settled=$settled $focusSnapshot $imeSnapshot")
+        assertTrue("Composer did not regain Compose focus with a fresh isolated IME session: " +
+            "$focusSnapshot $imeSnapshot", settled)
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        val session = awaitTestImeSession(startsBefore)
+        assertTrue("Activity recreation must create a new IME session generation.",
+            session.generation > previousSession.generation)
+        assertTrue("Activity recreation must bind a new InputConnection identity.",
+            session.connection != previousSession.connection)
+        return session
+    }
+
     private fun awaitComposerWindowFocus(stage: String) {
         var snapshot = "MainActivity unavailable"
         val focused = runCatching {
@@ -1614,6 +1689,7 @@ class SereaAppShellTest {
             awaitComposerImeState("R4-pre-recreation-selection", null) {
                 compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
             }
+            val sessionBeforeRecreation = currentTestImeSession()
             compose.activityRule.scenario.recreate()
             compose.waitUntil(10_000) {
                 compose.activity.chatViewModel.state.value.input == "draft!? survives navigation" &&
@@ -1632,8 +1708,11 @@ class SereaAppShellTest {
             ensureChatWindowFocus("after activity recreation")
             tapComposerThroughSystemInput()
             awaitComposerWindowFocus("after activity recreation")
-            recreatedComposer.assertIsFocused()
-            session = awaitTestImeSession(startsBeforeRecreatedFocus)
+            session = awaitRecreatedComposerFocus(
+                "after activity recreation",
+                startsBeforeRecreatedFocus,
+                sessionBeforeRecreation,
+            )
             imeOperation("setSelection", session, selectionStart = 8, selectionEnd = 8)
             awaitComposerImeState("R4-recreation-focus-restored", null) {
                 compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)

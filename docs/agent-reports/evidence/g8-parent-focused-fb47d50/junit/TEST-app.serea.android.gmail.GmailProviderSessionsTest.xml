@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.GmailProviderSessionsTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-29T00:46:18.293Z" hostname="3b4a6afe349d" time="0.129">
+  <properties/>
+  <testcase name="delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.024"/>
+  <testcase name="delayedGmailResponseIsDeniedAfterAppLocalDisable" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.006"/>
+  <testcase name="accountSwitchDuringTokenLeaseAcquisitionCannotDispatchAGmailRequest" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.002"/>
+  <testcase name="sharedGrantGenerationRejectsGmailResultBeforeObserverNotification" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.009"/>
+  <testcase name="callerCancellationStillCancelsItsOwnGmailRead" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="ownerEnabledSessionUsesTheProductionAdapterAndReplacementInvalidatesIt" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.049"/>
+  <testcase name="unknownAccountBindingAndExpiredAuthorizationFailBeforeNetwork" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.002"/>
+  <testcase name="replacingSessionImmediatelyAfterLeaseAcquisitionPreventsHttpDispatch" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="defaultAndMockAuthorizationStayOnClearlyFakeProvider" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.001"/>
+  <testcase name="grantRevocationBetweenDelegateCompletionAndDeliveryRejectsGmailResult" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="replacingSessionCancelsConcurrentReadsWithoutCancellingTheirParentOrSiblingCommunication" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.005"/>
+  <testcase name="grantRevocationCancelsPendingGmailHttpCallBeforeResponseBodyDelivery" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.015"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

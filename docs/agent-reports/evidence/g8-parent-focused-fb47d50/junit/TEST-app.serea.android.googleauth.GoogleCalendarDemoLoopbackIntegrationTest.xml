@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-29T00:46:18.957Z" hostname="3b4a6afe349d" time="0.09">
+  <properties/>
+  <testcase name="defaultProductDemoSessionIsFakeAndHasNoHttpDispatchCapability" classname="app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest" time="0.005"/>
+  <testcase name="viewModelStoreRetainsDemoSessionForRecreationAndClearsOnOwnerTeardown" classname="app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest" time="0.007"/>
+  <testcase name="consentConfirmOpensLoopbackListAndDetailThenAccountSwitchAndRevokeSuppressOldSession" classname="app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest" time="0.078"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 29, 2026 12:46:19 AM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[40839] connection from /127.0.0.1 didn't make a request
+]]></system-err>
+</testsuite>

@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreen
 import app.serea.android.calendar.ui.CalendarAgendaScreen
+import app.serea.android.calendar.CalendarProviderSession
 import app.serea.android.gmail.ui.GmailScreen
 import app.serea.android.gmail.ui.GmailViewModel
 import app.serea.android.gmail.GmailProviderKind
@@ -46,6 +48,9 @@ import app.serea.android.handoff.GoogleHandoffRejection
 import app.serea.android.handoff.TrustedGoogleHandoff
 import app.serea.android.handoff.HandoffDestination
 import app.serea.android.handoff.HandoffAuthorizationState
+import app.serea.android.handoff.trustedHandoffSource
+import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
+import java.time.Clock
 import java.time.ZoneId
 
 @Composable
@@ -69,6 +74,8 @@ internal fun SereaAppShell(
 ) {
     val activeProviders = providers ?: remember { AppProviderComposition.fakeDefault() }
     val chatState by chatViewModel.state.collectAsState()
+    val googleAuthorizationDemoViewModel: GoogleAuthorizationDemoViewModel = viewModel()
+    val googleDemoCalendarSession by googleAuthorizationDemoViewModel.calendarDemoSession.collectAsState()
     DisposableEffect(activeProviders) {
         onDispose { if (providers == null) activeProviders.close() }
     }
@@ -77,6 +84,10 @@ internal fun SereaAppShell(
     var focusClearRequest by rememberSaveable { mutableIntStateOf(0) }
     val destination = SereaNavigationState.restore(destinationName, backStackNames).current
     val canGoBack = backStackNames.isNotEmpty()
+    var showGoogleDemoCalendar by remember { mutableStateOf(false) }
+    LaunchedEffect(googleDemoCalendarSession) {
+        if (googleDemoCalendarSession == null) showGoogleDemoCalendar = false
+    }
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
     val saveableStateHolder = rememberSaveableStateHolder()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -87,6 +98,7 @@ internal fun SereaAppShell(
     val navigationColumns = 3
 
     fun navigate(target: SereaDestination) {
+        showGoogleDemoCalendar = false
         chatViewModel.beginEditorSelectionPreservationForNavigation()
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
@@ -169,8 +181,10 @@ internal fun SereaAppShell(
         return coordinator.preparePreview(request)
     }
 
-    BackHandler(enabled = taskProposalActionPending || canGoBack) {
-        if (!taskProposalActionPending) goBack()
+    BackHandler(enabled = showGoogleDemoCalendar || taskProposalActionPending || canGoBack) {
+        if (!taskProposalActionPending) {
+            if (showGoogleDemoCalendar) showGoogleDemoCalendar = false else goBack()
+        }
     }
 
     Scaffold(
@@ -209,7 +223,13 @@ internal fun SereaAppShell(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     androidx.compose.material3.TextButton(
-                        onClick = ::goBack,
+                        onClick = {
+                            if (destination == SereaDestination.SETTINGS && showGoogleDemoCalendar) {
+                                showGoogleDemoCalendar = false
+                            } else {
+                                goBack()
+                            }
+                        },
                         enabled = canGoBack && !taskProposalActionPending,
                         modifier = Modifier.testTag("destination_back"),
                     ) { Text("戻る") }
@@ -224,13 +244,39 @@ internal fun SereaAppShell(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 saveableStateHolder.SaveableStateProvider(destination.name) {
-                    when (destination) {
+                    if (showGoogleDemoCalendar && googleDemoCalendarSession != null) {
+                        val demoSession = checkNotNull(googleDemoCalendarSession)
+                        val demoCoordinator = remember(demoSession) {
+                            GoogleTrustedHandoffCoordinator(demoSession.trustedHandoffSource())
+                        }
+                        androidx.compose.runtime.key(demoSession) {
+                            CalendarAuthorizationDemoDestination(
+                                session = demoSession,
+                                coordinator = demoCoordinator,
+                                onBack = { showGoogleDemoCalendar = false },
+                                conversationId = chatState.conversation.id,
+                                conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                                onCreateHandoffPreview = { request ->
+                                    prepareGoogleHandoffPreview(demoCoordinator, request)
+                                },
+                                onHandoffConfirmed = { preview ->
+                                    confirmGoogleHandoff(demoCoordinator, preview)
+                                },
+                            )
+                        }
+                    } else when (destination) {
                         SereaDestination.CHAT -> ChatScreen(
                             chatViewModel = chatViewModel,
                             credentials = credentials,
                             usage = usage,
                             onOpenTasks = { navigate(SereaDestination.TASKS) },
                             onOpenSettings = { navigate(SereaDestination.SETTINGS) },
+                            googleAuthorizationDemoViewModel = googleAuthorizationDemoViewModel,
+                            onOpenGoogleCalendarDemo = { session ->
+                                if (googleAuthorizationDemoViewModel.calendarDemoSession.value === session) {
+                                    showGoogleDemoCalendar = true
+                                }
+                            },
                             focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASKS -> TaskScreen(taskViewModel)
@@ -256,6 +302,12 @@ internal fun SereaAppShell(
                             usage = usage,
                             settingsDestination = true,
                             onSettingsClosed = ::goBack,
+                            googleAuthorizationDemoViewModel = googleAuthorizationDemoViewModel,
+                            onOpenGoogleCalendarDemo = { session ->
+                                if (googleAuthorizationDemoViewModel.calendarDemoSession.value === session) {
+                                    showGoogleDemoCalendar = true
+                                }
+                            },
                             focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASK_PROPOSAL_DEMO -> taskProposalDemoContent(
@@ -268,6 +320,32 @@ internal fun SereaAppShell(
             }
         }
     }
+}
+
+@Composable
+private fun CalendarAuthorizationDemoDestination(
+    session: CalendarProviderSession,
+    coordinator: GoogleTrustedHandoffCoordinator,
+    onBack: () -> Unit,
+    conversationId: String,
+    conversationGeneration: Long,
+    onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
+    onHandoffConfirmed: suspend (GoogleHandoffPreview) -> Boolean,
+) {
+    val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
+    CalendarAgendaScreen(
+        onBack = onBack,
+        provider = session,
+        authorizationPort = session,
+        clock = Clock.systemUTC(),
+        displayZone = displayZone,
+        modifier = Modifier.fillMaxSize().testTag("google_auth_demo_calendar_destination"),
+        conversationId = conversationId,
+        conversationGeneration = conversationGeneration,
+        onCreateHandoffPreview = onCreateHandoffPreview,
+        onHandoffConfirmed = onHandoffConfirmed,
+        onCancelHandoffPreview = coordinator::cancelPreview,
+    )
 }
 
 @Composable

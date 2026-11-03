@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:28.280Z" hostname="3b4a6afe349d" time="0.03">
+  <properties/>
+  <testcase name="reconnectAfterAppLocalDisconnectRequiresConfirmationAndReplacesTheOldCalendarSession" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.005"/>
+  <testcase name="authorizationOutcomeMapsToUserFacingLifecycleWithoutLeakingFailureDetails" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.0"/>
+  <testcase name="queuedGrantCannotRestoreFakeScopesAfterInAppDisconnect" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.001"/>
+  <testcase name="sharedRevocationPreservesAppDisconnectUntilExplicitReconnect" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.002"/>
+  <testcase name="cancelledPreviewCallbackCannotConsumeOrGrantAReplacementPreview" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.002"/>
+  <testcase name="expiredCalendarReconnectOpensFreshPreviewAndKeepsOldSessionClosedUntilConfirm" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="queuedGrantCannotRestoreFakeScopesAfterSharedRevocation" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="fakeViewModelWalksThroughAuthorizationExpiryRevocationAndDisconnectStates" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.002"/>
+  <testcase name="confirmingOnePreviewTwiceCreatesOnlyOneCalendarSession" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.001"/>
+  <testcase name="rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="staleCalendarConfirmFromPreviousAccountCannotGrantOrCreateASession" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.001"/>
+  <testcase name="selectingAnotherSyntheticAccountClosesItsCalendarSessionBeforeReauthorization" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="staleCalendarConfirmCannotSubstituteForLaterGmailPreview" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="requestedLifecycleStatesAreExplicitAndDistinct" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.CalendarProviderSessionsTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:25.096Z" hostname="3b4a6afe349d" time="0.107">
+  <properties/>
+  <testcase name="delayedCalendarResponseIsDeniedAfterAppLocalDisable" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.007"/>
+  <testcase name="defaultAndMockAuthorizationStayOnFakeProvider" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.006"/>
+  <testcase name="delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.026"/>
+  <testcase name="grantRevocationCancelsPendingCalendarHttpCallBeforeResponseBodyDelivery" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.008"/>
+  <testcase name="unknownAccountBindingIsNotAuthorizedAndCannotReachCalendarHttp" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.003"/>
+  <testcase name="sharedGrantGenerationRejectsCalendarResultBeforeObserverNotification" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.004"/>
+  <testcase name="accountSwitchDuringTokenLeaseAcquisitionCannotDispatchACalendarRequest" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.002"/>
+  <testcase name="deniedAndExpiredAuthorizationDoNotReachTheHttpServer" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.002"/>
+  <testcase name="grantRevocationBetweenDelegateCompletionAndDeliveryRejectsCalendarResult" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.002"/>
+  <testcase name="ownerEnabledPlayServicesSessionUsesOnlyMockServerAndRevokesOldSession" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.005"/>
+  <testcase name="replacingSessionImmediatelyAfterLeaseAcquisitionPreventsCalendarHttpDispatch" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.029"/>
+  <testcase name="responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.006"/>
+  <testcase name="replacingSessionCancelsItsReadWithoutCancellingParentOrSiblingCommunication" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

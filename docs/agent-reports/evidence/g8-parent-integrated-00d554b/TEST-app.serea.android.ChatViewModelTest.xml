@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.ChatViewModelTest" tests="38" skipped="0" failures="0" errors="0" timestamp="2026-10-29T01:16:08.446Z" hostname="3b4a6afe349d" time="0.118">
+  <properties/>
+  <testcase name="timeoutEndsLoadingWithoutAutomaticRetry" classname="app.serea.android.ChatViewModelTest" time="0.022"/>
+  <testcase name="typedGoogleHandoffAuthorizationIsCarriedToEgressRequest" classname="app.serea.android.ChatViewModelTest" time="0.023"/>
+  <testcase name="newConversationCannotReceiveLateReply" classname="app.serea.android.ChatViewModelTest" time="0.004"/>
+  <testcase name="sendsUserMessageAndDemoReply" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="lateDefiniteProviderFailureAfterCancellationKeepsOutcomeUnknown" classname="app.serea.android.ChatViewModelTest" time="0.004"/>
+  <testcase name="failedUnknownStatusWriteIsReportedWithoutChangingNextRequestOwnership" classname="app.serea.android.ChatViewModelTest" time="0.008"/>
+  <testcase name="modelFailureIsShownAndLoadingEnds" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="completedReplyCannotBeCancelledBetweenPersistenceAndUiUpdate" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="softLimitValidationRejectsDailyRequestsAboveMonthlyRequests" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="navigationKeepsUnchangedDraftSelectionUntilComposerRegainsFocus" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="cancelledRequestCannotClearLoadingOrErrorForTheNextRequest" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="oversizedInputIsRejectedWithoutDispatch" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="clearingViewModelCannotInterruptPersistingDefiniteFailure" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="contextIsBoundedAndKeepsSourceClassification" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="conversationTitlesNormalizeWhitespaceAndKeepJapaneseEmojiAndWholeCodePoints" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="softLimitValidationAcceptsCorrectedPositiveLongValues" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="changingConversationDuringFinalizationClearsSavingStateAndAllowsNextSend" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="blockedUnknownStatusWriteForCancelledAProtectsBAndRejectsC" classname="app.serea.android.ChatViewModelTest" time="0.004"/>
+  <testcase name="unknownStatusNoopWarnsAndKeepsMessageVisible" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="reopeningPendingHistoryKeepsConversationVisibleWhenStatusWriteThrows" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="contextKeepsOriginAndExcludesOtherConversationMessages" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="olderUnknownWriteFailureDoesNotReplaceNewerRequestError" classname="app.serea.android.ChatViewModelTest" time="0.003"/>
+  <testcase name="explicitCancelStopsWaitingAndNeverRetries" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="mockConversationUsesPreviousTurnsInTheNextRequestContext" classname="app.serea.android.ChatViewModelTest" time="0.006"/>
+  <testcase name="handoffDestinationGenerationChangesWhenConversationSelectionChanges" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="softLimitValidationRejectsEmptyZeroAndNegativeValues" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="failedFailureStatusWriteReleasesChatAndReportsPersistenceError" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="staleConversationIdCannotDeleteCurrentConversation" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="conversationTitlesAreDerivedPerConversationAndLegacyTitlesRemainReadable" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="staleEditorCallbackFromSentComposerCannotRestoreDraft" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <testcase name="softLimitValidationRejectsNonNumericAndLongOverflow" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="newConversationPreservesBlankComposerGenerationButInvalidatesDiscardedDraft" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="softLimitValidationRejectsDailyTokensAboveMonthlyTokens" classname="app.serea.android.ChatViewModelTest" time="0.0"/>
+  <testcase name="modelOutputAndFutureContextRetainGoogleSourceLineage" classname="app.serea.android.ChatViewModelTest" time="0.003"/>
+  <testcase name="reopeningHistoryClearsWarningWhenTerminalStatusIsNowSaved" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="cancellationCannotInterruptPersistingDefiniteFailureForA" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="providerPrefillWithoutTrustedHandoffCannotReachChatRoute" classname="app.serea.android.ChatViewModelTest" time="0.001"/>
+  <testcase name="cancellingTimeoutStatusWriteStillMarksAUnknownWithoutChangingB" classname="app.serea.android.ChatViewModelTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

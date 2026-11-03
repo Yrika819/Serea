@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.LocalModelChatAdapterTest" tests="21" skipped="0" failures="0" errors="0" timestamp="2026-10-29T01:16:08.866Z" hostname="3b4a6afe349d" time="0.129">
+  <properties/>
+  <testcase name="closeBetweenGenerateEntryAndNativeStartReleasesUsageReservation" classname="app.serea.android.LocalModelChatAdapterTest" time="0.029"/>
+  <testcase name="closeDuringLoadCancelsLoadAndEventuallyReleasesBackend" classname="app.serea.android.LocalModelChatAdapterTest" time="0.005"/>
+  <testcase name="envelopeTamperExpiryAndReplayAreDeniedBeforeUsageReservation" classname="app.serea.android.LocalModelChatAdapterTest" time="0.008"/>
+  <testcase name="modelHashMismatchFailsBeforeNativeLoad" classname="app.serea.android.LocalModelChatAdapterTest" time="0.002"/>
+  <testcase name="generationFailureAfterNativeDispatchRemainsOutcomeUnknown" classname="app.serea.android.LocalModelChatAdapterTest" time="0.004"/>
+  <testcase name="closeDuringGenerationWaitsForCancellationBeforeNativeRelease" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="knownPreInferenceFailuresReleaseUsageAndDoNotReachNativeGeneration" classname="app.serea.android.LocalModelChatAdapterTest" time="0.008"/>
+  <testcase name="adapterMatchesModelChatPortAndCarriesMeasuredUsageAcrossTurns" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="providerHandoffRequiresCurrentTypedEvidenceAndCannotBeReused" classname="app.serea.android.LocalModelChatAdapterTest" time="0.005"/>
+  <testcase name="nativeLoadFailureDiscardsEngineBeforeRetry" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="nativeFailureDiscardsEngineAndNextRequestGetsFreshBackend" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="cancellingLocalConsentRevokesPendingOneUseProof" classname="app.serea.android.LocalModelChatAdapterTest" time="0.001"/>
+  <testcase name="cloudOrDemoContractCannotReachLocalBackend" classname="app.serea.android.LocalModelChatAdapterTest" time="0.001"/>
+  <testcase name="preGenerationCancellationReleasesUsageReservation" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="localModelConsentExpiresAtExactDeadline" classname="app.serea.android.LocalModelChatAdapterTest" time="0.002"/>
+  <testcase name="closeBeforeBackendPublicationPreventsLoadAndClosesLateFactoryResult" classname="app.serea.android.LocalModelChatAdapterTest" time="0.006"/>
+  <testcase name="cancellationCallsNativeCancelAndCloseReleasesBackend" classname="app.serea.android.LocalModelChatAdapterTest" time="0.004"/>
+  <testcase name="routedEgressUsageAndLocalAdapterComposeWithTestOnlyDescriptor" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="handoffValidationRechecksBindingAndClockAfterSuspension" classname="app.serea.android.LocalModelChatAdapterTest" time="0.004"/>
+  <testcase name="postGenerationCancellationRemainsOutcomeUnknown" classname="app.serea.android.LocalModelChatAdapterTest" time="0.003"/>
+  <testcase name="usageAttributionUsesRealLocalModelIdentityWithoutInventingPrice" classname="app.serea.android.LocalModelChatAdapterTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

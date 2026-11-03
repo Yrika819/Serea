@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:27.698Z" hostname="3b4a6afe349d" time="0.034">
+  <properties/>
+  <testcase name="calendarAThenBDiscardsLateResultFromCancelledRequest" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.005"/>
+  <testcase name="authorizedSessionAcceptsOnlyGoogleCalendarSourcedRecords" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.002"/>
+  <testcase name="allDayExclusiveEndAndNullTimeDetailsStayExplicit" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="retryRecoversAfterTransientTimeoutAndCloseCancelsWithoutPublishingError" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.002"/>
+  <testcase name="todayTomorrowUpcomingAndSelectedDateUseCalendarDayQueries" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="selectedCalendarFiltersResultsAndPaginationDeduplicatesInReverseOrder" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="emptyAgendaAndEmptyCalendarListAreDistinctSuccessfulStates" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="detailRejectsAKeyOutsideTheSelectedCalendarBeforeProviderRead" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.0"/>
+  <testcase name="choosingSpecifiedDateSeedsAnEmptyDateFieldFromInjectedClockAndZone" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="selectingCalendarThenUpcomingKeepsLatestScopeAndLoadsPagedEventFifty" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.003"/>
+  <testcase name="returningToCachedAgendaRejectsLateFailureFromCancelledDetailRequest" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.004"/>
+  <testcase name="mockOnlyIsVisibleAndPermissionFailuresNeverBecomeSuccess" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="timeoutPartialFailureRateLimitAndUnknownTimezoneMapToSafeStates" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.005"/>
+  <testcase name="detailProviderCancellationEndsLoadingAndCanBeRetried" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.002"/>
+  <testcase name="todayAndTomorrowChangeAtExplicitUtcTokyoAndDstLocalDayBoundaries" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="recurringIdentityIsStableAndCancelledEventsRemainDetailOnly" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <testcase name="providerCancellationEndsLoadingAndCanBeRetried" classname="app.serea.android.calendar.ui.CalendarAgendaUiControllerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.ui.CalendarAgendaFormattingTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:27.684Z" hostname="3b4a6afe349d" time="0.011">
+  <properties/>
+  <testcase name="allDayDateAcrossDstRemainsItsCalendarLocalDateInsteadOfUtcConvertedDate" classname="app.serea.android.calendar.ui.CalendarAgendaFormattingTest" time="0.01"/>
+  <testcase name="springGapAndFallOverlapFormatFromInstantsWithoutInventingLocalTimes" classname="app.serea.android.calendar.ui.CalendarAgendaFormattingTest" time="0.001"/>
+  <testcase name="timedEventsUseInjectedDisplayZoneAndRetainOriginalZone" classname="app.serea.android.calendar.ui.CalendarAgendaFormattingTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

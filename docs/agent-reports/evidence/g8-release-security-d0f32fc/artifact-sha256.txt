@@ -1,0 +1,2 @@
+b9189b8331bc94f58b703924eb1104b555dd71e49f97c513c9f4c8a35aaf192d  android/app/build/outputs/apk/debug/app-debug.apk
+5de2529e71b6c1e33b41e74b7834ec7d1bb142eede3a84e8df16f5fe47a76a6c  docs/agent-reports/evidence/g8-release-security-d0/android-debug-artifact-bound.cdx.json

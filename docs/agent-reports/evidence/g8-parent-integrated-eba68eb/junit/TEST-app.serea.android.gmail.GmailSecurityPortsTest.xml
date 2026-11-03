@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.GmailSecurityPortsTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:27.867Z" hostname="3b4a6afe349d" time="0.077">
+  <properties/>
+  <testcase name="parserRejectsNonemptyTextPartsWithoutInlineDataAndAcceptsExplicitEmptyBody" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.003"/>
+  <testcase name="fakeReadsRequireFakeOnlyMockAuthorizationAndRejectRevokedExpiredAndMissingScopes" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.002"/>
+  <testcase name="messageLineageAndReadOnlyBoundaryBlockModelEgressAndPreventLogLeaks" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.0"/>
+  <testcase name="parserIgnoresAttachmentSubtreesAndRejectsInconsistentBodySize" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.002"/>
+  <testcase name="parserAcceptsMissingOptionalFieldsButRejectsMissingRequiredFields" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.0"/>
+  <testcase name="parserSupportsBase64UrlAndDeclaredCharset" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.001"/>
+  <testcase name="parserEnforcesJsonBodyDepthAndMalformedEncodingLimits" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.054"/>
+  <testcase name="pagingCountsUniqueIdsWithinEachPageAndRejectsConflictingMessagesAndRepeatedTokens" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.003"/>
+  <testcase name="portHasOnlyReadOperationsAndCancellationPropagates" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.0"/>
+  <testcase name="parserReadsPlainBodyAndNestedAlternativePrefersPlain" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.003"/>
+  <testcase name="permissionIsReadOnlyAndMockOnlyIsNotAuthorized" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.001"/>
+  <testcase name="htmlIsReducedToTextWithoutActiveContentOrRemoteAttributes" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.0"/>
+  <testcase name="parserKeepsIndependentMixedBodiesAndRejectsUnsupportedIncompleteMime" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.005"/>
+  <testcase name="fakeFailureFixturesCoverDenialRateLimitTimeoutAndPartialFailure" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.001"/>
+  <testcase name="fakeInboxSearchThreadAndPaginationAreFictionalAndDeterministic" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.001"/>
+  <testcase name="fakeSupportsDuplicateIdsEmptyPagesAndTokenValidation" classname="app.serea.android.gmail.GmailSecurityPortsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

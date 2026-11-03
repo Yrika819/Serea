@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.UsageLedgerCostTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-29T00:46:18.034Z" hostname="3b4a6afe349d" time="0.011">
+  <properties/>
+  <testcase name="testFixturePricingRejectsNegativeMalformedCurrencyAndMissingSource" classname="app.serea.android.UsageLedgerCostTest" time="0.002"/>
+  <testcase name="pricingSnapshotsKeepTheirOwnRevisionAndCannotBeMutatedByLaterPrice" classname="app.serea.android.UsageLedgerCostTest" time="0.001"/>
+  <testcase name="inputAndOutputPricesAreAppliedSeparatelyWithDecimalArithmetic" classname="app.serea.android.UsageLedgerCostTest" time="0.0"/>
+  <testcase name="staleMismatchedOrNotYetEffectivePriceEvidenceStaysUnknown" classname="app.serea.android.UsageLedgerCostTest" time="0.002"/>
+  <testcase name="catalogAttributionUsesOnlyExactFreshEntitledModelAndExplicitDecimalPriceEvidence" classname="app.serea.android.UsageLedgerCostTest" time="0.002"/>
+  <testcase name="zeroUsageHasKnownZeroCostOnlyWhenPriceIsVerified" classname="app.serea.android.UsageLedgerCostTest" time="0.0"/>
+  <testcase name="catalogAttributionRejectsStaleOrUnauthorizedModelsBeforeUsageCanBeReserved" classname="app.serea.android.UsageLedgerCostTest" time="0.002"/>
+  <testcase name="veryLargeTokenCountsDoNotUseFloatingPointOrOverflowLongMultiplication" classname="app.serea.android.UsageLedgerCostTest" time="0.0"/>
+  <testcase name="missingUsageAndNegativeTokensRemainUnknown" classname="app.serea.android.UsageLedgerCostTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

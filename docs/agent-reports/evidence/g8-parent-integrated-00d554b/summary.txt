@@ -1,0 +1,19 @@
+Parent integrated candidate JVM verification — 2026-10-29 UTC
+
+Source HEAD: 00d554b56c93a27704748fa2923b0c0a180588ed
+Tree:       fbd019ed91b7dc9f5e776f0873ff8e895b76ab9f
+Branch:     codex/serea-g8-integration-candidate-20261029-r1
+Host:       Linux x86_64, Temurin 17 JDK
+
+Command:
+JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH \
+  ./gradlew --no-daemon :app:testDebugUnitTest
+
+Result: BUILD SUCCESSFUL in 32s. The full Android JVM suite produced 34 JUnit
+suites, 404 tests, 0 failures, 0 errors, and 0 skipped. The repository JUnit
+verifier passed source/JUnit discovery and complete-result checks. The XML
+files are copied verbatim from Gradle output; SHA-256 values are in SHA256SUMS.
+
+The source includes the parent-integrated, immutable consent preview fix and
+stale-callback regressions. This is JVM evidence; Android emulator/UI runtime
+and physical-device execution are not represented.

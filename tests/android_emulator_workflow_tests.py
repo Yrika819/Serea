@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import os
 import subprocess
@@ -961,9 +962,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertEqual(1, campaign.count(helper))
         stage_start = campaign.index('run_diagnostic_stage google-calendar-and-gmail-ui')
         process_death = campaign.index(helper)
+        verified_target_install = campaign.index('bash "$tool_dir/ensure_verified_isolated_target.sh"')
         post_stage_cleanup = campaign.index('# This campaign owns only the isolated CI target and test packages on a verified disposable')
         self.assertLess(stage_start, process_death)
+        self.assertLess(verified_target_install, process_death)
         self.assertLess(process_death, post_stage_cleanup)
+        self.assertIn('"$isolated_apk" "$fake_google_process_death_evidence/target-install.txt"', campaign)
+        self.assertIn("Could not safely query the isolated target package; refusing installation.",
+                      (ROOT / "tools/ensure_verified_isolated_target.sh").read_text(encoding="utf-8"))
         process_death_guard = campaign.rfind('if [[ "$google_demo_ui_stage_result" -eq 0 ]]; then', stage_start, process_death)
         self.assertNotEqual(-1, process_death_guard)
         self.assertEqual(1, campaign.count('verify_args+=(--require-test "$identity")'))
@@ -1027,6 +1033,97 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     self.assertIn(stderr, diagnostic, mode)
                 else:
                     self.assertEqual("", diagnostic, mode)
+
+    def test_fake_google_process_death_reinstalls_only_the_verified_isolated_apk(self) -> None:
+        helper = ROOT / "tools/ensure_verified_isolated_target.sh"
+        apk_bytes = b"synthetic isolated APK bytes"
+        expected_sha = hashlib.sha256(apk_bytes).hexdigest()
+
+        def run_helper(*, installed: bool, installed_sha: str, path_mode: str = "normal"):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                bindir = root / "bin"
+                bindir.mkdir()
+                apk = root / "app-isolated.apk"
+                apk.write_bytes(apk_bytes)
+                installed_marker = root / "installed"
+                trace = root / "adb.trace"
+                if installed:
+                    installed_marker.touch()
+                adb = bindir / "adb"
+                adb.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
+                    "printf '%s\\n' \"$*\" >> \"$ADB_TRACE\"\n"
+                    "if [[ \"$1\" == devices ]]; then\n"
+                    "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell getprop ro.build.version.sdk' ]]; then\n"
+                    "  printf '%s\\n' \"$ANDROID_TEST_API\"\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell getprop ro.kernel.qemu' ]]; then\n"
+                    "  printf '1\\n'\n"
+                    "elif [[ \"$1 $2 $3\" == 'shell pm path' ]]; then\n"
+                    "  if [[ \"$FAKE_PATH_MODE\" == transport_failure ]]; then echo 'adb: device offline' >&2; exit 73; fi\n"
+                    "  if [[ -e \"$INSTALLED_MARKER\" ]]; then printf 'package:/data/app/isolated/base.apk\\n'; else exit 1; fi\n"
+                    "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' ]]; then\n"
+                    "  if [[ -e \"$INSTALLED_MARKER\" ]]; then printf 'package:app.serea.android.isolated\\n'; fi\n"
+                    "elif [[ \"$1\" == install ]]; then\n"
+                    "  [[ \"$2\" == \"$EXPECTED_APK\" ]] || exit 74\n"
+                    "  touch \"$INSTALLED_MARKER\"\n"
+                    "elif [[ \"$1 $2\" == 'shell sha256sum' ]]; then\n"
+                    "  printf '%s  %s\\n' \"$FAKE_INSTALLED_SHA\" \"$4\"\n"
+                    "fi\n",
+                    encoding="utf-8",
+                )
+                adb.chmod(0o755)
+                evidence = root / "evidence" / "target-install.txt"
+                environment = os.environ.copy()
+                environment.update({
+                    "PATH": f"{bindir}{os.pathsep}{environment['PATH']}",
+                    "CI": "true",
+                    "GITHUB_ACTIONS": "true",
+                    "GITHUB_RUN_ID": "12345",
+                    "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                    "EXPECTED_API_LEVEL": "26",
+                    "ANDROID_TEST_API": "26",
+                    "ADB_TRACE": str(trace),
+                    "INSTALLED_MARKER": str(installed_marker),
+                    "EXPECTED_APK": str(apk),
+                    "FAKE_INSTALLED_SHA": installed_sha,
+                    "FAKE_PATH_MODE": path_mode,
+                })
+                result = subprocess.run(
+                    ["bash", str(helper), str(apk), str(evidence)],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                calls = trace.read_text(encoding="utf-8") if trace.exists() else ""
+                evidence_text = evidence.read_text(encoding="utf-8") if evidence.exists() else ""
+                return result, calls, evidence_text
+
+        result, calls, evidence = run_helper(installed=False, installed_sha=expected_sha)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("install /", calls)
+        self.assertIn("installation=installed-exact-candidate-apk", evidence)
+        self.assertIn(f"candidate_apk_sha256={expected_sha}", evidence)
+        self.assertIn(f"installed_apk_sha256={expected_sha}", evidence)
+
+        wrong_sha = "0" * 64
+        result, calls, evidence = run_helper(installed=True, installed_sha=wrong_sha)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("does not match the candidate APK", result.stderr)
+        self.assertNotIn("install /", calls)
+        self.assertEqual("", evidence)
+
+        result, calls, evidence = run_helper(
+            installed=False, installed_sha=expected_sha, path_mode="transport_failure"
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Could not safely query", result.stderr)
+        self.assertNotIn("install /", calls)
+        self.assertEqual("", evidence)
 
     def test_host_seed_uses_stdin_and_fails_closed_on_uid_or_package_path(self) -> None:
         helper = ROOT / "tools/prepare_isolated_instrumentation_target.sh"

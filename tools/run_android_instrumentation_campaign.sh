@@ -741,7 +741,11 @@ TESTS
   if [[ "$google_demo_ui_stage_result" -eq 0 ]]; then
     fake_google_process_death_evidence="$evidence/stages/google-calendar-and-gmail-ui/fake-google-process-death"
     mkdir -p "$fake_google_process_death_evidence"
-    if EXPECTED_API_LEVEL="$api_level" \
+    if ! bash "$tool_dir/ensure_verified_isolated_target.sh" \
+      "$isolated_apk" "$fake_google_process_death_evidence/target-install.txt"; then
+      printf 'FAIL\n' > "$fake_google_process_death_evidence/status.txt"
+      google_demo_ui_stage_result=1
+    elif EXPECTED_API_LEVEL="$api_level" \
       SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1 \
       SEREA_FAKE_GOOGLE_DEATH_TOKEN="serea-fake-google-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
       SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR="$fake_google_process_death_evidence" \

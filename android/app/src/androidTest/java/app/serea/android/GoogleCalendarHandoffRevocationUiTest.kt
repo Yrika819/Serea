@@ -42,7 +42,8 @@ class GoogleCalendarHandoffRevocationUiTest {
         compose.onNodeWithTag("google_auth_demo_account_account_b").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
         compose.onNodeWithText("Calendarの認可プレビュー").assertTextContains("Calendar", substring = true)
-        compose.onNodeWithText("選択中: 架空アカウント B").assertTextContains("B")
+        compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
+            .assertTextContains("承認が必要（デモ）", substring = true)
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
         compose.waitUntil(5_000) { authViewModel.calendarDemoSession.value != null }
         val authorizedSession = checkNotNull(authViewModel.calendarDemoSession.value)

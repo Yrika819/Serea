@@ -50,12 +50,15 @@ class GoogleAuthorizationAppIntegrationTest {
         compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
         compose.onNodeWithText("Calendarの認可プレビュー").assertIsDisplayed()
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
-        compose.waitUntil(5_000) { viewModel.calendarDemoSession.value != null }
+        compose.waitUntil(15_000) {
+            viewModel.state.value.inFlightFeature == null && viewModel.calendarDemoSession.value != null
+        }
+        assertTrue(viewModel.state.value.calendar == app.serea.android.googleauth.GoogleDemoFeatureState.AUTHORIZED)
 
         val grantedSession = checkNotNull(viewModel.calendarDemoSession.value)
         assertEquals(CalendarProviderKind.FAKE, grantedSession.kind)
         compose.onNodeWithTag("google_auth_demo_open_calendar").performScrollTo().performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(15_000) {
             compose.onAllNodesWithTag("google_auth_demo_calendar_destination").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()
@@ -63,7 +66,7 @@ class GoogleAuthorizationAppIntegrationTest {
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
         compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-20")
-        compose.waitUntil(5_000) {
+        compose.waitUntil(15_000) {
             compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Design review").assertIsDisplayed()

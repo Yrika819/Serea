@@ -937,16 +937,23 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch",
             "app.serea.android.GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm",
             "app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeGmailPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeCalendarPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailOutOfOrderPreviewCallbackCannotReplaceNewestSelection",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClosedAndDialogRemainsCancellable",
+            "app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview",
         }
         focused = campaign.split("google_demo_ui_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
         actual = {line.strip() for line in focused.splitlines() if line.strip()}
         self.assertEqual(expected, actual)
-        self.assertEqual(9, len(actual))
+        self.assertEqual(16, len(actual))
         self.assertTrue(expected.issubset(set(manifest.splitlines())))
         self.assertFalse(expected.intersection(required.splitlines()))
         self.assertFalse(expected.intersection(additional.splitlines()))
-        self.assertIn("if [[ \"$api_level\" == 35 && \"$junit_result\" == PASS", campaign)
-        self.assertIn("run_diagnostic_stage google-calendar-and-gmail-ui \"$google_demo_ui_filter\" 1200 9 ''", campaign)
+        self.assertIn('if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS', campaign)
+        self.assertIn('run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 16', campaign)
         helper = 'bash "$tool_dir/run_android_fake_google_process_death.sh"'
         self.assertIn("GoogleCalendarHandoffRevocationUiTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
         self.assertIn('SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1', campaign)
@@ -986,58 +993,40 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('if ! existing_target_paths="$(android_package_path app.serea.android.isolated)"', campaign)
         self.assertIn('FAIL: ADB package query failed during focused UI cleanup verification', campaign)
         self.assertIn('if [[ "$google_demo_ui_stage_result" -eq 0 && "$google_demo_ui_cleanup_result" -eq 0 ]]; then', campaign)
-        with tempfile.TemporaryDirectory() as temporary:
-            temporary_path = Path(temporary)
-            bindir = temporary_path / "bin"
-            bindir.mkdir()
+        with tempfile.TemporaryDirectory() as temp:
+            bindir = Path(temp)
             fake_adb = bindir / "adb"
             fake_adb.write_text(
                 "#!/usr/bin/env bash\n"
-                "if [[ \"${FAKE_ADB_MODE:-}\" == fail ]]; then exit 73; fi\n"
-                "printf '%s' \"${FAKE_ADB_PACKAGE_PATH:-}\"\n"
-                "exit 0\n",
+                "case \"${FAKE_ADB_MODE:-}\" in\n"
+                "  path) printf 'package:/data/app/example/base.apk\r\n'; exit 0 ;;\n"
+                "  absent) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; exit 0 ;;\n"
+                "  listed) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; printf 'package:app.serea.android.isolated\n'; exit 0 ;;\n"
+                "  offline) echo 'adb: device offline' >&2; exit 73 ;;\n"
+                "  list_offline) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; echo 'adb: device offline' >&2; exit 73 ;;\n"
+                "  malformed) echo 'Error: package lookup failed'; exit 0 ;;\n"
+                "esac\nexit 0\n",
                 encoding="utf-8",
             )
             fake_adb.chmod(0o755)
-            command = (
-                'source "$1"; '
-                'if output="$(android_package_path app.serea.android.isolated)"; then '
-                'printf "status=0 path=%s\\n" "$output"; '
-                'else status=$?; printf "status=%s\\n" "$status"; fi'
-            )
-            env = os.environ.copy()
-            env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
-            env["FAKE_ADB_MODE"] = "fail"
-            failure = subprocess.run(
-                ["bash", "-c", command, "bash", str(helper)],
-                cwd=ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            self.assertEqual("status=2\n", failure.stdout)
-            env.pop("FAKE_ADB_MODE")
-            env["FAKE_ADB_PACKAGE_PATH"] = ""
-            absent = subprocess.run(
-                ["bash", "-c", command, "bash", str(helper)],
-                cwd=ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            self.assertEqual("status=0 path=\n", absent.stdout)
-            env["FAKE_ADB_PACKAGE_PATH"] = "package:/data/app/app.serea.android.isolated/base.apk"
-            installed = subprocess.run(
-                ["bash", "-c", command, "bash", str(helper)],
-                cwd=ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            self.assertEqual("status=0 path=package:/data/app/app.serea.android.isolated/base.apk\n", installed.stdout)
+            command = 'source "$1"; set +e; output=$(android_package_path app.serea.android.isolated 2>"$TMPERR"); result=$?; printf "status=%s output=%s\n" "$result" "$output"'
+            common = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "TMPERR": str(bindir / "stderr")}
+            for mode, expected, stderr in (
+                ("path", "status=0 output=package:/data/app/example/base.apk", ""),
+                ("absent", "status=0 output=", ""),
+                ("listed", "status=2 output=", "lists app.serea.android.isolated"),
+                ("offline", "status=2 output=", "adb: device offline"),
+                ("list_offline", "status=2 output=", "Could not independently verify"),
+                ("malformed", "status=2 output=", "unexpected output"),
+            ):
+                env = {**common, "FAKE_ADB_MODE": mode}
+                result = subprocess.run(["bash", "-c", command, "bash", str(helper)], cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+                self.assertEqual(expected, result.stdout.strip(), mode)
+                diagnostic = Path(env["TMPERR"]).read_text(encoding="utf-8")
+                if stderr:
+                    self.assertIn(stderr, diagnostic, mode)
+                else:
+                    self.assertEqual("", diagnostic, mode)
 
     def test_host_seed_uses_stdin_and_fails_closed_on_uid_or_package_path(self) -> None:
         helper = ROOT / "tools/prepare_isolated_instrumentation_target.sh"

@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -57,7 +57,7 @@ import java.time.ZoneId
 /** UI-to-agenda test using a test-only session factory pinned to this process's loopback server. */
 @RunWith(AndroidJUnit4::class)
 class GoogleCalendarDemoLoopbackUiTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule val compose = createComposeRule()
     private val server = MockWebServer().apply { start() }
     private var viewModel: GoogleAuthorizationDemoViewModel? = null
     private val hostileCalendarDescription =

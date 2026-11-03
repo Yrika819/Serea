@@ -298,8 +298,6 @@ jobs:
           grep -Fx "isolated_apk_path=android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk" "$provenance"
           grep -Fx "isolated_apk_package=app.serea.android.isolated" "$provenance"
           grep -Fx "isolated_apk_package=app.serea.android.isolated.test" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated" "$provenance"
-          grep -Fx "isolated_apk_package=app.serea.android.isolated.test" "$provenance"
           printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
             "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/api26-build-provenance.txt"
           : > "$RUNNER_TEMP/api26-apk-checksums.txt"
@@ -314,6 +312,8 @@ jobs:
           done
           echo "target_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
           echo "test_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$test_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
+          echo "target_sha256=$(sed -n '1s/ .*//p' "$RUNNER_TEMP/api26-apk-checksums.txt")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
+          echo "test_sha256=$(sed -n '2s/ .*//p' "$RUNNER_TEMP/api26-apk-checksums.txt")" >> "$RUNNER_TEMP/api26-build-provenance.txt"
       - name: Install API 26 emulator image and host runtime
         run: |
           sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86' 'build-tools;35.0.0' emulator
@@ -344,6 +344,25 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: bash ../tools/run_android_instrumentation_campaign.sh 26
+      - name: Save API 26 campaign logcat diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence='android/app/build/outputs/androidTest-results/api26'
+          if [ -s "$evidence/logcat-live.txt" ]; then
+            cp "$evidence/logcat-live.txt" "$evidence/logcat-selected.txt"
+          fi
+      - name: Prepare API 26 artifact with producer provenance
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence='android/app/build/outputs/androidTest-results/api26'
+          test -d "$evidence"
+          test -s "$RUNNER_TEMP/api26-build-provenance.txt"
+          cp "$RUNNER_TEMP/api26-build-provenance.txt" "$evidence/api26-build-provenance.txt"
+          echo "artifact_producer=android-emulator-api26" >> "$evidence/api26-build-provenance.txt"
+          echo "producer_attempt=$GITHUB_RUN_ATTEMPT" >> "$evidence/api26-build-provenance.txt"
+          if [ -s "$RUNNER_TEMP/api26-host-diagnostics.txt" ]; then cp "$RUNNER_TEMP/api26-host-diagnostics.txt" "$evidence/host-diagnostics.txt"; fi
       - name: Upload API 26 formal evidence and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -351,10 +370,7 @@ jobs:
           name: serea-android-formal-api26-provisional
           if-no-files-found: error
           retention-days: 14
-          path: |
-            android/app/build/outputs/androidTest-results/api26/
-            ${{ runner.temp }}/api26-build-provenance.txt
-            ${{ runner.temp }}/api26-host-diagnostics.txt
+          path: android/app/build/outputs/androidTest-results/api26/
 
   android-emulator-api35:
     name: Android Formal API 35
@@ -403,6 +419,8 @@ jobs:
           grep -Fx "github_run_id=$GITHUB_RUN_ID" "$provenance"
           grep -Fx "isolated_apk_path=android/app/build/outputs/apk/isolated/app-isolated.apk" "$provenance"
           grep -Fx "isolated_apk_path=android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk" "$provenance"
+          grep -Fx "isolated_apk_package=app.serea.android.isolated" "$provenance"
+          grep -Fx "isolated_apk_package=app.serea.android.isolated.test" "$provenance"
           printf 'source_sha=%s\nbuild_checkout_sha=%s\nrun_id=%s\nattempt=%s\n' \
             "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/api35-build-provenance.txt"
           : > "$RUNNER_TEMP/api35-apk-checksums.txt"
@@ -417,6 +435,8 @@ jobs:
           done
           echo "target_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$target" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
           echo "test_package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$test_apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
+          echo "target_sha256=$(sed -n '1s/ .*//p' "$RUNNER_TEMP/api35-apk-checksums.txt")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
+          echo "test_sha256=$(sed -n '2s/ .*//p' "$RUNNER_TEMP/api35-apk-checksums.txt")" >> "$RUNNER_TEMP/api35-build-provenance.txt"
       - name: Install API 35 emulator image and host runtime
         run: |
           sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0' emulator
@@ -447,6 +467,25 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: bash ../tools/run_android_api35_campaign.sh
+      - name: Save API 35 campaign logcat diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence='android/app/build/outputs/androidTest-results/api35'
+          if [ -s "$evidence/logcat-live.txt" ]; then
+            cp "$evidence/logcat-live.txt" "$evidence/logcat-selected.txt"
+          fi
+      - name: Prepare API 35 artifact with producer provenance
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence='android/app/build/outputs/androidTest-results/api35'
+          test -d "$evidence"
+          test -s "$RUNNER_TEMP/api35-build-provenance.txt"
+          cp "$RUNNER_TEMP/api35-build-provenance.txt" "$evidence/api35-build-provenance.txt"
+          echo "artifact_producer=android-emulator-api35" >> "$evidence/api35-build-provenance.txt"
+          echo "producer_attempt=$GITHUB_RUN_ATTEMPT" >> "$evidence/api35-build-provenance.txt"
+          if [ -s "$RUNNER_TEMP/api35-host-diagnostics.txt" ]; then cp "$RUNNER_TEMP/api35-host-diagnostics.txt" "$evidence/host-diagnostics.txt"; fi
       - name: Upload API 35 formal evidence and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -454,239 +493,115 @@ jobs:
           name: serea-android-formal-api35-provisional
           if-no-files-found: error
           retention-days: 14
-          path: |
-            android/app/build/outputs/androidTest-results/api35/
-            ${{ runner.temp }}/api35-build-provenance.txt
-            ${{ runner.temp }}/api35-host-diagnostics.txt
+          path: android/app/build/outputs/androidTest-results/api35/
 
   android-storage-emulator:
     name: Android Storage and Emulator
-    needs: [android-changes, android-build]
-    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
+    needs: [android-changes, android-build, android-emulator-api26, android-emulator-api35]
+    if: always() && needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 30
     outputs:
       instrumentation: ${{ steps.instrumentation.outputs.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 1
           persist-credentials: false
           ref: ${{ github.sha }}
       - name: Verify exact checkout commit
         shell: bash
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
-      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+      - name: Download API 26 evidence
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+          name: serea-android-formal-api26-provisional
+          path: android/app/build/outputs/androidTest-results/api26
+      - name: Download API 35 evidence
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          packages: platform-tools
-      - name: Install API 35 emulator image
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
-      - name: Install Emulator host runtime dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
-      - name: Diagnose KVM before permission changes
-        if: always() && !cancelled()
-        run: |
-          set +e
-          echo '### KVM pre-change diagnostics' >> "$GITHUB_STEP_SUMMARY"
-          id
-          printf 'groups: '; id -nG
-          if [ -e /dev/kvm ]; then
-            stat -Lc 'device=%n owner=%U group=%G mode=%a major=%t minor=%T' /dev/kvm
-            test -r /dev/kvm; echo "runner_readable=$?"
-            test -w /dev/kvm; echo "runner_writable=$?"
-          else
-            echo '/dev/kvm: absent'
-          fi
-          grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
-          lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
-          command -v kvm-ok >/dev/null && sudo kvm-ok || echo 'kvm-ok unavailable or reported failure'
-          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1; echo "emulator_accel_check_exit=$?"
-          {
-            echo '```text'
-            id
-            id -nG
-            ls -l /dev/kvm 2>&1
-            stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1
-            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
-            lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
-            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          set -e
-      - name: Apply official KVM udev permissions
-        if: always() && !cancelled()
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          if [ ! -e /dev/kvm ]; then
-            echo '### Emulator BLOCKED: /dev/kvm is absent on this Ubuntu 24.04 hosted runner.' >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          stat -Lc 'post-rule device=%n owner=%U group=%G mode=%a' /dev/kvm
-          test -r /dev/kvm && test -w /dev/kvm
-          "$ANDROID_HOME/emulator/emulator" -accel-check
-      - name: Initialize API-specific evidence as NOT_RUN
-        if: always() && !cancelled()
+          name: serea-android-formal-api35-provisional
+          path: android/app/build/outputs/androidTest-results/api35
+      - name: Verify API evidence provenance, JUnit, and isolation results
+        id: instrumentation
+        if: always()
+        env:
+          API26_JOB_RESULT: ${{ needs.android-emulator-api26.result }}
+          API35_JOB_RESULT: ${{ needs.android-emulator-api35.result }}
+          BUILD_JOB_RESULT: ${{ needs.android-build.result }}
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BUILD_SHA: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           root='android/app/build/outputs/androidTest-results'
-          rm -rf "$root/connected" "$root/api35" "$root/api26"
-          for api in 35 26; do
-            mkdir -p "$root/api$api"
-            printf 'NOT_RUN\n' > "$root/api$api/instrumentation-status.txt"
-            printf 'NOT_RUN\n' > "$root/api$api/process-death-status.txt"
-            printf 'NOT_RUN\n' > "$root/api$api/device-api-level.txt"
-          done
-      - name: Install API 26 emulator image
-        if: always() && !cancelled()
-        run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
-      - name: Run API 26 Pixel emulator and all instrumentation tests
-        id: api26
-        if: always() && !cancelled()
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
-        env:
-          SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 90
-        with:
-          api-level: 26
-          target: google_apis
-          arch: x86
-          profile: pixel
-          emulator-boot-timeout: 900
-          disable-linux-hw-accel: false
-          working-directory: android
-          script: bash ../tools/run_android_instrumentation_campaign.sh 26
-      - name: Save API 26 failure semantics and safety logcat
-        if: always() && !cancelled()
-        run: |
-          set -euo pipefail
-          output='android/app/build/outputs/androidTest-results/api26/logcat-selected.txt'
-          mkdir -p "$(dirname "$output")"
-          live='android/app/build/outputs/androidTest-results/api26/logcat-live.txt'
-          : > "$output"
-          if [ -f "$live" ]; then
-            grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
-          fi
-          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
-          if [ -n "$serial" ]; then
-            adb -s "$serial" logcat -d -v threadtime -s \
-              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
-              SereaFontScale SereaCalendarStage SereaComposerIme SereaRealIme \
-              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
-              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath SereaProfileVerifier AndroidRuntime >> "$output"
+          test -d "$root/api26" && test -d "$root/api35"
+          verify_api() {
+            local api="$1" job_result="$2" evidence="$root/api$1"
+            local provenance="$root/api$api/api${api}-build-provenance.txt"
+            test "$job_result" = success
+            test -s "$evidence/api-result.txt" && grep -Fxq PASS "$evidence/api-result.txt"
+            grep -Fx "source_sha=$EXPECTED_SOURCE_SHA" "$provenance"
+            grep -Fx "build_checkout_sha=$EXPECTED_BUILD_SHA" "$provenance"
+            grep -Fx "run_id=$EXPECTED_RUN_ID" "$provenance"
+            grep -Fx "artifact_producer=android-emulator-api$api" "$provenance"
+            grep -Eq '^target_sha256=[0-9a-f]{64}$' "$provenance"
+            grep -Eq '^test_sha256=[0-9a-f]{64}$' "$provenance"
+            grep -Fx 'target_package=app.serea.android.isolated' "$provenance"
+            grep -Fx 'test_package=app.serea.android.isolated.test' "$provenance"
+            producer_attempt="$(sed -n 's/^producer_attempt=//p' "$provenance")"
+            campaign_attempt="$(sed -n 's/^campaign_attempt=//p' "$evidence/build-provenance.txt")"
+            [[ "$producer_attempt" =~ ^[1-9][0-9]*$ && "$campaign_attempt" == "$producer_attempt" ]]
+            grep -Fx "source_checkout_sha=$EXPECTED_BUILD_SHA" "$evidence/build-provenance.txt"
+            grep -Fx "campaign_run_id=$EXPECTED_RUN_ID" "$evidence/build-provenance.txt"
+            grep -Fx "campaign_attempt=$producer_attempt" "$evidence/build-provenance.txt"
+            test -s "$evidence/instrumentation-status.txt" && grep -Fxq PASS "$evidence/instrumentation-status.txt"
+            test -s "$evidence/process-death-status.txt" && grep -Fxq PASS "$evidence/process-death-status.txt"
+            test -s "$evidence/data-isolation-status.txt" && grep -Fxq PASS "$evidence/data-isolation-status.txt"
+            test -s "$evidence/google-demo-ui-status.txt" && grep -Fxq PASS "$evidence/google-demo-ui-status.txt"
+            python3 tools/verify_android_instrumentation.py "$evidence/junit" \
+              --source-root android/app/src/androidTest/java --minimum 105 --exact-count 105 \
+              --required-test-manifest tools/android-instrumentation-required-tests.txt \
+              --additional-test-manifest tools/android-instrumentation-additional-tests.txt \
+              --non-required-test-manifest android/app/src/androidTest/assets/serea-non-required-test-identities.txt \
+              --required-count 103 --additional-count 2 --api-level "$api" \
+              --require-class app.serea.android.EncryptedHistoryTest=17 \
+              --require-class app.serea.android.ChatScreenTest=16 \
+              --require-class app.serea.android.ChatHttpE2ETest=4 \
+              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
+              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
+              --require-class app.serea.android.tasks.TaskScreenTest=6 \
+              --require-class app.serea.android.InstrumentationStorageIsolationTest=1 \
+              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
+              --require-class app.serea.android.ChatHistoryUxTest=4
+            echo "API $api: 105/105 with isolation evidence PASS"
+          }
+          result26=1
+          result35=1
+          if (set -e; verify_api 26 "$API26_JOB_RESULT"); then result26=0; else result26=$?; fi
+          if (set -e; verify_api 35 "$API35_JOB_RESULT"); then result35=0; else result35=$?; fi
+          if [ "$BUILD_JOB_RESULT" = success ] && [ "$result26" -eq 0 ] && [ "$result35" -eq 0 ]; then
+            echo 'result=PASS' >> "$GITHUB_OUTPUT"
           else
-            printf 'Emulator detached after test step; captured instrumentation logcat is preserved above.\n' >> "$output"
+            echo "result=FAIL" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
-          echo 'Selected API 26 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
-      - name: Upload API 26 instrumentation evidence
-        if: always()
+      - name: Republish validated API 26 evidence under stable artifact name
+        if: always() && steps.instrumentation.outputs.result == 'PASS' && needs.android-emulator-api26.result == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-instrumentation-api26
           if-no-files-found: error
           path: android/app/build/outputs/androidTest-results/api26/
-      - name: Clear API 26 emulator state before API 35 campaign
-        if: always() && !cancelled()
-        run: |
-          set -euo pipefail
-          adb devices -l
-          while IFS= read -r serial; do
-            [ -n "$serial" ] || continue
-            adb -s "$serial" emu kill || true
-          done < <(adb devices | awk '$1 ~ /^emulator-/ { print $1 }')
-          for attempt in $(seq 1 30); do
-            if ! adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
-              break
-            fi
-            sleep 1
-          done
-          if adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
-            echo 'An emulator from the API 26 campaign is still attached.' >&2
-            exit 1
-          fi
-          adb kill-server
-          adb start-server
-      - name: Run API 35 Pixel emulator and all instrumentation tests
-        id: api35
-        if: always() && !cancelled()
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
-        env:
-          SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 80
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7
-          emulator-boot-timeout: 900
-          disable-linux-hw-accel: false
-          working-directory: android
-          script: bash ../tools/run_android_api35_campaign.sh
-      - name: Save API 35 failure semantics and safety logcat
-        if: always() && !cancelled()
-        run: |
-          set -euo pipefail
-          output='android/app/build/outputs/androidTest-results/api35/logcat-selected.txt'
-          mkdir -p "$(dirname "$output")"
-          live='android/app/build/outputs/androidTest-results/api35/logcat-live.txt'
-          : > "$output"
-          if [ -f "$live" ]; then
-            grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
-          fi
-          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
-          if [ -n "$serial" ]; then
-            adb -s "$serial" logcat -d -v threadtime -s \
-              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
-              SereaFontScale SereaCalendarStage SereaComposerIme SereaRealIme \
-              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
-              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath SereaProfileVerifier AndroidRuntime >> "$output"
-          else
-            printf 'Emulator detached after test step; captured instrumentation logcat is preserved above.\n' >> "$output"
-          fi
-          echo 'Selected API 35 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
-      - name: Upload API 35 instrumentation evidence
-        if: always()
+      - name: Republish validated API 35 evidence under stable artifact name
+        if: always() && steps.instrumentation.outputs.result == 'PASS' && needs.android-emulator-api35.result == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-instrumentation-api35
           if-no-files-found: error
           path: android/app/build/outputs/androidTest-results/api35/
-      - id: instrumentation
-        name: Combine API-specific required evidence
-        if: always()
-        env:
-          API35_STEP_RESULT: ${{ steps.api35.outcome }}
-          API26_STEP_RESULT: ${{ steps.api26.outcome }}
-        run: |
-          set -euo pipefail
-          root='android/app/build/outputs/androidTest-results'
-          api35=NOT_RUN
-          api26=NOT_RUN
-          [ -f "$root/api35/api-result.txt" ] && api35="$(cat "$root/api35/api-result.txt")"
-          [ -f "$root/api26/api-result.txt" ] && api26="$(cat "$root/api26/api-result.txt")"
-          if [ "$api35" = PASS ] && [ "$api26" = PASS ] && [ "$API35_STEP_RESULT" = success ] && [ "$API26_STEP_RESULT" = success ]; then
-            echo 'result=PASS' >> "$GITHUB_OUTPUT"
-            echo 'PASS: API 26 and API 35 JUnit plus Process Death evidence passed.'
-          else
-            echo 'result=FAIL' >> "$GITHUB_OUTPUT"
-            echo "FAIL: API 35=$api35 ($API35_STEP_RESULT), API 26=$api26 ($API26_STEP_RESULT)."
-            exit 1
-          fi
-      - name: Mark required emulator failure in summary
-        if: failure()
-        run: |
-          echo '### Android Emulator Required Gate: FAIL (emulator or Instrumentation Test did not complete successfully)' >> "$GITHUB_STEP_SUMMARY"
       - name: Download APK candidate and assemble Pixel 7a evidence bundle
         if: always() && needs.android-build.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -708,6 +623,10 @@ jobs:
           apk_path="$(find "$candidate" -type f -name app-debug.apk -print -quit)"
           provenance_path="$(find "$candidate" -type f -name provenance.txt -print -quit)"
           test -n "$apk_path" && test -n "$provenance_path"
+          test -d android/app/build/outputs/androidTest-results/api35/junit
+          test -d android/app/build/outputs/androidTest-results/api26/junit
+          test -s android/app/build/outputs/androidTest-results/api35/api-result.txt
+          test -s android/app/build/outputs/androidTest-results/api26/api-result.txt
           cp "$apk_path" "$bundle/serea-debug.apk"
           cp "$provenance_path" "$bundle/provenance.txt"
           if [ -d android/app/build/outputs/androidTest-results/api35 ]; then
@@ -717,8 +636,10 @@ jobs:
             cp -R android/app/build/outputs/androidTest-results/api26 "$bundle/tests/api26"
           fi
           mkdir -p "$bundle/process-death"
-          cp android/app/build/outputs/androidTest-results/api35/process-death.log "$bundle/process-death/api35.log" 2>/dev/null || true
-          cp android/app/build/outputs/androidTest-results/api26/process-death.log "$bundle/process-death/api26.log" 2>/dev/null || true
+          test -s android/app/build/outputs/androidTest-results/api35/process-death.log
+          test -s android/app/build/outputs/androidTest-results/api26/process-death.log
+          cp android/app/build/outputs/androidTest-results/api35/process-death.log "$bundle/process-death/api35.log"
+          cp android/app/build/outputs/androidTest-results/api26/process-death.log "$bundle/process-death/api26.log"
           cp "$RUNNER_TEMP/emulator.log" "$bundle/process-death/emulator.log" 2>/dev/null || true
           api35_death=NOT_RUN
           api26_death=NOT_RUN
@@ -803,7 +724,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-emulator-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             android/app/build/outputs/pixel7a-final-campaign/**
             android/app/build/reports/androidTests/connected/**/*.html

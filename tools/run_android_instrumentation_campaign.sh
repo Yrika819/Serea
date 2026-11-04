@@ -10,6 +10,7 @@ if [[ "$api_level" != 26 && "$api_level" != 35 ]]; then
   exit 2
 fi
 tool_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$tool_dir/android_package_path.sh"
 
 root='app/build/outputs/androidTest-results'
 evidence="$root/api$api_level"
@@ -37,6 +38,7 @@ PY
 } > "$evidence/build-provenance.txt"
 printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/google-demo-ui-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/data-isolation-status.txt" || exit 1
@@ -53,6 +55,7 @@ printf 'NOT_RUN\n' > "$evidence/process-death-host-lifecycle.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/logcat-live.txt" || exit 1
 printf 'NOT_READY\n' > "$evidence/process-death-readiness-status.txt" || exit 1
 printf 'NOT_READY\n' > "$evidence/process-death-readiness.log" || exit 1
+printf 'NOT_RUN\n' > "$evidence/google-demo-ui-cleanup-status.txt" || exit 1
 
 logcat_pid=''
 initial_default_ime=''
@@ -139,7 +142,7 @@ capture_device_state() {
 }
 
 run_diagnostic_stage() {
-  local name="$1" filter="$2" timeout_seconds="$3" expected_count="$4" exact_test="$5"
+  local name="$1" filter="$2" timeout_seconds="$3" expected_count="$4" exact_test="$5" exact_tests="${6:-}"
   local stage_dir="$evidence/stages/$name" stage_token gradle_status verify_status verify_exit_code
   if ! rm -rf "$stage_dir" || [[ -e "$stage_dir" ]]; then
     echo "FAIL: could not clear stale evidence for diagnostic stage $name." >&2
@@ -152,8 +155,14 @@ run_diagnostic_stage() {
   printf 'NOT_RUN\n' > "$stage_dir/verification-status.txt"
   printf 'NOT_RUN\n' > "$stage_dir/verification-exit-code.txt"
   printf 'NOT_RUN\n' > "$stage_dir/device-state-status.txt"
-  if [[ -n "$(adb shell pm path app.serea.android.isolated 2>/dev/null | tr -d '\r')" || \
-        -n "$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r')" ]]; then
+  local existing_target_paths existing_test_paths
+  if ! existing_target_paths="$(android_package_path app.serea.android.isolated)" || \
+     ! existing_test_paths="$(android_package_path app.serea.android.isolated.test)"; then
+    echo 'FAIL: could not query isolated package state; refusing to install into an unverified emulator.' > "$stage_dir/result.txt"
+    printf 'FAIL\n' > "$stage_dir/status.txt"
+    return 1
+  fi
+  if [[ -n "$existing_target_paths" || -n "$existing_test_paths" ]]; then
     echo 'FAIL: UTP left a stage package installed; refusing to replace it or clear its data.' > "$stage_dir/result.txt"
     printf 'FAIL\n' > "$stage_dir/status.txt"
     return 1
@@ -224,7 +233,11 @@ run_diagnostic_stage() {
   fi
   if [[ -d "$stage_dir/junit" ]]; then
     local verify_args=("$stage_dir/junit" --minimum "$expected_count" --exact-count "$expected_count")
-    if [[ -n "$exact_test" ]]; then
+    if [[ -n "$exact_tests" ]]; then
+      while IFS= read -r identity; do
+        [[ -n "$identity" ]] && verify_args+=(--require-test "$identity")
+      done <<< "$exact_tests"
+    elif [[ -n "$exact_test" ]]; then
       verify_args+=(--require-test "$exact_test")
     else
       verify_args+=(--require-class "$filter=$expected_count")
@@ -664,15 +677,110 @@ elif [[ "$sdk_ok" == true ]]; then
 fi
 printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
 
+google_demo_ui_result=NOT_RUN
+google_demo_ui_cleanup_result=NOT_RUN
+if [[ "$api_level" == 35 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
+  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GmailHtmlInertUiSecurityTest'
+  google_demo_ui_tests=$(cat <<'TESTS'
+app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch
+app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection
+app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization
+app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant
+app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt
+app.serea.android.GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel
+app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests
+TESTS
+)
+  google_demo_ui_cleanup_log="$evidence/google-demo-ui-cleanup.log"
+  mkdir -p "$evidence/stages/google-calendar-and-gmail-ui"
+  google_demo_ui_stage_result=0
+  google_demo_ui_cleanup_result=0
+  for package in app.serea.android.isolated.test app.serea.android.isolated; do
+    if ! package_path="$(android_package_path "$package")"; then
+      echo "FAIL: ADB package query failed before focused UI stage: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+      continue
+    fi
+    if [[ -n "$package_path" ]]; then
+      if ! adb uninstall "$package" >> "$google_demo_ui_cleanup_log" 2>&1; then
+        google_demo_ui_cleanup_result=1
+      fi
+    fi
+  done
+  for package in app.serea.android.isolated.test app.serea.android.isolated; do
+    if ! package_path="$(android_package_path "$package")"; then
+      echo "FAIL: ADB package query failed before focused UI stage: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+    elif [[ -n "$package_path" ]]; then
+      echo "FAIL: campaign-owned package remains before focused OAuth UI stage: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+    fi
+  done
+
+  if [[ "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 7 '' "$google_demo_ui_tests" \
+      || google_demo_ui_stage_result=1
+  else
+    google_demo_ui_stage_result=1
+    echo 'Focused OAuth UI was not run because the previous campaign package could not be removed.' \
+      > "$evidence/stages/google-calendar-and-gmail-ui/result.txt"
+  fi
+
+  # This campaign owns only the isolated CI target and test packages on a verified disposable
+  # emulator. Remove both packages after the focused stage and prove their absence.
+  for package in app.serea.android.isolated.test app.serea.android.isolated; do
+    if ! package_path="$(android_package_path "$package")"; then
+      echo "FAIL: ADB package query failed after focused UI stage: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+      continue
+    fi
+    if [[ -n "$package_path" ]] && ! adb uninstall "$package" >> "$google_demo_ui_cleanup_log" 2>&1; then
+      google_demo_ui_cleanup_result=1
+    fi
+  done
+  for package in app.serea.android.isolated.test app.serea.android.isolated; do
+    if ! package_path="$(android_package_path "$package")"; then
+      echo "FAIL: ADB package query failed during focused UI cleanup verification: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+    elif [[ -n "$package_path" ]]; then
+      echo "FAIL: focused UI package remains installed after cleanup: $package" \
+        >> "$google_demo_ui_cleanup_log"
+      google_demo_ui_cleanup_result=1
+    fi
+  done
+  if [[ "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+    printf 'PASS\n' > "$evidence/google-demo-ui-cleanup-status.txt"
+  else
+    printf 'FAIL\n' > "$evidence/google-demo-ui-cleanup-status.txt"
+  fi
+  if [[ "$google_demo_ui_stage_result" -eq 0 && "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+    google_demo_ui_result=PASS
+  else
+    google_demo_ui_result=FAIL
+  fi
+elif [[ "$api_level" == 26 ]]; then
+  google_demo_ui_result=NOT_REQUIRED
+  google_demo_ui_cleanup_result=NOT_REQUIRED
+  printf 'NOT_REQUIRED\n' > "$evidence/google-demo-ui-status.txt"
+  printf 'NOT_REQUIRED\n' > "$evidence/google-demo-ui-cleanup-status.txt"
+fi
+printf '%s\n' "$google_demo_ui_result" > "$evidence/google-demo-ui-status.txt"
+printf '%s\n' "$google_demo_ui_cleanup_result" > "$evidence/google-demo-ui-cleanup-status.txt"
+
 if [[ "$test_ime_installed" == true ]]; then cleanup_test_ime; fi
 
-if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS ]]; then
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && ( "$api_level" != 35 || "$google_demo_ui_result" == PASS ) ]]; then
   result=PASS
 else
   result=FAIL
 fi
 printf '%s\n' "$result" > "$evidence/api-result.txt"
-echo "### Android API $api_level: instrumentation=$junit_result process-death=$death_result data-isolation=$data_isolation_result device-api=$sdk" \
+echo "### Android API $api_level: instrumentation=$junit_result process-death=$death_result data-isolation=$data_isolation_result oauth-ui=$google_demo_ui_result device-api=$sdk" \
   >> "$GITHUB_STEP_SUMMARY"
 if [[ "$result" != PASS ]]; then
   exit 1

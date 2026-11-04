@@ -8,8 +8,12 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import app.serea.android.calendar.CalendarAuthorizationState
+import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.CalendarReadFailure
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -126,6 +130,75 @@ class GoogleAuthorizationLifecycleTest {
             viewModel.revokeDemoGrant()
             assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
             assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.calendar)
+        }
+
+    @Test
+    fun selectingAnotherSyntheticAccountClosesItsCalendarSessionBeforeReauthorization() =
+        runTest(mainDispatcher.dispatcher) {
+            val viewModel = GoogleAuthorizationDemoViewModel(FakeGoogleAuthorizationGateway())
+
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            runCurrent()
+            assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.pendingFeature)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+
+            viewModel.grantPendingConsent()
+            viewModel.grantPendingConsent()
+            runCurrent()
+            val accountASession = checkNotNull(viewModel.calendarDemoSession.value)
+            assertEquals(CalendarProviderKind.FAKE, accountASession.kind)
+            assertEquals(CalendarAuthorizationState.MOCK_ONLY, accountASession.status().state)
+            assertEquals(3, accountASession.listCalendars().size)
+
+            viewModel.selectDemoAccount(GoogleDemoAccount.ACCOUNT_B)
+            assertEquals(GoogleDemoAccount.ACCOUNT_B, viewModel.state.value.selectedAccount)
+            assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.calendar)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertTrue(runCatching { accountASession.listCalendars() }.exceptionOrNull() is CalendarReadFailure)
+
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            runCurrent()
+            viewModel.grantPendingConsent()
+            runCurrent()
+            val accountBSession = checkNotNull(viewModel.calendarDemoSession.value)
+            assertNotSame(accountASession, accountBSession)
+            assertEquals(CalendarProviderKind.FAKE, accountBSession.kind)
+            assertEquals(3, accountBSession.listCalendars().size)
+        }
+
+    @Test
+    fun reconnectAfterAppLocalDisconnectRequiresConfirmationAndReplacesTheOldCalendarSession() =
+        runTest(mainDispatcher.dispatcher) {
+            val gateway = FakeGoogleAuthorizationGateway()
+            val viewModel = GoogleAuthorizationDemoViewModel(gateway)
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            runCurrent()
+            viewModel.grantPendingConsent()
+            runCurrent()
+            val disconnectedSession = checkNotNull(viewModel.calendarDemoSession.value)
+
+            viewModel.disconnectInApp(GoogleFeature.CALENDAR)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertTrue(runCatching { disconnectedSession.listCalendars() }.exceptionOrNull() is CalendarReadFailure)
+            assertEquals(
+                ScopePermission.GRANTED,
+                gateway.status(GoogleFeature.CALENDAR.scopes).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
+            )
+
+            viewModel.reconnectInApp(GoogleFeature.CALENDAR)
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.pendingFeature)
+            assertEquals(GoogleFeature.CALENDAR.scopes, viewModel.state.value.pendingScopes)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+
+            viewModel.grantPendingConsent()
+            viewModel.grantPendingConsent()
+            runCurrent()
+            val reconnectedSession = checkNotNull(viewModel.calendarDemoSession.value)
+            assertNotSame(disconnectedSession, reconnectedSession)
+            assertEquals(CalendarProviderKind.FAKE, reconnectedSession.kind)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZED, viewModel.state.value.calendar)
+            assertTrue(runCatching { disconnectedSession.listCalendars() }.exceptionOrNull() is CalendarReadFailure)
         }
 
     @Test
@@ -249,11 +322,16 @@ class GoogleAuthorizationLifecycleTest {
         )
 
         viewModel.requestConsent(GoogleFeature.GMAIL)
-        assertEquals(GoogleFeature.GMAIL, viewModel.state.value.inFlightFeature)
-        runCurrent()
+        assertEquals(null, viewModel.state.value.inFlightFeature)
         assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
         assertEquals(GoogleFeature.GMAIL, viewModel.state.value.pendingFeature)
         assertEquals(setOf(GoogleScope.GMAIL_READ_ONLY), viewModel.state.value.pendingScopes)
         assertEquals(emptySet<GoogleFeature>(), viewModel.state.value.disabledInAppFeatures)
+
+        // Reconnect requires an explicit preview before any synthetic reauthorization proceeds.
+        viewModel.grantPendingConsent()
+        viewModel.grantPendingConsent()
+        runCurrent()
+        assertEquals(GoogleDemoFeatureState.AUTHORIZED, viewModel.state.value.gmail)
     }
 }

@@ -121,8 +121,18 @@ wait_target_stopped() {
 run_phase() {
   local phase="$1"
   local log_file="$evidence/$phase-logcat.txt"
-  "${adb_cmd[@]}" shell am start -W -f 0x10008000 -n "$activity" \
-    --es phase "$phase" --es token "$token" > "$evidence/$phase-am-start.txt" 2>&1
+  if ! "${adb_cmd[@]}" shell am start -W -f 0x10008000 -n "$activity" \
+    --es phase "$phase" --es token "$token" > "$evidence/$phase-am-start.txt" 2>&1; then
+    cat "$evidence/$phase-am-start.txt" >&2
+    return 1
+  fi
+  # `am start -W` can exit zero when ActivityManager reports Error type 3.
+  # Fail before waiting for a phase marker so a bad component is not reported as a timeout.
+  if ! grep -Fxq 'Status: ok' "$evidence/$phase-am-start.txt" ||
+    ! grep -Fq "Activity: $activity" "$evidence/$phase-am-start.txt"; then
+    cat "$evidence/$phase-am-start.txt" >&2
+    return 1
+  fi
   for _ in $(seq 1 30); do
     "${adb_cmd[@]}" logcat -d -s "$tag:I" > "$log_file"
     if grep -F "FAIL:$token:$phase:" "$log_file" >/dev/null; then

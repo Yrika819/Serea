@@ -288,6 +288,10 @@ class GoogleCalendarDemoLoopbackUiTest {
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isEmpty()
         }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Loopback UI event").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Loopback UI event").assertIsDisplayed()
         compose.onNodeWithText("戻る").performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("google_auth_demo_account_account_a").fetchSemanticsNodes().isNotEmpty()

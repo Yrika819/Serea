@@ -25,7 +25,8 @@ Status: **BLOCKED — cause of API 35 instrumentation termination unproven**. Pe
 | --- | --- |
 | #210, #211 | Merged; do not re-port. |
 | #208 | Draft focused-workflow parallelization; separate from this formal gate failure. |
-| #168 | Draft, based on `codex/serea-g9rc-ui-accepted`, head `272f68ecf7f8072b812b13e46064a108bab5ef2b`; compare Consent/authorization changes against current main before selecting any residual. |
-| #191–#204, #189 | Drafts remain candidates for dependency and duplicate analysis after this blocker; no bulk rebase, close or merge. |
+| #168 | Draft, head `272f68ecf7f8072b812b13e46064a108bab5ef2b`; its two changed files are Calendar tests. Main already has the back-navigation fix and its consent assertion; remaining event/zone diagnostics need selective comparison. Do not apply wholesale. |
+| #189 | Activity qualification and launch checks are already in main; the old patch could undo later process-table checks. Do not re-port wholesale. |
+| #191–#204 | Drafts; candidate sequence #193 → #195 → #196 → #198 → #199 → #202/#203 → #204; #191 is an earlier alternative, and #192/#194/#197/#200/#201 are documentation. #204 validation is pending. Inspect consent and routing boundaries before any selection; no bulk rebase, close or merge. |
 
 Owner approval is required for main merge, removing an existing PR's Draft status, changing branch protections or a Beta GO decision. No such action is authorized by this checkpoint.

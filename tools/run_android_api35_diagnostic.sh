@@ -85,16 +85,29 @@ log_pid=$!
     snapshot INSTRUMENTATION 'ACTIVITY MANAGER|Active instrumentation|Instrumentation #|mClass=|mTargetInfo=|mRunningProcesses=' dumpsys activity processes
     snapshot EXIT_INFO '' dumpsys activity exit-info app.serea.android.isolated
     snapshot DEVICE_SHELL_PROCESSES 'dumpsys|logcat|serea|instrument' ps -A -o PID,PPID,STAT,NAME,ARGS
-    snapshot FOCUS 'mCurrentFocus|mFocusedApp' dumpsys window windows
+    snapshot FOCUS 'mCurrentFocus|mFocusedApp' dumpsys window displays
     snapshot INPUT_METHOD 'mCurMethodId|mCurFocusedWindow|mCurEditorInfo|mInputShown' dumpsys input_method
     printf '\nHOST_PROCESSES\n'
     ps -eo pid,ppid,stat,rss,comm | awk 'NR==1 || /java|gradle|adb|emulator|qemu/'
     printf 'MEMORY\n'; head -5 /proc/meminfo
     printf 'CGROUP_MEMBERSHIP\n'; cat /proc/self/cgroup 2>&1
     cgroup_found=0
+    target_events=INCOMPLETE
+    # GitHub runners can be in a nested unified cgroup; root counters alone
+    # may be unavailable or unrelated to this runner's own memory pressure.
+    cgroup_rel=$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)
+    if [[ "$cgroup_rel" == /* && "$cgroup_rel" != *'..'* ]]; then
+      for f in "/sys/fs/cgroup${cgroup_rel}/memory.current" "/sys/fs/cgroup${cgroup_rel}/memory.events" "/sys/fs/cgroup${cgroup_rel}/memory.max"; do
+        if [[ -r "$f" ]]; then
+          cgroup_found=1; printf '%s\n' "$f"
+          if cat "$f"; then [[ "$f" == */memory.events ]] && target_events=PASS; else printf 'CGROUP_READ_FAIL=%s\n' "$f"; fi
+        fi
+      done
+    fi
     for f in /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.usage_in_bytes /sys/fs/cgroup/memory/memory.oom_control; do
       if [[ -r "$f" ]]; then cgroup_found=1; printf '%s\n' "$f"; cat "$f" || printf 'CGROUP_READ_FAIL=%s\n' "$f"; fi
     done
+    printf 'CGROUP_TARGET_EVENTS=%s\n' "$target_events"
     if [[ "$cgroup_found" == 0 ]]; then echo 'CGROUP_MEMORY=UNAVAILABLE'; fi
     printf 'LOG_BYTES='; wc -c < "$evidence/logcat.txt"
     sleep 2
@@ -160,7 +173,7 @@ exit_info_health=PASS
 if grep -Eiq 'Unknown command|Permission Denial|Can.t find service|Bad activity command' "$evidence/exit-info.txt" || ! grep -Fq 'ACTIVITY MANAGER PROCESS EXIT INFO' "$evidence/exit-info.txt"; then exit_info_health=INCOMPLETE; fi
 printf 'exit_info_observation=%s\n' "$exit_info_health" >> "$evidence/capture-status.txt"
 cgroup_health=PASS
-if grep -Eq 'CGROUP_MEMORY=UNAVAILABLE|CGROUP_READ_FAIL=' "$evidence/live-monitor.txt" || ! grep -Eq '^/sys/fs/cgroup/(memory.events|memory/memory.oom_control)$' "$evidence/live-monitor.txt"; then cgroup_health=INCOMPLETE; fi
+if grep -Eq 'CGROUP_MEMORY=UNAVAILABLE|CGROUP_READ_FAIL=|CGROUP_TARGET_EVENTS=INCOMPLETE' "$evidence/live-monitor.txt" || ! grep -Fxq 'CGROUP_TARGET_EVENTS=PASS' "$evidence/live-monitor.txt"; then cgroup_health=INCOMPLETE; fi
 printf 'cgroup_observation=%s\n' "$cgroup_health" >> "$evidence/capture-status.txt"
 printf 'instrumentation_observation=%s\nsnapshot_observation=%s\n' "$instrumentation_health" "$snapshot_health" >> "$evidence/capture-status.txt"
 diagnostic_status=INCOMPLETE

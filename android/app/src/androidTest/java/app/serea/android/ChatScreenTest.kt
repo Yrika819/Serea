@@ -654,7 +654,7 @@ class ChatScreenTest {
             var imeHidden = false
             compose.activityRule.scenario.onActivity { activity ->
                 imeHidden = ViewCompat.getRootWindowInsets(activity.window.decorView)
-                    ?.isVisible(WindowInsetsCompat.Type.ime()) != true
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == false
             }
             imeHidden
         }

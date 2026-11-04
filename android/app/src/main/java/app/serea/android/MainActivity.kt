@@ -219,6 +219,9 @@ open class ModelChatFailure(message: String) : Exception(message)
 /** A local validation failed before the provider adapter could dispatch a request. */
 internal class PreDispatchModelChatFailure(message: String) : ModelChatFailure(message)
 
+/** Cancellation that is known to precede native/model dispatch and can release Usage safely. */
+internal class PreDispatchModelChatCancellation(message: String) : CancellationException(message)
+
 /** Deterministic demo only. It makes no network calls and never claims cloud inference. */
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {

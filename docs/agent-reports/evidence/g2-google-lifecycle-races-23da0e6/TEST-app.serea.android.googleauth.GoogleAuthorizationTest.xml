@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.googleauth.GoogleAuthorizationTest" tests="30" skipped="0" failures="0" errors="0" timestamp="2026-10-28T00:21:15.519Z" hostname="b49fd8b02ed6" time="0.023">
+  <properties/>
+  <testcase name="tokenIsTransientRedactedAndInvalidatedWhenLeaseCloses" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="explicitConsentCannotRequestScopesForAnInAppDisabledFeature" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="firstConsentRequestsOnlyRequestedScopesAndIsExplicit" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="concurrentAuthorizationOperationsShareASingleFlightReservation" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.002"/>
+  <testcase name="googleReconsentResolutionReplacesStaleGrantedPermission" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="consentApprovalAndReauthorizationReturnsOnlyRequestedGrant" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="expirationRequiresReauthorization" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.003"/>
+  <testcase name="appFeatureDisableDoesNotRevokeSharedGoogleGrant" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.002"/>
+  <testcase name="featureDisableIsVisibleAndGmailDisableLeavesCalendarGrantUsable" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="addingCalendarScopeRequiresConsentWithoutLosingGmailGrant" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="disableThenReenableRejectsLateAuthorizationTaskResult" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="fakeRevokeClearsScopesAndInvalidatesLeasesButPreservesDisabledFeature" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="consentRegistryRejectsOverlapAndStaleResultsAndAllowsCancellation" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="unavailableAndOutdatedGooglePlayServicesAreTyped" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="missingScopeIsNotTreatedAsAuthorized" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="realOAuthWithoutOwnerConfigurationRemainsDisabled" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="calendarBridgeKeepsListScopeOptionalAndNeverTreatsMockAsGoogleAuthorization" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="accountSwitchClearsTheOldAccountGrant" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="oldClosedLeaseCannotBeReusedAfterFreshLeaseIsIssued" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="googleGrantRevocationRemovesAllServiceScopes" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="disablingFeatureCancelsItsPendingConsentAcrossReconnect" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="expiredLeaseCannotYieldToken" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="cancelledRevokeCallerPropagatesCancellationAfterRemoteFailureBecomesTerminal" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.003"/>
+  <testcase name="cancellationAndNetworkFailuresAreTyped" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="googleScopesMatchTheGmailAndCalendarDomainPolicies" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="googleDenialBlocksTokenSupply" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="denialIsTypedAndDoesNotExposeItsDetails" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <testcase name="revokeStartInvalidatesLeaseAndPermissionsBeforeRemoteWorkAndPreservesAppDisable" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <testcase name="cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

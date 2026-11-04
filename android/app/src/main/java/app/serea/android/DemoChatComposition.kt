@@ -62,6 +62,7 @@ internal object DemoChatComposition {
                     expiresAtMillis = null,
                     selectedModelId = selected.id,
                     target = EgressTarget.LOCAL_DEMO,
+                    plannedBodySourceLineage = request.bodySourceLineage.toSet(),
                 )
             },
         )

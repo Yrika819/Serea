@@ -32,6 +32,8 @@ data class EgressContract(
     val selectedModelId: String? = null,
     /** Defaults to the existing external-cloud contract; local demo must be explicit. */
     val target: EgressTarget = EgressTarget.CLOUD,
+    /** Inherited provenance for plannedBody. Empty or untrusted ancestry denies Cloud egress. */
+    val plannedBodySourceLineage: Set<DataOrigin> = emptySet(),
 )
 
 enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, SOURCE_LINEAGE_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
@@ -97,6 +99,13 @@ object ChatEgressGate {
         if (contract.origin !in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT)) return denied(EgressContractDecision.ORIGIN_DENIED)
         if (contract.preparation != PayloadPreparation.RAW) return denied(EgressContractDecision.PREPARATION_DENIED)
         val cloudLineageSources = setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT)
+        val plannedBodyLineage = contract.plannedBodySourceLineage.toSet()
+        if (plannedBodyLineage.isEmpty() ||
+            contract.origin !in plannedBodyLineage ||
+            DataOrigin.USER_AUTHORED !in plannedBodyLineage ||
+            plannedBodyLineage.any { it !in cloudLineageSources }) {
+            return denied(EgressContractDecision.SOURCE_LINEAGE_DENIED)
+        }
         if (contract.context.any { item ->
                 item.sourceLineage.isEmpty() ||
                     item.origin !in item.sourceLineage ||
@@ -142,11 +151,15 @@ internal class EgressCheckedModelChatPort(
         val contract = request.egressContract ?: throw ModelChatFailure("A typed Egress contract is required.")
         if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
+            contract.plannedBodySourceLineage.toSet() != request.bodySourceLineage.toSet() ||
             contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId)) {
             throw ModelChatFailure("The approved content no longer matches the request.")
         }
-        val boundContract = contract.copy(selectedModelId = request.selectedModelId)
+        val boundContract = contract.copy(
+            selectedModelId = request.selectedModelId,
+            plannedBodySourceLineage = contract.plannedBodySourceLineage.toSet(),
+        )
         if (expectedTarget != null && boundContract.target != expectedTarget) {
             throw ModelChatFailure("The request target does not match this provider composition.")
         }

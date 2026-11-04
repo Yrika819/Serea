@@ -31,6 +31,20 @@ val updateTestSigningInputsReady = listOf(
     updateTestStorePath, updateTestStorePassword, updateTestKeyAlias, updateTestKeyPassword,
 ).all { !it.isNullOrBlank() }
 
+// The product APK does not include a runnable local-model backend by default. A
+// separately reviewed diagnostic build may opt into the pinned llama.cpp JNI
+// library with -PsereaLocalNativeRuntime=true and -PsereaLlamaCppSource=<checkout>.
+val sereaLocalNativeRuntime = providers.gradleProperty("sereaLocalNativeRuntime").orNull == "true"
+val sereaNativeJniTestSeams = providers.gradleProperty("sereaNativeJniTestSeams").orNull == "true"
+if (sereaNativeJniTestSeams && !sereaLocalNativeRuntime) {
+    error("JNI failure injection is only available with the isolated native runtime diagnostic.")
+}
+val sereaLlamaCppSource = if (sereaLocalNativeRuntime) {
+    providers.gradleProperty("sereaLlamaCppSource").orNull
+        ?: providers.environmentVariable("SEREA_LLAMA_CPP_SOURCE").orNull
+        ?: error("Set -PsereaLlamaCppSource or SEREA_LLAMA_CPP_SOURCE for the opt-in native runtime build.")
+} else null
+
 if (updateCompatibilityTest && !updateTestSigningInputsReady) {
     error("The isolated update compatibility variant requires its disposable test keystore inputs.")
 }
@@ -41,6 +55,7 @@ if (updateCompatibilityTest && (updateTestVersionCode == null || updateTestVersi
 android {
     namespace = "app.serea.android"
     compileSdk = 35
+    if (sereaLocalNativeRuntime) ndkVersion = "28.2.13676358"
     testBuildType = "isolated"
 
     defaultConfig {
@@ -49,7 +64,46 @@ android {
         targetSdk = 35
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
+        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", sereaLocalNativeRuntime.toString())
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        if (sereaLocalNativeRuntime) {
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf(
+                        "-DLLAMA_SRC=$sereaLlamaCppSource",
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        "-DBUILD_SHARED_LIBS=OFF",
+                        "-DLLAMA_BUILD_TESTS=OFF",
+                        "-DLLAMA_BUILD_TOOLS=OFF",
+                        "-DLLAMA_BUILD_EXAMPLES=OFF",
+                        "-DLLAMA_BUILD_SERVER=OFF",
+                        "-DLLAMA_BUILD_COMMON=OFF",
+                        "-DLLAMA_BUILD_APP=OFF",
+                        "-DLLAMA_OPENSSL=OFF",
+                        "-DGGML_NATIVE=OFF",
+                        "-DGGML_OPENMP=OFF",
+                        "-DGGML_LLAMAFILE=OFF",
+                        "-DGGML_BACKEND_DL=OFF",
+                        "-DGGML_CPU_KLEIDIAI=OFF",
+                    )
+                    if (sereaNativeJniTestSeams) {
+                        arguments += "-DSEREA_NATIVE_JNI_TEST_SEAMS=ON"
+                    }
+                }
+            }
+        }
+    }
+
+    buildFeatures { buildConfig = true }
+
+    if (sereaLocalNativeRuntime) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.31.6"
+            }
+        }
     }
 
     signingConfigs {

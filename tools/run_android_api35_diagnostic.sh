@@ -10,6 +10,7 @@ printf 'NOT_RUN\n' > "$evidence/result.txt"
 printf 'NOT_RUN\n' > "$evidence/ime-cleanup.txt"
 source "$root/tools/assert_disposable_android_emulator.sh" || exit 1
 source "$root/tools/wait_for_android_default_ime.sh"
+source "$root/tools/android_package_path.sh"
 wait_for_android_default_ime || { echo 'FAIL: default IME not ready' > "$evidence/result.txt"; exit 1; }
 initial_ime=$SEREA_ANDROID_DEFAULT_IME
 ime_installed=0
@@ -24,7 +25,7 @@ cleanup() {
     adb shell ime disable app.serea.android.r25testime/app.serea.android.diagnostics.RealImeService >> "$evidence/ime-cleanup.log" 2>&1
     adb uninstall app.serea.android.r25testime >> "$evidence/ime-cleanup.log" 2>&1
     restored=$(adb shell settings get secure default_input_method 2>&1); restore_query=$?
-    remaining=$(adb shell pm path app.serea.android.r25testime 2>&1); path_query=$?
+    remaining=$(android_package_path app.serea.android.r25testime); path_query=$?
     restored=${restored//$'\r'/}; remaining=${remaining//$'\r'/}
     if [[ "$restore_query" -eq 0 && "$path_query" -eq 0 && "$restored" == "$initial_ime" && -z "$remaining" ]]; then echo PASS > "$evidence/ime-cleanup.txt"; else echo FAIL > "$evidence/ime-cleanup.txt"; fi
   fi
@@ -38,8 +39,9 @@ trap 'exit 143' TERM
   adb shell getprop ro.build.fingerprint
 } > "$evidence/test-provenance.txt"
 inventory=$(adb shell pm list packages -u --user all 2>&1) || { echo "FAIL: package inventory unavailable" > "$evidence/result.txt"; exit 1; }
+if ! printf "%s\n" "$inventory" | tr -d "\r" | awk 'NF {if ($0 !~ /^package:[A-Za-z0-9_.]+$/) bad=1; n++} END {exit !(n && !bad)}'; then echo "FAIL: package inventory malformed" > "$evidence/result.txt"; exit 1; fi
 for pkg in app.serea.android.isolated app.serea.android.isolated.test app.serea.android.r25testime; do
-  path=$(adb shell pm path "$pkg" 2>&1) || { echo "FAIL: package path query failed" > "$evidence/result.txt"; exit 1; }
+  path=$(android_package_path "$pkg") || { echo "FAIL: package path query failed" > "$evidence/result.txt"; exit 1; }
   if [[ -n "$path" ]] || printf "%s\n" "$inventory" | tr -d "\r" | grep -Fxq "package:$pkg"; then echo "FAIL: $pkg installed or retained" > "$evidence/result.txt"; exit 1; fi
 done
 ime_apk=r25-ime-test/build/outputs/apk/debug/r25-test-ime-debug.apk
@@ -107,7 +109,7 @@ if (( bytes >= 33554432 )); then echo 'logcat=TRUNCATED' >> "$evidence/capture-s
 printf "monitor_health=%s\nlog_reader_health=%s\nlog_reader_wait_status=%s\n" "$monitor_health" "$log_health" "$reader_status" >> "$evidence/capture-status.txt"
 cleanup
 trap - EXIT
-if [[ "$gradle_status" -eq 0 && "$verify" -eq 0 && "$monitor_health" == PASS && "$log_health" == PASS && "$bytes" -lt 33554432 && "$(cat "$evidence/exit-info-command-status.txt")" == 0 && "$(cat "$evidence/ime-cleanup.txt")" == PASS ]]; then
+if [[ "$gradle_status" -eq 0 && "$verify" -eq 0 && "$monitor_health" == PASS && "$log_health" == PASS && "$bytes" -gt 0 && "$bytes" -lt 33554432 && "$(cat "$evidence/exit-info-command-status.txt")" == 0 && "$(cat "$evidence/ime-cleanup.txt")" == PASS ]]; then
   echo PASS > "$evidence/result.txt"; exit 0
 fi
 printf 'FAIL gradle=%s junit=%s ime_cleanup=%s\n' "$gradle_status" "$verify" "$(cat "$evidence/ime-cleanup.txt")" > "$evidence/result.txt"

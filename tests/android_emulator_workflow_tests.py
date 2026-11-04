@@ -1262,6 +1262,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('activity_class="app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
         self.assertIn('activity="$package/$activity_class"', harness)
         self.assertIn('namespace = "app.serea.android"', app_gradle)
+        self.assertIn("grep -Fxq 'Status: ok'", harness)
+        self.assertIn('grep -Fq "Activity: $activity"', harness)
         self.assertIn('query_package_pid "$test_package"', harness)
         self.assertIn('shell ps -A', harness)
         self.assertNotIn('shell sh -c "$pid_query_script"', harness)
@@ -1353,12 +1355,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "      exit 0\n"
                 "    fi\n"
                 "    [[ \"$action\" == start ]] || exit 94\n"
+                "    requested_activity=\"\"\n"
                 "    while [[ $# -gt 0 ]]; do\n"
                 "      if [[ \"$1\" == --es && \"${2:-}\" == phase ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_PHASE\"; printf '%s\\n' \"$3\" >> \"$ADB_PHASES\"; shift 3;\n"
                 "      elif [[ \"$1\" == --es && \"${2:-}\" == token ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_TOKEN\"; shift 3;\n"
+                "      elif [[ \"$1\" == -n ]]; then requested_activity=\"$2\"; shift 2;\n"
                 "      else shift; fi\n"
                 "    done\n"
                 "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
+                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s\\n' \"$requested_activity\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
                 "    ;;\n"
                 "  logcat)\n"
                 "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
@@ -1376,7 +1381,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             test_package = "app.serea.android.isolated.test"
 
             def run_case(case_name: str, *, fail_package: str = "", fail_after_force_stop: bool = False,
-                         bad_process_table: str = ""):
+                         bad_process_table: str = "", am_start_status: str = "ok"):
                 case_dir = root / case_name
                 case_dir.mkdir()
                 environment = os.environ.copy()
@@ -1400,6 +1405,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "PID_FAIL_PACKAGE": fail_package,
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
                     "PID_BAD_PROCESS_TABLE": bad_process_table,
+                    "ADB_START_STATUS": am_start_status,
                 })
                 (case_dir / "pid-queries").write_text("", encoding="utf-8")
                 (case_dir / "force-stop-count").write_text("0\n", encoding="utf-8")
@@ -1454,6 +1460,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("seed\nverify\n", (success_case / "phases").read_text(encoding="utf-8"))
             self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
             self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
+
+            activity_launch_failure, activity_failure_case = run_case(
+                "activity-launch-failure", am_start_status="error",
+            )
+            self.assertNotEqual(0, activity_launch_failure.returncode)
+            self.assertEqual("FAIL\n", (activity_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("logcat", (activity_failure_case / "adb-calls").read_text(encoding="utf-8"))
+            self.assertIn("Status: error", activity_launch_failure.stderr)
+            self.assertIn("Activity class does not exist", activity_launch_failure.stderr)
+            self.assertNotIn("Timed out waiting for phase seed", activity_launch_failure.stderr)
 
     def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")

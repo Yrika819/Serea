@@ -58,17 +58,25 @@ adb -s "$ANDROID_SERIAL" logcat -c -b main -b system -b crash -b events
 (ulimit -f 32768; exec adb -s "$ANDROID_SERIAL" logcat -v threadtime -b main -b system -b crash -b events > "$evidence/logcat.txt" 2> "$evidence/logcat-stderr.txt") &
 log_pid=$!
 (
+  snapshot() {
+    local label=$1 filter=$2; shift 2
+    local tmp="$evidence/monitor-snapshot.tmp" code
+    timeout 5s adb shell "$@" > "$tmp" 2>&1; code=$?
+    printf '\n%s exit=%s bytes=%s\n' "$label" "$code" "$(wc -c < "$tmp")"
+    if [[ -n "$filter" ]]; then grep -E "$filter" "$tmp" | head -c 16000; else head -c 16000 "$tmp"; fi
+    rm -f "$tmp"
+  }
   while :; do
     printf '\n=== %s ===\n' "$(date -u +%FT%T.%3NZ)"
     printf "ADB_STATE="; timeout 3s adb get-state 2>&1
     printf "DEVICE_UPTIME_BOOT_ID="; timeout 3s adb shell cat /proc/uptime /proc/sys/kernel/random/boot_id 2>&1
     printf "LOGCAT_READER="; if kill -0 "$log_pid" 2>/dev/null; then echo alive; else echo exited; fi
     for pkg in app.serea.android.isolated app.serea.android.isolated.test app.serea.android.r25testime; do printf '%s pid=' "$pkg"; timeout 3s adb shell pidof "$pkg" 2>&1; done
-    timeout 5s adb shell dumpsys activity instrumentation 2>&1 | head -c 16000
-    printf "\nEXIT_INFO\n"; timeout 5s adb shell dumpsys activity exit-info app.serea.android.isolated 2>&1 | head -c 16000
-    printf "\nDEVICE_SHELL_PROCESSES\n"; timeout 5s adb shell ps -A -o PID,PPID,STAT,NAME,ARGS 2>&1 | grep -E "dumpsys|logcat|serea|instrument" | head -40
-    printf "\nFOCUS\n"; timeout 5s adb shell dumpsys window windows 2>&1 | grep -E "mCurrentFocus|mFocusedApp" | head -10
-    printf "\nINPUT_METHOD\n"; timeout 5s adb shell dumpsys input_method 2>&1 | grep -E "mCurMethodId|mCurFocusedWindow|mCurEditorInfo|mInputShown" | head -20
+    snapshot INSTRUMENTATION '' dumpsys activity instrumentation
+    snapshot EXIT_INFO '' dumpsys activity exit-info app.serea.android.isolated
+    snapshot DEVICE_SHELL_PROCESSES 'dumpsys|logcat|serea|instrument' ps -A -o PID,PPID,STAT,NAME,ARGS
+    snapshot FOCUS 'mCurrentFocus|mFocusedApp' dumpsys window windows
+    snapshot INPUT_METHOD 'mCurMethodId|mCurFocusedWindow|mCurEditorInfo|mInputShown' dumpsys input_method
     printf '\nHOST_PROCESSES\n'
     ps -eo pid,ppid,stat,rss,comm | awk 'NR==1 || /java|gradle|adb|emulator|qemu/'
     printf 'MEMORY\n'; head -5 /proc/meminfo

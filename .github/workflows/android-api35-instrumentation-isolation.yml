@@ -1,0 +1,98 @@
+name: Android API 35 Instrumentation Isolation (Non-Required)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/android-api35-instrumentation-isolation.yml'
+      - 'tools/run_android_api35_diagnostic.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-api35-instrumentation-isolation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-test:
+    name: API 35 single-test instrumentation diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Check source and baseline test identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: '334da4bf8855e1b7fefc019a3b397aff506c9913'
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+          # Refuse to represent another PR base as the original failed baseline.
+          if [ -n "$PR_BASE" ]; then test "$PR_BASE" = "$EXPECTED_BASE"; fi
+          # Baseline experiments must use precisely the base Android sources and build files.
+          git diff --exit-code "$EXPECTED_BASE" HEAD -- android
+          mkdir -p android/app/build/outputs/androidTest-results/api35-isolation
+          {
+            printf 'head_sha=%s\nbase_sha=%s\nevent_sha=%s\nrun_id=%s\nrun_attempt=%s\n' \
+              "$EXPECTED_HEAD" "$EXPECTED_BASE" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'android_tree_base=%s\nandroid_tree_head=%s\n' \
+              "$(git rev-parse "$EXPECTED_BASE:android")" "$(git rev-parse HEAD:android)"
+          } > android/app/build/outputs/androidTest-results/api35-isolation/workflow-provenance.txt
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools emulator
+      - name: Install API 35 emulator image and host runtime
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0' emulator
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
+      - name: Verify hardware acceleration
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          { id; lscpu; free -h; cat /proc/pressure/cpu; stat /dev/kvm; } > android/app/build/outputs/androidTest-results/api35-isolation/host-initial.txt
+      - name: Build isolated target, test and test IME APKs
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug
+      - name: Run one isolated instrumentation test on API 35
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        timeout-minutes: 30
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: bash ../tools/run_android_api35_diagnostic.sh
+      - name: Upload diagnostic evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-api35-instrumentation-isolation-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: android/app/build/outputs/androidTest-results/api35-isolation/

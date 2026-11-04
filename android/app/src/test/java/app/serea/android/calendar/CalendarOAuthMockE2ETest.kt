@@ -106,14 +106,30 @@ class CalendarOAuthMockE2ETest {
                 """{"timeZone":"America/Los_Angeles","items":[{"id":"fixture-event-1","summary":"Synthetic review","status":"confirmed","start":{"dateTime":"2026-10-28T09:00:00-07:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-28T09:30:00-07:00","timeZone":"America/Los_Angeles"}}]}""",
             ),
         )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"id":"fixture-event-1","summary":"Synthetic review detail","description":"Test-only event detail","status":"confirmed","start":{"dateTime":"2026-10-28T09:00:00-07:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-28T09:30:00-07:00","timeZone":"America/Los_Angeles"}}""",
+            ),
+        )
 
         val page = session.listEventsPage(calendarId, range)
         assertEquals("fixture-event-1", page.events.single().key.eventId.value)
         assertEquals("Synthetic review", page.events.single().title)
         assertEquals(CalendarEventSource.GOOGLE_CALENDAR_API, page.events.single().source)
         assertEquals("America/Los_Angeles", (page.events.single().time as EventTime.Timed).timeZone.id)
-        assertEquals(1, gateway.tokenRequests)
-        assertEquals(listOf(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)), gateway.requestedScopeSets)
+        val detail = session.getEvent(page.events.single().key)
+        assertEquals("fixture-event-1", detail.key.eventId.value)
+        assertEquals("Synthetic review detail", detail.title)
+        assertEquals("Test-only event detail", detail.description)
+        assertEquals(CalendarEventSource.GOOGLE_CALENDAR_API, detail.source)
+        assertEquals(2, gateway.tokenRequests)
+        assertEquals(
+            listOf(
+                setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+                setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+            ),
+            gateway.requestedScopeSets,
+        )
 
         val request = server.takeRequest()
         assertEquals("GET", request.method)
@@ -124,11 +140,19 @@ class CalendarOAuthMockE2ETest {
         assertEquals("localhost", request.requestUrl!!.host)
         assertEquals("Bearer synthetic-never-valid-token", request.getHeader("Authorization"))
         assertFalse(request.requestLine.contains("gmail"))
+        val detailRequest = server.takeRequest()
+        assertEquals("GET", detailRequest.method)
+        assertEquals(
+            listOf("calendar", "v3", "calendars", calendarId.value, "events", "fixture-event-1"),
+            detailRequest.requestUrl!!.pathSegments,
+        )
+        assertEquals("localhost", detailRequest.requestUrl!!.host)
+        assertFalse(detailRequest.requestLine.contains("gmail"))
 
         gateway.switchSyntheticAccount()
         val staleAccountRead = runCatching { session.listEventsPage(calendarId, range) }.exceptionOrNull()
         assertTrue(staleAccountRead is CalendarReadFailure)
-        assertEquals(1, server.requestCount)
-        assertEquals(1, gateway.tokenRequests)
+        assertEquals(2, server.requestCount)
+        assertEquals(2, gateway.tokenRequests)
     }
 }

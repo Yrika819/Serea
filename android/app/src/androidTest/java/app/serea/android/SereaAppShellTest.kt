@@ -284,6 +284,15 @@ class SereaAppShellTest {
         assertTrue("Chat Composer Activity did not acquire Android window focus: $snapshot", focused)
     }
 
+    /** Keep ActivityManager context concise; UiAutomation commands need an explicit shell for pipes. */
+    private fun foregroundTaskSummary(): String {
+        val output = shell("sh -c \"dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1\"")
+        return output.lineSequence()
+            .lastOrNull { it.contains("topResumedActivity=") || it.contains("mResumedActivity") }
+            ?.take(512)
+            ?: "unavailable"
+    }
+
     /** Bring a resumed but unfocused target task to the foreground before sending a real touch. */
     private fun ensureChatWindowFocus(stage: String) {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
@@ -297,7 +306,7 @@ class SereaAppShellTest {
         }
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "FOREGROUND_INITIAL uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
-                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
+                "task=${foregroundTaskSummary()}")
         if (!hasWindowFocus) {
             if (device.wait(Until.hasObject(By.text("Wait")), 1_000)) {
                 Log.w(COMPOSER_IME_DIAGNOSTICS_TAG, "FOREGROUND_SYSTEM_ANR_DIALOG stage=$stage found=Wait")
@@ -326,8 +335,7 @@ class SereaAppShellTest {
         }.isSuccess
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "FOREGROUND_AFTER uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
-                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")} " +
-                "windows=${shell("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")}")
+                "task=${foregroundTaskSummary()}")
         assertTrue("Chat Activity did not acquire Android window focus after foreground recovery: $activitySnapshot", focused)
     }
 

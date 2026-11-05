@@ -175,7 +175,7 @@ class SereaAppShellTest {
         val shellResult = if (uiAutomatorAccepted) {
             "NOT_USED"
         } else {
-            shell("input tap $x $y 2>&1; tapExit=\$?; printf '\\nSEREA_TOUCH_EXIT=%s\\n' \"\$tapExit\"")
+            shell("sh -c 'input tap $x $y 2>&1; tapExit=\$?; printf \"SEREA_TOUCH_EXIT=%s\\n\" \"\$tapExit\"'")
                 .takeLast(512)
         }
         val shellAccepted = shellResult.lineSequence()

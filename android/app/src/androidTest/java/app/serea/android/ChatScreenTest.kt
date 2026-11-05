@@ -31,6 +31,9 @@ import android.view.inputmethod.InputMethodManager
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -44,6 +47,7 @@ class ChatScreenTest {
     private var lastComposerTouch = "not attempted"
 
     @Before fun startWithAnExplicitNewConversation() {
+        ensureChatWindowFocus("before starting ChatScreenTest")
         awaitComposerEnabled()
         val restoredId = stateSnapshot().conversation.id
         compose.onNodeWithText("新しい会話").performClick()
@@ -58,6 +62,7 @@ class ChatScreenTest {
 
     private companion object {
         const val FOCUS_LOG_TAG = "SereaChatWindowFocus"
+        const val ISOLATED_PACKAGE = "app.serea.android.isolated"
     }
 
     private fun assertDisplayedWithEvidence(tag: String, assertion: () -> Unit) {
@@ -195,19 +200,57 @@ class ChatScreenTest {
             "composerValueText=$composerText composerMatchesStateInput=${composerText == state.input} " +
             "composerNodeCount=${nodes?.size} composerNodes=$composerSummary"
         Log.e(FOCUS_LOG_TAG, "DIAGNOSTIC|stage=$stage|$detail")
-        for ((name, command) in listOf("WINDOW" to "dumpsys window", "INPUT_METHOD" to "dumpsys input_method")) {
-            val output = runCatching { shell(command) }.getOrElse { "COMMAND_FAILED:$it" }
-            if (name == "WINDOW") {
-                val owners = output.lineSequence().filter {
-                    it.contains("mCurrentFocus") || it.contains("mFocusedWindow") || it.contains("mFocusedApp")
-                }.joinToString(" | ")
-                Log.e(FOCUS_LOG_TAG, "WINDOW_OWNER|stage=$stage|$owners")
-            }
-            output.chunked(3000).forEachIndexed { index, chunk ->
-                Log.e(FOCUS_LOG_TAG, "RAW_$name|stage=$stage|chunk=${index + 1}|$chunk")
-            }
-        }
+        val windowOwners = runCatching { shell("dumpsys window") }
+            .getOrElse { "COMMAND_FAILED:${it.javaClass.simpleName}" }
+            .lineSequence()
+            .filter { it.contains("mCurrentFocus") || it.contains("mFocusedWindow") || it.contains("mFocusedApp") }
+            .take(8)
+            .joinToString(" | ")
+        Log.e(FOCUS_LOG_TAG, "WINDOW_OWNER|stage=$stage|$windowOwners")
+        val imeService = runCatching { shell("settings get secure default_input_method").trim() }
+            .getOrElse { "COMMAND_FAILED:${it.javaClass.simpleName}" }
+            .take(256)
+        Log.e(FOCUS_LOG_TAG, "INPUT_METHOD_SERVICE|stage=$stage|$imeService")
         return detail
+    }
+
+    /** Restore a resumed but unfocused test Activity before UI assertions or keyboard input. */
+    private fun ensureChatWindowFocus(stage: String) {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        var hasWindowFocus = false
+        var activitySnapshot = "MainActivity unavailable"
+        compose.activityRule.scenario.onActivity { activity ->
+            hasWindowFocus = activity.window.decorView.hasWindowFocus()
+            activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+        }
+        Log.i(FOCUS_LOG_TAG, "FOREGROUND_INITIAL|stage=$stage|$activitySnapshot")
+        if (!hasWindowFocus) {
+            device.pressHome()
+            val launch = device.executeShellCommand(
+                "am start -W -f 0x30000000 -n $ISOLATED_PACKAGE/app.serea.android.MainActivity",
+            )
+            Log.i(FOCUS_LOG_TAG, "FOREGROUND_START|stage=$stage|result=$launch")
+            assertTrue("Android did not confirm Chat Activity launch: $launch", launch.contains("Status: ok"))
+            assertTrue(
+                "UiAutomator could not find the isolated Chat task",
+                device.wait(Until.hasObject(By.pkg(ISOLATED_PACKAGE)), 15_000),
+            )
+        }
+        val focused = runCatching {
+            compose.waitUntil(20_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    hasWindowFocus = activity.window.decorView.hasWindowFocus()
+                    activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                        "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        Log.i(FOCUS_LOG_TAG, "FOREGROUND_RESULT|stage=$stage|$activitySnapshot")
+        assertTrue("Chat Activity did not acquire window focus at $stage: $activitySnapshot", focused)
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -244,6 +287,7 @@ class ChatScreenTest {
 
     private fun send(text: String) {
         Log.i(FOCUS_LOG_TAG, "SEND_BEGIN|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        ensureChatWindowFocus("before composing message")
         // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
         // a resumed window that Compose's root-targeted touch injection cannot focus.
         tapComposerThroughSystemInput()

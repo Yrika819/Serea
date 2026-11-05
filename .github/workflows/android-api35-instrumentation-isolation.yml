@@ -7,7 +7,19 @@ on:
     paths:
       - '.github/workflows/android-api35-instrumentation-isolation.yml'
       - 'tools/run_android_api35_diagnostic.sh'
+      - 'tools/verify_api35_diagnostic_source.py'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Historical baseline or explicit candidate source
+        type: choice
+        options: [baseline, candidate]
+        default: baseline
+        required: true
+      source_sha:
+        description: Candidate mode only - full SHA of selected workflow ref
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -18,6 +30,7 @@ concurrency:
 
 jobs:
   isolated-test:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: API 35 single-test instrumentation diagnostics
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -27,26 +40,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Check source and baseline test identity
+      - name: Bind diagnostic mode and source identity
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          EXPECTED_BASE: '334da4bf8855e1b7fefc019a3b397aff506c9913'
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DIAG_EVENT: ${{ github.event_name }}
+          DIAG_MODE: ${{ inputs.mode }}
+          DIAG_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DIAG_REQUEST_SHA: ${{ inputs.source_sha }}
+          DIAG_REPOSITORY: ${{ github.repository }}
+          DIAG_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DIAG_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          DIAG_EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          git cat-file -e "$EXPECTED_BASE^{commit}"
-          # Refuse to represent another PR base as the original failed baseline.
-          if [ -n "$PR_BASE" ]; then test "$PR_BASE" = "$EXPECTED_BASE"; fi
-          # Baseline experiments must use precisely the base Android sources and build files.
-          git diff --exit-code "$EXPECTED_BASE" HEAD -- android
           mkdir -p android/app/build/outputs/androidTest-results/api35-isolation
-          {
-            printf 'head_sha=%s\nbase_sha=%s\nevent_sha=%s\nrun_id=%s\nrun_attempt=%s\n' \
-              "$EXPECTED_HEAD" "$EXPECTED_BASE" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'android_tree_base=%s\nandroid_tree_head=%s\n' \
-              "$(git rev-parse "$EXPECTED_BASE:android")" "$(git rev-parse HEAD:android)"
-          } > android/app/build/outputs/androidTest-results/api35-isolation/workflow-provenance.txt
+          python3 tools/verify_api35_diagnostic_source.py > android/app/build/outputs/androidTest-results/api35-isolation/workflow-provenance.txt
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

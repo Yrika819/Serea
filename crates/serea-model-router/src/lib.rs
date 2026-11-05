@@ -4634,7 +4634,11 @@ mod tests {
 
     static NEXT_RECOVERY_TEST_DB: AtomicUsize = AtomicUsize::new(0);
 
-    fn fresh_test_db_path(prefix: &str, process_id: u32, mut nonce: usize) -> std::path::PathBuf {
+    fn fresh_test_db_path(
+        prefix: &str,
+        process_id: u32,
+        mut nonce: usize,
+    ) -> std::io::Result<std::path::PathBuf> {
         loop {
             let path = std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sqlite", process_id));
             match std::fs::OpenOptions::new()
@@ -4644,17 +4648,17 @@ mod tests {
             {
                 Ok(file) => {
                     drop(file);
-                    return path;
+                    return Ok(path);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    nonce = nonce.checked_add(1).unwrap_or_else(|| {
-                        panic!("exhausted unique database fixture names for {prefix}")
-                    });
+                    nonce = nonce.checked_add(1).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            format!("exhausted unique database fixture names for {prefix}"),
+                        )
+                    })?;
                 }
-                Err(error) => panic!(
-                    "could not reserve database fixture {}: {error}",
-                    path.display()
-                ),
+                Err(error) => return Err(error),
             }
         }
     }
@@ -4665,16 +4669,19 @@ mod tests {
             std::process::id(),
             NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst),
         )
+        .unwrap_or_else(|_| unreachable!())
     }
 
     #[test]
     fn router_fixture_path_skips_existing_database_after_counter_restart() {
         let process_id = std::process::id();
         let nonce = NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst);
-        let stale = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce);
+        let stale = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce)
+            .unwrap_or_else(|_| unreachable!());
         std::fs::write(&stale, b"stale database fixture").unwrap_or_else(|_| unreachable!());
 
-        let fresh = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce);
+        let fresh = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce)
+            .unwrap_or_else(|_| unreachable!());
         assert_ne!(fresh, stale);
         assert_eq!(
             std::fs::read(&stale).unwrap_or_else(|_| unreachable!()),

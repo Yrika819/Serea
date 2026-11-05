@@ -1606,6 +1606,11 @@ class SereaAppShellTest {
             // by switching IMEs. The Composer already has a real input session here; another
             // injected screen tap is redundant and can fail even while that session is live.
             ensureChatWindowFocus("synchronized real IME session")
+            // Re-selecting an IME can revoke Android window focus after onStartInputView even
+            // while the resumed Activity and Compose child still report focus. Dispatch a real
+            // user-equivalent tap to re-establish the window/editor focus boundary before using
+            // the newly bound InputConnection.
+            tapComposerThroughSystemInput()
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
             // Window focus can cause Android to replace the IME InputConnection after an

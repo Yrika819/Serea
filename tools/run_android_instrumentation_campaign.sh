@@ -64,7 +64,7 @@ test_ime_installed=false
 test_ime_cleanup_result=NOT_RUN
 stop_formal_observer() {
   if [[ -n "$formal_observer_pid" ]]; then
-    local observer_exit attempt
+    local observer_exit attempt observer_summary
     kill "$formal_observer_pid" 2>/dev/null || true
     for attempt in $(seq 1 20); do
       kill -0 "$formal_observer_pid" 2>/dev/null || break
@@ -75,8 +75,16 @@ stop_formal_observer() {
     formal_observer_pid=''
     {
       printf 'observer_exit=%s\n' "$observer_exit"
-      if [[ "$observer_exit" -eq 0 ]] && [[ -s "$evidence/formal-observer.txt" ]] && \
-        tail -1 "$evidence/formal-observer.txt" | grep -Eq '^observer_end=.* cycles=[1-9][0-9]* observation=RECORDED$'; then
+      observer_summary=''
+      if [[ -s "$evidence/formal-observer.txt" ]]; then
+        observer_summary=$(tail -1 "$evidence/formal-observer.txt")
+        printf '%s\n' "$observer_summary"
+      else
+        echo 'observer_summary=MISSING'
+      fi
+      if [[ "$observer_exit" -eq 0 ]] && [[ "$observer_summary" == observer_end=* ]] && \
+        [[ "$observer_summary" == *' observation=RECORDED '* ]] && \
+        [[ "$observer_summary" == *' pid_tracking=RECORDED '* ]]; then
         echo 'observation=RECORDED'
       else
         echo 'observation=INCOMPLETE'
@@ -520,7 +528,7 @@ if [[ "$sdk_ok" == true ]]; then
         # Its failure or missing samples never change Gradle/JUnit gate results.
         : > "$evidence/formal-observer.txt"
         printf 'observation=INCOMPLETE\n' > "$evidence/formal-observer-status.txt"
-        python3 "$tool_dir/observe_android_formal.py" --serial "$ANDROID_SERIAL" \
+        python3 "$tool_dir/observe_android_formal.py" --serial "$ANDROID_SERIAL" --api-level "$api_level" \
           --output "$evidence/formal-observer.txt" > "$evidence/formal-observer-stderr.txt" 2>&1 &
         formal_observer_pid=$!
         timeout --signal=INT --kill-after=120s 40m ./gradlew --no-daemon \

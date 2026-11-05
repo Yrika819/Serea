@@ -79,6 +79,19 @@ class ObserverTest(unittest.TestCase):
         with patch.object(observer, 'command', side_effect=normal), patch.object(Path, 'read_text', autospec=True, side_effect=missing):
             self.assertTrue(observer.sample(io.StringIO(), 'emulator-5554', 1))
 
+    def test_pid_disappearance_triggers_exit_info_without_waiting_for_periodic_sample(self):
+        observer.PREVIOUS_TARGET_PIDS = {'123'}
+        self.addCleanup(setattr, observer, 'PREVIOUS_TARGET_PIDS', None)
+        seen = []
+        def trace(cmd, timeout=5, stdin=None):
+            seen.append(cmd)
+            return normal(cmd, timeout, stdin)
+        out = io.StringIO()
+        with patch.object(observer, 'command', side_effect=trace), patch.object(Path, 'read_text', autospec=True, side_effect=files):
+            self.assertFalse(observer.sample(out, 'emulator-5554', 2))
+        self.assertIn('target_pid_transition=disappeared', out.getvalue())
+        self.assertTrue(any('exit-info' in cmd for cmd in seen))
+
     def test_actual_subprocess_timeout_is_bounded(self):
         status, _, _, _ = observer.command(['python3', '-c', 'import time; time.sleep(2)'], timeout=0.1)
         self.assertEqual(status, 124)

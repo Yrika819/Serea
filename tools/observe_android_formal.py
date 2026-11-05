@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 STOP = False
+PREVIOUS_TARGET_PIDS = None
 DEVICE_SCRIPT = r'''for p in app.serea.android.isolated app.serea.android.isolated.test app.serea.android.r25testime; do
   echo "package=$p"
   ids=$(pidof "$p" 2>/dev/null); rc=$?; echo "pids=$ids"; echo "pidof_exit=$rc"
@@ -83,7 +84,9 @@ def valid_device_observation(data):
 
 
 def sample(out, serial, cycle):
+    global PREVIOUS_TARGET_PIDS
     incomplete = False
+    target_disappeared = False
     out.write(f'cycle_start={cycle} at={stamp()}\n')
     for name, cmd, stdin in [('adb_state', ['adb', '-s', serial, 'get-state'], None),
                              ('device_processes', ['adb', '-s', serial, 'shell', 'sh'], DEVICE_SCRIPT.encode())]:
@@ -91,9 +94,16 @@ def sample(out, serial, cycle):
         out.write(f'{name}: exit={code} bytes={size} truncated={str(truncated).lower()}\n{data}\n')
         if code or truncated or (name == 'adb_state' and data.strip() != 'device') or (name == 'device_processes' and not valid_device_observation(data)):
             incomplete = True
+        if name == 'device_processes' and code == 0 and not truncated and valid_device_observation(data):
+            match = re.search(r'^package=app[.]serea[.]android[.]isolated\npids=([^\n]*)\npidof_exit=', data, re.M)
+            current = set(match.group(1).split())
+            target_disappeared = PREVIOUS_TARGET_PIDS is not None and bool(PREVIOUS_TARGET_PIDS - current)
+            if target_disappeared:
+                out.write(f'target_pid_transition=disappeared previous={",".join(sorted(PREVIOUS_TARGET_PIDS))} current={",".join(sorted(current))}\n')
+            PREVIOUS_TARGET_PIDS = current
     # Exit records are sampled every fourth cycle and remain observational: the
     # platform may remove them during UTP uninstall. No command mutates the guest.
-    if cycle % 4 == 1:
+    if cycle % 4 == 1 or target_disappeared:
         code, size, data, truncated = command(['adb', '-s', serial, 'shell', 'dumpsys', 'activity', 'exit-info', 'app.serea.android.isolated'])
         valid = code == 0 and 'ACTIVITY MANAGER PROCESS EXIT INFO' in data and not truncated
         out.write(f'exit_info: exit={code} bytes={size} valid={str(valid).lower()} truncated={str(truncated).lower()}\n{data}\n')

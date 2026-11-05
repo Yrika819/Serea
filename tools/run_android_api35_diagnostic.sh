@@ -5,6 +5,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root/android" || exit 1
 evidence=app/build/outputs/androidTest-results/api35-isolation
 mkdir -p "$evidence" || exit 1
+rm -f "$evidence/monitor-stop" || exit 1
 export EXPECTED_API_LEVEL=35 SEREA_EXPECTED_ANDROID_API=35
 printf 'NOT_RUN\n' > "$evidence/result.txt"
 printf 'NOT_RUN\n' > "$evidence/test-result.txt"
@@ -68,15 +69,32 @@ log_pid=$!
     if [[ -n "$filter" ]] && ! grep -Eq "$filter" "$tmp"; then semantic=INCOMPLETE; fi
     if [[ "$label" == EXIT_INFO ]] && ! grep -Fq 'ACTIVITY MANAGER PROCESS EXIT INFO' "$tmp"; then semantic=INCOMPLETE; fi
     if [[ "$label" == INSTRUMENTATION ]] && ! grep -Fq 'ACTIVITY MANAGER' "$tmp"; then semantic=INCOMPLETE; fi
+    if [[ "$label" == INPUT_METHOD ]] && ! tr -d '\r' < "$tmp" | grep -Eq '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$'; then semantic=INCOMPLETE; fi
     local selected="$evidence/monitor-selected.tmp" selected_bytes
     if [[ -n "$filter" ]]; then grep -E "$filter" "$tmp" > "$selected"; else cp "$tmp" "$selected"; fi
     selected_bytes=$(wc -c < "$selected")
     if (( selected_bytes > 16000 )); then semantic=INCOMPLETE; fi
     printf '\n%s exit=%s bytes=%s semantic=%s selected_bytes=%s\n' "$label" "$code" "$(wc -c < "$tmp")" "$semantic" "$selected_bytes"
     head -c 16000 "$selected"
+    if [[ "$code" == 124 ]]; then
+      printf '\nSNAPSHOT_TIMEOUT_CONTEXT label=%s at=%s\n' "$label" "$(date -u +%FT%T.%3NZ)"
+      printf 'ADB_STATE='; timeout 3s adb get-state 2>&1; printf 'ADB_STATE_EXIT=%s\n' "$?"
+      printf 'DEVICE_UPTIME_BOOT_ID='; timeout 3s adb shell cat /proc/uptime /proc/sys/kernel/random/boot_id 2>&1; printf 'DEVICE_CONTEXT_EXIT=%s\n' "$?"
+      local context="$evidence/monitor-timeout-processes.tmp" context_status context_bytes
+      timeout 3s adb shell ps -A -o PID,PPID,STAT,NAME,ARGS > "$context" 2>&1; context_status=$?
+      context_bytes=$(wc -c < "$context")
+      local context_selected="$evidence/monitor-timeout-selected.tmp" context_selected_bytes
+      grep -E 'dumpsys|logcat|serea|instrument' "$context" > "$context_selected"
+      context_selected_bytes=$(wc -c < "$context_selected")
+      printf 'DEVICE_COMPETING_PROCESSES exit=%s bytes=%s selected_bytes=%s selected_limit=16000\n' "$context_status" "$context_bytes" "$context_selected_bytes"
+      head -c 16000 "$context_selected"
+      rm -f "$context" "$context_selected"
+      printf 'HOST_COMPETING_PROCESSES\n'; ps -eo pid,ppid,stat,rss,comm | awk 'NR==1 || /java|gradle|adb|emulator|qemu/'
+    fi
     rm -f "$tmp" "$selected"
   }
-  while :; do
+  while [[ ! -e "$evidence/monitor-stop" ]]; do
+    printf '\nMONITOR_CYCLE_START %s\n' "$(date -u +%FT%T.%3NZ)"
     printf '\n=== %s ===\n' "$(date -u +%FT%T.%3NZ)"
     printf "ADB_STATE="; timeout 3s adb get-state 2>&1
     printf "DEVICE_UPTIME_BOOT_ID="; timeout 3s adb shell cat /proc/uptime /proc/sys/kernel/random/boot_id 2>&1
@@ -86,7 +104,10 @@ log_pid=$!
     snapshot EXIT_INFO '' dumpsys activity exit-info app.serea.android.isolated
     snapshot DEVICE_SHELL_PROCESSES 'dumpsys|logcat|serea|instrument' ps -A -o PID,PPID,STAT,NAME,ARGS
     snapshot FOCUS 'mCurrentFocus|mFocusedApp' dumpsys window displays
-    snapshot INPUT_METHOD 'mCurMethodId|mCurFocusedWindow|mCurEditorInfo|mInputShown' dumpsys input_method
+    # The full input_method dump includes hundreds of kilobytes of IME internals;
+    # poll only the selected IME. Live onStartInput and InputConnection evidence is
+    # read from the Test IME's existing log events below.
+    snapshot INPUT_METHOD '' settings get secure default_input_method
     printf '\nHOST_PROCESSES\n'
     ps -eo pid,ppid,stat,rss,comm | awk 'NR==1 || /java|gradle|adb|emulator|qemu/'
     printf 'MEMORY\n'; head -5 /proc/meminfo
@@ -110,8 +131,10 @@ log_pid=$!
     printf 'CGROUP_TARGET_EVENTS=%s\n' "$target_events"
     if [[ "$cgroup_found" == 0 ]]; then echo 'CGROUP_MEMORY=UNAVAILABLE'; fi
     printf 'LOG_BYTES='; wc -c < "$evidence/logcat.txt"
+    printf 'MONITOR_CYCLE_FINISH %s\n' "$(date -u +%FT%T.%3NZ)"
     sleep 2
   done
+  echo MONITOR_FINISHED
 ) > "$evidence/live-monitor.txt" 2>&1 &
 monitor_pid=$!
 printf 'started_at_utc=%s\n' "$(date -u +%FT%T.%3NZ)" > "$evidence/host-lifecycle.txt"
@@ -135,8 +158,19 @@ verify=1
 if [[ -d "$evidence/junit" ]]; then
   python3 "$root/tools/verify_android_instrumentation.py" "$evidence/junit" --minimum 1 --exact-count 1 --require-test 'app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges' > "$evidence/verification.log" 2>&1; verify=$?
 else echo 'NOT_RUN: JUnit missing' > "$evidence/verification.log"; fi
-monitor_health=PASS; kill -0 "$monitor_pid" 2>/dev/null || monitor_health=FAIL
-kill "$monitor_pid" 2>/dev/null; wait "$monitor_pid" 2>/dev/null; monitor_pid=''
+monitor_health=INCOMPLETE
+: > "$evidence/monitor-stop"
+for _ in $(seq 1 45); do kill -0 "$monitor_pid" 2>/dev/null || break; sleep 1; done
+if kill -0 "$monitor_pid" 2>/dev/null; then
+  kill "$monitor_pid" 2>/dev/null
+  wait "$monitor_pid" 2>/dev/null
+else
+  wait "$monitor_pid"; monitor_exit=$?
+  if [[ "$monitor_exit" -eq 0 ]] && grep -Fxq MONITOR_FINISHED "$evidence/live-monitor.txt" && \
+     [[ "$(grep -c '^MONITOR_CYCLE_START ' "$evidence/live-monitor.txt")" -gt 0 ]] && \
+     [[ "$(grep -c '^MONITOR_CYCLE_START ' "$evidence/live-monitor.txt")" -eq "$(grep -c '^MONITOR_CYCLE_FINISH ' "$evidence/live-monitor.txt")" ]]; then monitor_health=PASS; fi
+fi
+monitor_pid=''
 log_health=PASS; kill -0 "$log_pid" 2>/dev/null || log_health=FAIL
 kill "$log_pid" 2>/dev/null; wait "$log_pid" 2>/dev/null; reader_status=$?; log_pid=''
 bytes=$(wc -c < "$evidence/logcat.txt")
@@ -150,7 +184,12 @@ if grep -E "SereaTestLifecycle: START\|[0-9]+\|$identity" "$evidence/logcat.txt"
    grep -F 'SereaTestLifecycle: RUN_FINISH|' "$evidence/logcat.txt" >/dev/null; then lifecycle_health=PASS; fi
 adb_health=FAIL
 if grep -Fx 'ADB_STATE=device' "$evidence/live-monitor.txt" >/dev/null && ! grep -E '^ADB_STATE=' "$evidence/live-monitor.txt" | grep -Fvx 'ADB_STATE=device' >/dev/null; then adb_health=PASS; fi
-printf 'lifecycle_health=%s\nadb_observation=%s\n' "$lifecycle_health" "$adb_health" >> "$evidence/capture-status.txt"
+ime_events_health=INCOMPLETE
+if grep -E 'SereaRealIme: .* onStartInput restarting=.*package=app[.]serea[.]android[.]isolated' "$evidence/logcat.txt" >/dev/null && \
+   grep -E 'SereaRealIme: .*IME_OPERATION .*operationInvoked=true accepted=true .*actualPackage=app[.]serea[.]android[.]isolated .*actualConnection=[^[:space:]]+' "$evidence/logcat.txt" >/dev/null; then
+  ime_events_health=PASS
+fi
+printf 'lifecycle_health=%s\nadb_observation=%s\ntest_ime_events=%s\n' "$lifecycle_health" "$adb_health" "$ime_events_health" >> "$evidence/capture-status.txt"
 cleanup
 trap - EXIT
 test_status=FAIL
@@ -178,7 +217,7 @@ printf 'cgroup_observation=%s\n' "$cgroup_health" >> "$evidence/capture-status.t
 printf 'instrumentation_observation=%s\nsnapshot_observation=%s\n' "$instrumentation_health" "$snapshot_health" >> "$evidence/capture-status.txt"
 diagnostic_status=INCOMPLETE
 if [[ "$monitor_health" == PASS && "$log_health" == PASS && "$lifecycle_health" == PASS && \
-      "$adb_health" == PASS && "$instrumentation_health" == PASS && "$snapshot_health" == PASS && "$cgroup_health" == PASS && "$exit_info_health" == PASS && \
+      "$adb_health" == PASS && "$ime_events_health" == PASS && "$instrumentation_health" == PASS && "$snapshot_health" == PASS && "$cgroup_health" == PASS && "$exit_info_health" == PASS && \
       "$bytes" -gt 0 && "$bytes" -lt 33554432 && "$(cat "$evidence/exit-info-command-status.txt")" == 0 && \
       "$(cat "$evidence/instrumentation-after-status.txt")" == 0 && "$(cat "$evidence/ime-cleanup.txt")" == PASS ]]; then
   diagnostic_status=PASS

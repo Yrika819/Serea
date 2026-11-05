@@ -101,6 +101,8 @@ jobs:
               "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt"|\
               "docs/diagnostics/2026-11-05-formal-observability.md"|\
               "tools/tests/test_android_formal_observer.py"|\
+              "tools/observe_android_formal.py"|\
+              "tools/run_android_instrumentation_campaign.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
               "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt"|\

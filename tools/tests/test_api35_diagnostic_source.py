@@ -1,5 +1,9 @@
 import importlib.util
 import pathlib
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +96,24 @@ class SourceIdentityTest(unittest.TestCase):
         with self.assertRaises(ValueError): module.verify(self.env)
         self.env['DIAG_HEAD_REPOSITORY'] = 'owner/repo'
         self.assertEqual(module.verify(self.env)['mode'], 'baseline')
+
+
+class DiagnosticGuardTest(unittest.TestCase):
+    def test_guard_failure_preserves_incomplete_evidence(self):
+        source_root = pathlib.Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / 'tools').mkdir()
+            (root / 'android').mkdir()
+            for name in ('run_android_api35_diagnostic.sh', 'assert_disposable_android_emulator.sh'):
+                shutil.copy(source_root / 'tools' / name, root / 'tools' / name)
+            env = {**os.environ, 'CI': 'false', 'GITHUB_ACTIONS': 'false'}
+            run = subprocess.run(['bash', str(root / 'tools/run_android_api35_diagnostic.sh')],
+                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            self.assertNotEqual(run.returncode, 0)
+            evidence = root / 'android/app/build/outputs/androidTest-results/api35-isolation'
+            self.assertEqual((evidence / 'test-result.txt').read_text().strip(), 'NOT_RUN')
+            self.assertEqual((evidence / 'diagnostic-result.txt').read_text().strip(), 'INCOMPLETE')
 
 
 if __name__ == '__main__':

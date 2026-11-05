@@ -58,10 +58,34 @@ printf 'NOT_READY\n' > "$evidence/process-death-readiness.log" || exit 1
 printf 'NOT_RUN\n' > "$evidence/google-demo-ui-cleanup-status.txt" || exit 1
 
 logcat_pid=''
+formal_observer_pid=''
 initial_default_ime=''
 test_ime_installed=false
 test_ime_cleanup_result=NOT_RUN
+stop_formal_observer() {
+  if [[ -n "$formal_observer_pid" ]]; then
+    local observer_exit attempt
+    kill "$formal_observer_pid" 2>/dev/null || true
+    for attempt in $(seq 1 20); do
+      kill -0 "$formal_observer_pid" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$formal_observer_pid" 2>/dev/null; then kill -KILL "$formal_observer_pid" 2>/dev/null || true; fi
+    wait "$formal_observer_pid"; observer_exit=$?
+    formal_observer_pid=''
+    {
+      printf 'observer_exit=%s\n' "$observer_exit"
+      if [[ "$observer_exit" -eq 0 ]] && [[ -s "$evidence/formal-observer.txt" ]] && \
+        tail -1 "$evidence/formal-observer.txt" | grep -Eq '^observer_end=.* cycles=[1-9][0-9]* observation=RECORDED$'; then
+        echo 'observation=RECORDED'
+      else
+        echo 'observation=INCOMPLETE'
+      fi
+    } > "$evidence/formal-observer-status.txt"
+  fi
+}
 stop_live_capture() {
+  stop_formal_observer
   if [[ -n "$logcat_pid" ]]; then
     kill "$logcat_pid" 2>/dev/null || true
     wait "$logcat_pid" 2>/dev/null || true
@@ -492,11 +516,19 @@ if [[ "$sdk_ok" == true ]]; then
       fi
       if [[ "$isolated_target_result" -eq 0 ]]; then
         printf 'instrumentation_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
+        # Observational only: bounded, low-frequency reads in a separate process.
+        # Its failure or missing samples never change Gradle/JUnit gate results.
+        : > "$evidence/formal-observer.txt"
+        printf 'observation=INCOMPLETE\n' > "$evidence/formal-observer-status.txt"
+        python3 "$tool_dir/observe_android_formal.py" --serial "$ANDROID_SERIAL" \
+          --output "$evidence/formal-observer.txt" > "$evidence/formal-observer-stderr.txt" 2>&1 &
+        formal_observer_pid=$!
         timeout --signal=INT --kill-after=120s 40m ./gradlew --no-daemon \
           -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$campaign_token" \
           -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
           connectedIsolatedAndroidTest > "$evidence/instrumentation-gradle.log" 2>&1
         gradle_result=$?
+        stop_formal_observer
         cat "$evidence/instrumentation-gradle.log"
         printf '%s\n' "$gradle_result" > "$evidence/instrumentation-gradle-exit-code.txt"
         printf 'instrumentation_finished_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"

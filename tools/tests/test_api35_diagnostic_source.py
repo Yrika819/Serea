@@ -13,11 +13,13 @@ OTHER = 'c' * 40
 
 
 def fake_git(*args):
+    if args[:2] == ('merge-base', '--is-ancestor'):
+        return ''
     if args == ('rev-parse', 'HEAD'):
         return HEAD
     if args == ('rev-parse', f'{HEAD}:android'):
         return TREE
-    if args == ('rev-parse', f'{module.BASELINE}:android'):
+    if args in (('rev-parse', f'{module.BASELINE}:android'), ('rev-parse', f'{OTHER}:android')):
         return TREE
     if len(args) == 2 and args[0] == 'rev-parse' and args[1].startswith(f'{HEAD}:'):
         return module.TRUSTED[args[1].split(':', 1)[1]]
@@ -61,6 +63,29 @@ class SourceIdentityTest(unittest.TestCase):
         for value in ('main', 'A' * 40, OTHER):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 module.verify({**self.env, 'DIAG_SOURCE_SHA': value})
+
+    def test_pr_accepts_changed_base_with_identical_android_tree(self):
+        self.env.update(DIAG_EVENT='pull_request', DIAG_BASE_SHA=OTHER,
+                        DIAG_REPOSITORY='owner/repo', DIAG_HEAD_REPOSITORY='owner/repo')
+        self.assertEqual(module.verify(self.env)['pr_base_android_tree'], TREE)
+        def base_changed(*args):
+            return OTHER if args == ('rev-parse', f'{OTHER}:android') else fake_git(*args)
+        with patch.object(module, 'git', side_effect=base_changed), self.assertRaises(ValueError):
+            module.verify(self.env)
+
+    def test_pr_rejects_unrelated_base(self):
+        self.env.update(DIAG_EVENT='pull_request', DIAG_BASE_SHA=OTHER,
+                        DIAG_REPOSITORY='owner/repo', DIAG_HEAD_REPOSITORY='owner/repo')
+        def unrelated(*args):
+            if args[0] == 'merge-base': raise module.subprocess.CalledProcessError(1, args)
+            return fake_git(*args)
+        with patch.object(module, 'git', side_effect=unrelated), self.assertRaises(module.subprocess.CalledProcessError):
+            module.verify(self.env)
+
+    def test_pr_rejects_invalid_base_identity(self):
+        self.env.update(DIAG_EVENT='pull_request', DIAG_BASE_SHA='main',
+                        DIAG_REPOSITORY='owner/repo', DIAG_HEAD_REPOSITORY='owner/repo')
+        with self.assertRaises(ValueError): module.verify(self.env)
 
     def test_pull_request_requires_same_repo(self):
         self.env.update(DIAG_EVENT='pull_request', DIAG_BASE_SHA=module.BASELINE, DIAG_REPOSITORY='owner/repo', DIAG_HEAD_REPOSITORY='other/repo')

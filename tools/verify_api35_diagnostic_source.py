@@ -35,12 +35,19 @@ def verify(env):
         raise ValueError('checkout does not equal requested source SHA')
     if event == 'workflow_dispatch' and mode == 'candidate' and env.get('DIAG_REQUEST_SHA', '') != head:
         raise ValueError('candidate input SHA must exactly match the selected workflow ref')
-    if event == 'pull_request' and env.get('DIAG_BASE_SHA', '') != BASELINE:
-        raise ValueError('historical PR baseline does not match')
     if event == 'pull_request' and env.get('DIAG_REPOSITORY', '') != env.get('DIAG_HEAD_REPOSITORY', ''):
         raise ValueError('candidate must be from the same repository')
     tree = git('rev-parse', f'{head}:android')
     baseline_tree = git('rev-parse', f'{BASELINE}:android')
+    pr_base = env.get('DIAG_BASE_SHA', '') if event == 'pull_request' else ''
+    pr_base_tree = ''
+    if event == 'pull_request':
+        if not SHA.fullmatch(pr_base):
+            raise ValueError('PR base must be an explicit full lowercase commit SHA')
+        git('merge-base', '--is-ancestor', BASELINE, pr_base)
+        pr_base_tree = git('rev-parse', f'{pr_base}:android')
+        if pr_base_tree != baseline_tree:
+            raise ValueError('PR base Android tree differs from historical baseline')
     if mode == 'candidate':
         for path, expected_blob in TRUSTED.items():
             if git('rev-parse', f'{head}:{path}') != expected_blob:
@@ -48,7 +55,7 @@ def verify(env):
     if mode == 'baseline' and tree != baseline_tree:
         raise ValueError('baseline mode requires the historical Android tree')
     return {'mode': mode, 'source_sha': head, 'android_tree': tree, 'baseline_sha': BASELINE,
-            'baseline_android_tree': baseline_tree, 'harness_reference_sha': HARNESS,
+            'baseline_android_tree': baseline_tree, 'pr_base_sha': pr_base, 'pr_base_android_tree': pr_base_tree, 'harness_reference_sha': HARNESS,
             'harness_match': 'PASS' if mode == 'candidate' else 'NOT_CHECKED', 'event_sha': env.get('DIAG_EVENT_SHA', ''),
             'run_id': env.get('GITHUB_RUN_ID', ''), 'run_attempt': env.get('GITHUB_RUN_ATTEMPT', '')}
 

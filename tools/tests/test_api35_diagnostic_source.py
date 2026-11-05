@@ -19,7 +19,8 @@ def fake_git(*args):
         return TREE
     if args == ('rev-parse', f'{module.BASELINE}:android'):
         return TREE
-    if args[:3] == ('diff', '--exit-code', module.HARNESS): return ''
+    if len(args) == 2 and args[0] == 'rev-parse' and args[1].startswith(f'{HEAD}:'):
+        return module.TRUSTED[args[1].split(':', 1)[1]]
     raise AssertionError(args)
 
 
@@ -51,9 +52,9 @@ class SourceIdentityTest(unittest.TestCase):
     def test_candidate_rejects_changed_trusted_harness(self):
         self.env.update(DIAG_MODE='candidate', DIAG_REQUEST_SHA=HEAD)
         def changed(*args):
-            if args[0] == 'diff': raise module.subprocess.CalledProcessError(1, args)
+            if len(args) == 2 and args[1].endswith('tools/android_package_path.sh'): return OTHER
             return fake_git(*args)
-        with patch.object(module, 'git', side_effect=changed), self.assertRaises(module.subprocess.CalledProcessError):
+        with patch.object(module, 'git', side_effect=changed), self.assertRaises(ValueError):
             module.verify(self.env)
 
     def test_bad_or_wrong_checkout_rejected(self):

@@ -7,7 +7,14 @@ import sys
 
 BASELINE = '334da4bf8855e1b7fefc019a3b397aff506c9913'
 HARNESS = '2c4327399e5adfec8e106df50a5c5bc6e11c50b8'
-TRUSTED = ('tools/run_android_api35_diagnostic.sh', 'tools/assert_disposable_android_emulator.sh', 'tools/prepare_isolated_instrumentation_target.sh', 'tools/android_package_path.sh', 'tools/wait_for_android_default_ime.sh', 'tools/verify_android_instrumentation.py')
+TRUSTED = {
+    'tools/run_android_api35_diagnostic.sh': '664b627a3e7b99501048689327f5ad1a87857631',
+    'tools/assert_disposable_android_emulator.sh': 'f206038550118ed089fd4e7ef4951e9a174133f9',
+    'tools/prepare_isolated_instrumentation_target.sh': '73d39e9dc000e294e22473a26654c5add2a98b87',
+    'tools/android_package_path.sh': 'a923446cb8d1ecbf6011738cb6e248047648cfe7',
+    'tools/wait_for_android_default_ime.sh': '66597bff928310e5946b888b32ce73a9a0dbf519',
+    'tools/verify_android_instrumentation.py': 'dd027d419f28902a79a57f348fd83f80ef626913',
+}
 SHA = re.compile(r'^[0-9a-f]{40}$')
 
 
@@ -35,7 +42,9 @@ def verify(env):
     tree = git('rev-parse', f'{head}:android')
     baseline_tree = git('rev-parse', f'{BASELINE}:android')
     if mode == 'candidate':
-        git('diff', '--exit-code', HARNESS, head, '--', *TRUSTED)
+        for path, expected_blob in TRUSTED.items():
+            if git('rev-parse', f'{head}:{path}') != expected_blob:
+                raise ValueError(f'candidate harness differs: {path}')
     if mode == 'baseline' and tree != baseline_tree:
         raise ValueError('baseline mode requires the historical Android tree')
     return {'mode': mode, 'source_sha': head, 'android_tree': tree, 'baseline_sha': BASELINE,

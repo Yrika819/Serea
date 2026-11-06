@@ -3373,11 +3373,7 @@ mod tests {
 
     #[test]
     fn dispatch_commits_before_provider_and_recovers_caller_lost_response() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-dispatch-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-dispatch");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(DispatchFakeProvider {
             store: Arc::clone(&store),
@@ -3842,11 +3838,7 @@ mod tests {
 
     #[test]
     fn gate_is_rechecked_after_intent_before_provider_call() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-gate-race-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-gate-race");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(DispatchFakeProvider {
             store: Arc::clone(&store),
@@ -3967,11 +3959,7 @@ mod tests {
 
     #[test]
     fn structured_dispatch_returns_host_validated_value_and_persists_it() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-structured-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-structured");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(DispatchFakeProvider {
             store: Arc::clone(&store),
@@ -4143,11 +4131,7 @@ mod tests {
 
     #[test]
     fn structured_invalid_output_repairs_with_minimal_context_and_host_lineage() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-repair-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-repair");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(RepairFakeProvider::new(vec![
             r#"{"count":"private_fragment_marker"}"#.into(),
@@ -4576,11 +4560,7 @@ mod tests {
 
     #[test]
     fn startup_recovery_marks_intents_ambiguous_with_one_atomic_event() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-recovery-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-recovery");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let bus = EventBus::new(IncrementingIds(500));
         let request_id = bus
@@ -4653,6 +4633,64 @@ mod tests {
     }
 
     static NEXT_RECOVERY_TEST_DB: AtomicUsize = AtomicUsize::new(0);
+
+    fn fresh_test_db_path(
+        prefix: &str,
+        process_id: u32,
+        mut nonce: usize,
+    ) -> std::io::Result<std::path::PathBuf> {
+        loop {
+            let path = std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sqlite", process_id));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    drop(file);
+                    return Ok(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    nonce = nonce.checked_add(1).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            format!("exhausted unique database fixture names for {prefix}"),
+                        )
+                    })?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn router_test_db_path(prefix: &str) -> std::path::PathBuf {
+        fresh_test_db_path(
+            prefix,
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst),
+        )
+        .unwrap_or_else(|_| unreachable!())
+    }
+
+    #[test]
+    fn router_fixture_path_skips_existing_database_after_counter_restart() {
+        let process_id = std::process::id();
+        let nonce = NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst);
+        let stale = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce)
+            .unwrap_or_else(|_| unreachable!());
+        std::fs::write(&stale, b"stale database fixture").unwrap_or_else(|_| unreachable!());
+
+        let fresh = fresh_test_db_path("serea-router-fixture-isolation", process_id, nonce)
+            .unwrap_or_else(|_| unreachable!());
+        assert_ne!(fresh, stale);
+        assert_eq!(
+            std::fs::read(&stale).unwrap_or_else(|_| unreachable!()),
+            b"stale database fixture"
+        );
+
+        let _ = std::fs::remove_file(stale);
+        let _ = std::fs::remove_file(fresh);
+    }
 
     #[test]
     fn chains_are_frozen_and_codex_is_absent() {
@@ -4774,11 +4812,7 @@ mod tests {
 
     #[test]
     fn retryable_primary_failure_uses_frozen_health_snapshot_and_fallback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-fallback-red-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-fallback-red");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
         provider.push_script(RepairScript::Fail(ModelError {
@@ -4984,11 +5018,7 @@ mod tests {
 
     #[test]
     fn structured_fallback_invalid_output_repairs_from_fallback_lineage() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-structured-fallback-red-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-structured-fallback-red");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
         provider.push_script(RepairScript::Fail(ModelError {
@@ -5268,11 +5298,7 @@ mod tests {
 
     #[test]
     fn task_token_bound_returns_after_persisting_the_threshold_crossing_response() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-token-bound-red-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-token-bound-red");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let task_id =
             TaskId::new("tsk_00000000000000000000000042").unwrap_or_else(|_| unreachable!());
@@ -5466,11 +5492,7 @@ mod tests {
 
     #[test]
     fn trusted_host_call_boundary_accounts_task_without_owning_lifecycle() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-host-boundary-red-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-host-boundary-red");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let task_id =
             TaskId::new("tsk_00000000000000000000000050").unwrap_or_else(|_| unreachable!());
@@ -5550,11 +5572,7 @@ mod tests {
 
     #[test]
     fn host_gate_uses_real_task_cancellation_and_deletion_state() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-host-task-gate-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-host-task-gate");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let cancelled_before =
             TaskId::new("tsk_00000000000000000000000051").unwrap_or_else(|_| unreachable!());
@@ -5701,11 +5719,7 @@ mod tests {
 
     #[test]
     fn price_changes_apply_only_to_a_new_process_router_snapshot() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-price-snapshot-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-price-snapshot");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let provider = Arc::new(RepairFakeProvider::new(vec![
             "first result".into(),
@@ -5816,11 +5830,7 @@ mod tests {
 
     #[test]
     fn fallback_uses_its_own_price_and_reuses_the_process_health_snapshot() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-fallback-price-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-fallback-price");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
         provider.push_script(RepairScript::Fail(ModelError {
@@ -5906,11 +5916,7 @@ mod tests {
 
     #[test]
     fn fallback_daily_spend_exhaustion_creates_no_fallback_child() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-fallback-spend-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-fallback-spend");
         let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let task_id =
             TaskId::new("tsk_00000000000000000000000073").unwrap_or_else(|_| unreachable!());
@@ -6013,11 +6019,7 @@ mod tests {
 
     #[test]
     fn independent_store_calls_serialize_same_task_and_allow_distinct_tasks() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-task-concurrency-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-task-concurrency");
         let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let same_task =
             TaskId::new("tsk_00000000000000000000000062").unwrap_or_else(|_| unreachable!());
@@ -6184,11 +6186,7 @@ mod tests {
 
     #[test]
     fn daily_spend_reservation_race_refuses_second_task_before_provider() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-spend-race-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-spend-race");
         let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let first_task =
             TaskId::new("tsk_00000000000000000000000065").unwrap_or_else(|_| unreachable!());
@@ -6286,11 +6284,7 @@ mod tests {
 
     #[test]
     fn cancellation_stops_new_fallback_and_repair_dispatches_for_real_tasks() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-retry-cancel-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-retry-cancel");
         let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let fallback_task =
             TaskId::new("tsk_00000000000000000000000067").unwrap_or_else(|_| unreachable!());
@@ -6423,11 +6417,7 @@ mod tests {
 
     #[test]
     fn independent_recovery_workers_emit_one_ambiguity_transition() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-recovery-race-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-recovery-race");
         let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let request_id = serea_protocol::RequestId::new("req_00000000000000000000000071")
             .unwrap_or_else(|_| unreachable!());
@@ -6537,11 +6527,7 @@ mod tests {
 
     #[test]
     fn last_call_and_turn_slots_are_consumed_once_across_store_connections() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-last-budget-slot-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-last-budget-slot");
         let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let task_id =
             TaskId::new("tsk_00000000000000000000000072").unwrap_or_else(|_| unreachable!());
@@ -6632,11 +6618,7 @@ mod tests {
 
     #[test]
     fn dispatched_late_response_is_accounted_after_real_task_cancellation() {
-        let db_path = std::env::temp_dir().join(format!(
-            "serea-router-late-cancel-{}-{}.sqlite",
-            std::process::id(),
-            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
-        ));
+        let db_path = router_test_db_path("serea-router-late-cancel");
         let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let task_id =
             TaskId::new("tsk_00000000000000000000000074").unwrap_or_else(|_| unreachable!());

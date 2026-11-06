@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Bind API 35 diagnostics to an immutable source and label baseline vs candidate."""
+import os
+import re
+import subprocess
+import sys
+
+BASELINE = '334da4bf8855e1b7fefc019a3b397aff506c9913'
+HARNESS = '2c4327399e5adfec8e106df50a5c5bc6e11c50b8'
+TRUSTED = {
+    'tools/run_android_api35_diagnostic.sh': 'a8dd04417758388ed487afccbf1445c69cdd30b1',
+    'tools/assert_disposable_android_emulator.sh': 'f206038550118ed089fd4e7ef4951e9a174133f9',
+    'tools/prepare_isolated_instrumentation_target.sh': '73d39e9dc000e294e22473a26654c5add2a98b87',
+    'tools/android_package_path.sh': 'a923446cb8d1ecbf6011738cb6e248047648cfe7',
+    'tools/wait_for_android_default_ime.sh': '66597bff928310e5946b888b32ce73a9a0dbf519',
+    'tools/verify_android_instrumentation.py': 'dd027d419f28902a79a57f348fd83f80ef626913',
+}
+SHA = re.compile(r'^[0-9a-f]{40}$')
+
+
+def git(*args):
+    return subprocess.check_output(['git', *args], text=True, stderr=subprocess.PIPE).strip()
+
+
+def verify(env):
+    event = env.get('DIAG_EVENT', '')
+    mode = 'baseline' if event == 'pull_request' else env.get('DIAG_MODE', '')
+    expected = env.get('DIAG_SOURCE_SHA', '')
+    if event not in ('pull_request', 'workflow_dispatch') or mode not in ('baseline', 'candidate'):
+        raise ValueError('unsupported diagnostic event or mode')
+    if not SHA.fullmatch(expected):
+        raise ValueError('source must be an explicit full lowercase commit SHA')
+    head = git('rev-parse', 'HEAD')
+    if head != expected:
+        raise ValueError('checkout does not equal requested source SHA')
+    if event == 'workflow_dispatch' and mode == 'candidate' and env.get('DIAG_REQUEST_SHA', '') != head:
+        raise ValueError('candidate input SHA must exactly match the selected workflow ref')
+    if event == 'pull_request' and env.get('DIAG_REPOSITORY', '') != env.get('DIAG_HEAD_REPOSITORY', ''):
+        raise ValueError('candidate must be from the same repository')
+    tree = git('rev-parse', f'{head}:android')
+    baseline_tree = git('rev-parse', f'{BASELINE}:android')
+    pr_base = env.get('DIAG_BASE_SHA', '') if event == 'pull_request' else ''
+    pr_base_tree = ''
+    if event == 'pull_request':
+        if not SHA.fullmatch(pr_base):
+            raise ValueError('PR base must be an explicit full lowercase commit SHA')
+        git('merge-base', '--is-ancestor', BASELINE, pr_base)
+        pr_base_tree = git('rev-parse', f'{pr_base}:android')
+        if pr_base_tree != baseline_tree:
+            raise ValueError('PR base Android tree differs from historical baseline')
+    if mode == 'candidate':
+        for path, expected_blob in TRUSTED.items():
+            if git('rev-parse', f'{head}:{path}') != expected_blob:
+                raise ValueError(f'candidate harness differs: {path}')
+    if mode == 'baseline' and tree != baseline_tree:
+        raise ValueError('baseline mode requires the historical Android tree')
+    return {'mode': mode, 'source_sha': head, 'android_tree': tree, 'baseline_sha': BASELINE,
+            'baseline_android_tree': baseline_tree, 'pr_base_sha': pr_base, 'pr_base_android_tree': pr_base_tree, 'harness_reference_sha': HARNESS,
+            'harness_match': 'PASS' if mode == 'candidate' else 'NOT_CHECKED', 'event_sha': env.get('DIAG_EVENT_SHA', ''),
+            'run_id': env.get('GITHUB_RUN_ID', ''), 'run_attempt': env.get('GITHUB_RUN_ATTEMPT', '')}
+
+
+def main():
+    try:
+        for key, value in verify(os.environ).items():
+            print(f'{key}={value}')
+    except (ValueError, subprocess.CalledProcessError, OSError) as exc:
+        print(f'FAIL: diagnostic source identity: {exc}', file=sys.stderr)
+        return 1
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

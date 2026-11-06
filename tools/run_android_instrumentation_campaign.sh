@@ -441,7 +441,7 @@ if [[ "$sdk_ok" == true ]]; then
       adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
         SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I SereaProfileVerifier:I \
         SereaComposerIme:I SereaRealIme:I \
-        SereaProcessDeath:I SereaChatWindowFocus:E SereaChatInputRegression:I \
+        SereaProcessDeath:I SereaChatWindowFocus:E SereaFocusOwnership:I SereaChatInputRegression:I \
         chat-demo-label:I chat-current-delete-confirmation:I \
         chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \
         chat-restored-conversation:I chat-draft-gmail-search-timeout:I \

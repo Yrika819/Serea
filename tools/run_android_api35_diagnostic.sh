@@ -4,6 +4,8 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root/android" || exit 1
 evidence=app/build/outputs/androidTest-results/api35-isolation
+LOG_FILE_LIMIT_BLOCKS=32768 # 16 MiB at 512 bytes per block on the Ubuntu runner.
+LOG_FILE_LIMIT_BYTES=16777216
 mkdir -p "$evidence" || exit 1
 rm -f "$evidence/monitor-stop" || exit 1
 export EXPECTED_API_LEVEL=35 SEREA_EXPECTED_ANDROID_API=35
@@ -55,12 +57,14 @@ adb install app/build/outputs/apk/isolated/app-isolated.apk > "$evidence/install
 token="serea-api35-${GITHUB_RUN_ID:-1}-${GITHUB_RUN_ATTEMPT:-1}-focused"
 bash "$root/tools/prepare_isolated_instrumentation_target.sh" "$token" > "$evidence/seed.log" 2>&1 || { echo 'FAIL: seed' > "$evidence/result.txt"; exit 1; }
 if [[ -e app/build/outputs/androidTest-results/connected ]]; then echo 'FAIL: stale connected results' > "$evidence/result.txt"; exit 1; fi
-# The disposable emulator has no real accounts/data. Capture bounded system buffers;
-# truncation is separately reported and cannot be interpreted as complete evidence.
+# The disposable emulator has no real accounts/data. Limit each potentially large
+# log file to 16 MiB (ulimit -f uses 512-byte blocks on the Ubuntu runner).
+# Truncation is separately reported and cannot be interpreted as complete evidence.
 adb -s "$ANDROID_SERIAL" logcat -c -b main -b system -b crash -b events
-(ulimit -f 32768; exec adb -s "$ANDROID_SERIAL" logcat -v threadtime -b main -b system -b crash -b events > "$evidence/logcat.txt" 2> "$evidence/logcat-stderr.txt") &
+(ulimit -f "$LOG_FILE_LIMIT_BLOCKS"; exec adb -s "$ANDROID_SERIAL" logcat -v threadtime -b main -b system -b crash -b events > "$evidence/logcat.txt" 2> "$evidence/logcat-stderr.txt") &
 log_pid=$!
 (
+  ulimit -f "$LOG_FILE_LIMIT_BLOCKS" || exit 1
   snapshot() {
     local label=$1 filter=$2; shift 2
     local tmp="$evidence/monitor-snapshot.tmp" code semantic=PASS
@@ -138,20 +142,23 @@ log_pid=$!
 ) > "$evidence/live-monitor.txt" 2>&1 &
 monitor_pid=$!
 printf 'started_at_utc=%s\n' "$(date -u +%FT%T.%3NZ)" > "$evidence/host-lifecycle.txt"
-timeout --signal=INT --kill-after=30s 900s ./gradlew --no-daemon \
-  -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$token" \
-  -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
-  -Pandroid.testInstrumentationRunnerArguments.class='app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges' \
-  connectedIsolatedAndroidTest > "$evidence/gradle.log" 2>&1 &
+(
+  ulimit -f "$LOG_FILE_LIMIT_BLOCKS" || exit 1
+  exec timeout --signal=INT --kill-after=30s 900s ./gradlew --no-daemon \
+    -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$token" \
+    -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
+    -Pandroid.testInstrumentationRunnerArguments.class='app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges' \
+    connectedIsolatedAndroidTest
+) > "$evidence/gradle.log" 2>&1 &
 gradle_pid=$!
 printf 'timeout_process_pid=%s\n' "$gradle_pid" >> "$evidence/host-lifecycle.txt"
 wait "$gradle_pid"; gradle_status=$?
 printf 'finished_at_utc=%s\ngradle_exit_code=%s\n' "$(date -u +%FT%T.%3NZ)" "$gradle_status" >> "$evidence/host-lifecycle.txt"
 if [[ "$gradle_status" == 124 ]]; then echo 'wrapper_outcome=timeout_INT_sent' >> "$evidence/host-lifecycle.txt"; elif (( gradle_status >= 128 )); then echo 'wrapper_outcome=signal_or_wrapped_child_signal_unresolved' >> "$evidence/host-lifecycle.txt"; else echo 'wrapper_outcome=normal_or_child_exit' >> "$evidence/host-lifecycle.txt"; fi
 # Capture process-exit records before any explicit app cleanup. Availability varies by image.
-timeout 15s adb shell dumpsys activity exit-info app.serea.android.isolated > "$evidence/exit-info.txt" 2>&1
+(ulimit -f "$LOG_FILE_LIMIT_BLOCKS" || exit 1; exec timeout 15s adb shell dumpsys activity exit-info app.serea.android.isolated) > "$evidence/exit-info.txt" 2>&1
 printf '%s\n' "$?" > "$evidence/exit-info-command-status.txt"
-timeout 15s adb shell dumpsys activity processes > "$evidence/instrumentation-after.txt" 2>&1
+(ulimit -f "$LOG_FILE_LIMIT_BLOCKS" || exit 1; exec timeout 15s adb shell dumpsys activity processes) > "$evidence/instrumentation-after.txt" 2>&1
 printf '%s\n' "$?" > "$evidence/instrumentation-after-status.txt"
 if [[ -d app/build/outputs/androidTest-results/connected ]]; then mv app/build/outputs/androidTest-results/connected "$evidence/junit"; fi
 verify=1
@@ -174,8 +181,20 @@ monitor_pid=''
 log_health=PASS; kill -0 "$log_pid" 2>/dev/null || log_health=FAIL
 kill "$log_pid" 2>/dev/null; wait "$log_pid" 2>/dev/null; reader_status=$?; log_pid=''
 bytes=$(wc -c < "$evidence/logcat.txt")
-printf 'logcat_bytes=%s\nlogcat_limit_bytes=33554432\n' "$bytes" > "$evidence/capture-status.txt"
-if (( bytes >= 33554432 )); then echo 'logcat=TRUNCATED' >> "$evidence/capture-status.txt"; else echo 'logcat=BELOW_LIMIT' >> "$evidence/capture-status.txt"; fi
+logcat_stderr_bytes=$(wc -c < "$evidence/logcat-stderr.txt")
+monitor_log_bytes=$(wc -c < "$evidence/live-monitor.txt")
+gradle_log_bytes=$(wc -c < "$evidence/gradle.log")
+printf 'logcat_bytes=%s\nlogcat_limit_bytes=%s\n' "$bytes" "$LOG_FILE_LIMIT_BYTES" > "$evidence/capture-status.txt"
+if (( bytes >= LOG_FILE_LIMIT_BYTES )); then echo 'logcat=TRUNCATED' >> "$evidence/capture-status.txt"; else echo 'logcat=BELOW_LIMIT' >> "$evidence/capture-status.txt"; fi
+printf 'logcat_stderr_bytes=%s\nlogcat_stderr_limit_bytes=%s\n' "$logcat_stderr_bytes" "$LOG_FILE_LIMIT_BYTES" >> "$evidence/capture-status.txt"
+logcat_stderr_health=PASS
+if (( logcat_stderr_bytes >= LOG_FILE_LIMIT_BYTES )); then logcat_stderr_health=INCOMPLETE; echo 'logcat_stderr=TRUNCATED' >> "$evidence/capture-status.txt"; else echo 'logcat_stderr=BELOW_LIMIT' >> "$evidence/capture-status.txt"; fi
+printf 'monitor_log_bytes=%s\nmonitor_log_limit_bytes=%s\n' "$monitor_log_bytes" "$LOG_FILE_LIMIT_BYTES" >> "$evidence/capture-status.txt"
+monitor_log_health=PASS
+if (( monitor_log_bytes >= LOG_FILE_LIMIT_BYTES )); then monitor_log_health=INCOMPLETE; echo 'monitor_log=TRUNCATED' >> "$evidence/capture-status.txt"; else echo 'monitor_log=BELOW_LIMIT' >> "$evidence/capture-status.txt"; fi
+printf 'gradle_log_bytes=%s\ngradle_log_limit_bytes=%s\n' "$gradle_log_bytes" "$LOG_FILE_LIMIT_BYTES" >> "$evidence/capture-status.txt"
+gradle_log_health=PASS
+if (( gradle_log_bytes >= LOG_FILE_LIMIT_BYTES )); then gradle_log_health=INCOMPLETE; echo 'gradle_log=TRUNCATED' >> "$evidence/capture-status.txt"; else echo 'gradle_log=BELOW_LIMIT' >> "$evidence/capture-status.txt"; fi
 printf "monitor_health=%s\nlog_reader_health=%s\nlog_reader_wait_status=%s\n" "$monitor_health" "$log_health" "$reader_status" >> "$evidence/capture-status.txt"
 lifecycle_health=FAIL
 identity='app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges'
@@ -216,9 +235,9 @@ if grep -Eq 'CGROUP_MEMORY=UNAVAILABLE|CGROUP_READ_FAIL=|CGROUP_TARGET_EVENTS=IN
 printf 'cgroup_observation=%s\n' "$cgroup_health" >> "$evidence/capture-status.txt"
 printf 'instrumentation_observation=%s\nsnapshot_observation=%s\n' "$instrumentation_health" "$snapshot_health" >> "$evidence/capture-status.txt"
 diagnostic_status=INCOMPLETE
-if [[ "$monitor_health" == PASS && "$log_health" == PASS && "$lifecycle_health" == PASS && \
+if [[ "$monitor_health" == PASS && "$log_health" == PASS && "$logcat_stderr_health" == PASS && "$monitor_log_health" == PASS && "$gradle_log_health" == PASS && "$lifecycle_health" == PASS && \
       "$adb_health" == PASS && "$ime_events_health" == PASS && "$instrumentation_health" == PASS && "$snapshot_health" == PASS && "$cgroup_health" == PASS && "$exit_info_health" == PASS && \
-      "$bytes" -gt 0 && "$bytes" -lt 33554432 && "$(cat "$evidence/exit-info-command-status.txt")" == 0 && \
+      "$bytes" -gt 0 && "$bytes" -lt "$LOG_FILE_LIMIT_BYTES" && "$(cat "$evidence/exit-info-command-status.txt")" == 0 && \
       "$(cat "$evidence/instrumentation-after-status.txt")" == 0 && "$(cat "$evidence/ime-cleanup.txt")" == PASS ]]; then
   diagnostic_status=PASS
 fi

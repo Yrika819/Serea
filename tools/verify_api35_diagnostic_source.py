@@ -8,7 +8,7 @@ import sys
 BASELINE = '334da4bf8855e1b7fefc019a3b397aff506c9913'
 HARNESS = '2c4327399e5adfec8e106df50a5c5bc6e11c50b8'
 TRUSTED = {
-    'tools/run_android_api35_diagnostic.sh': '664b627a3e7b99501048689327f5ad1a87857631',
+    'tools/run_android_api35_diagnostic.sh': 'a8dd04417758388ed487afccbf1445c69cdd30b1',
     'tools/assert_disposable_android_emulator.sh': 'f206038550118ed089fd4e7ef4951e9a174133f9',
     'tools/prepare_isolated_instrumentation_target.sh': '73d39e9dc000e294e22473a26654c5add2a98b87',
     'tools/android_package_path.sh': 'a923446cb8d1ecbf6011738cb6e248047648cfe7',

@@ -15,7 +15,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -31,9 +30,6 @@ import android.view.inputmethod.InputMethodManager
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.By
-import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.Until
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,7 +59,6 @@ class ChatScreenTest {
     private companion object {
         const val FOCUS_LOG_TAG = "SereaChatWindowFocus"
         const val FOCUS_OWNERSHIP_LOG_TAG = "SereaFocusOwnership"
-        const val ISOLATED_PACKAGE = "app.serea.android.isolated"
         var loggedFocusedOwnershipBaseline = false
     }
 
@@ -71,7 +66,7 @@ class ChatScreenTest {
         try {
             assertion()
         } catch (failure: Throwable) {
-            compose.onRoot(useUnmergedTree = true).printToLog(tag)
+            Log.e(FOCUS_LOG_TAG, "ASSERTION_FAILURE|tag=$tag|type=${failure.javaClass.simpleName}")
             throw failure
         }
     }
@@ -215,10 +210,12 @@ class ChatScreenTest {
 
     /** Restore a resumed but unfocused test Activity before UI assertions or keyboard input. */
     private fun ensureChatWindowFocus(stage: String) {
-        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         var hasWindowFocus = false
         var activitySnapshot = "MainActivity unavailable"
+        var initialActivity: MainActivity? = null
+        var recoveryActivity: MainActivity? = null
         compose.activityRule.scenario.onActivity { activity ->
+            initialActivity = activity
             hasWindowFocus = activity.window.decorView.hasWindowFocus()
             activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
                 "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
@@ -230,39 +227,54 @@ class ChatScreenTest {
             loggedFocusedOwnershipBaseline = true
         }
         if (!hasWindowFocus) {
-            logForegroundOwnership("BEFORE_HOME", stage)
-            device.pressHome()
-            logForegroundOwnership("AFTER_HOME", stage)
-            logForegroundOwnership("BEFORE_START", stage)
-            val launch = device.executeShellCommand(
-                "am start -W -f 0x30000000 -n $ISOLATED_PACKAGE/app.serea.android.MainActivity",
-            )
-            val launchSummary = launch.lineSequence()
-                .filter { it.startsWith("Status:") || it.startsWith("LaunchState:") || it.startsWith("Warning:") }
-                .joinToString(";")
-                .take(512)
-            Log.i(FOCUS_OWNERSHIP_LOG_TAG, "FOREGROUND_START|stage=$stage|result=$launchSummary")
-            logForegroundOwnership("AFTER_START", stage)
-            assertTrue("Android did not confirm Chat Activity launch: $launch", launch.contains("Status: ok"))
+            logForegroundOwnership("BEFORE_SCENARIO_RECREATE", stage)
+            val oldActivity = initialActivity
+            compose.activityRule.scenario.recreate()
+            logForegroundOwnership("AFTER_SCENARIO_RECREATE", stage)
+            compose.activityRule.scenario.onActivity { activity -> recoveryActivity = activity }
             assertTrue(
-                "UiAutomator could not find the isolated Chat task",
-                device.wait(Until.hasObject(By.pkg(ISOLATED_PACKAGE)), 15_000),
+                "ActivityScenario.recreate() did not replace the Chat Activity after focus loss",
+                oldActivity != null && recoveryActivity !== oldActivity,
             )
         }
         val focused = runCatching {
             compose.waitUntil(20_000) {
+                var lifecycleResumed = false
                 compose.activityRule.scenario.onActivity { activity ->
                     hasWindowFocus = activity.window.decorView.hasWindowFocus()
+                    lifecycleResumed = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED
                     activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
                         "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
                         "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
                 }
-                hasWindowFocus
+                hasWindowFocus && lifecycleResumed
             }
         }.isSuccess
         Log.i(FOCUS_OWNERSHIP_LOG_TAG, "FOREGROUND_RESULT|stage=$stage|$activitySnapshot")
         if (!focused) logForegroundOwnership("FOCUS_TIMEOUT", stage)
         assertTrue("Chat Activity did not acquire window focus at $stage: $activitySnapshot", focused)
+        if (recoveryActivity != null && initialActivity !== recoveryActivity) {
+            var restorePending = true
+            compose.activityRule.scenario.onActivity { activity ->
+                restorePending = activity.chatViewModel.isActivitySelectionRestorePending()
+            }
+            val restoreFinished = runCatching {
+                compose.waitUntil(10_000) {
+                    compose.activityRule.scenario.onActivity { activity ->
+                        restorePending = activity.chatViewModel.isActivitySelectionRestorePending()
+                    }
+                    !restorePending
+                }
+            }.isSuccess
+            Log.i(
+                FOCUS_OWNERSHIP_LOG_TAG,
+                "ACTIVITY_RESTORE|stage=$stage|pending=$restorePending|finished=$restoreFinished",
+            )
+            assertTrue(
+                "Chat Activity selection restore did not finish after focus recovery: $activitySnapshot",
+                restoreFinished,
+            )
+        }
     }
 
     /** Emit bounded, content-free ownership details only while diagnosing a missing window focus. */
@@ -338,7 +350,10 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
-        Log.i(FOCUS_LOG_TAG, "SEND_BEGIN|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SEND_BEGIN|textLength=${text.length}|stateInputLength=${stateSnapshot().input.length}|composer=${composerSnapshot()}",
+        )
         ensureChatWindowFocus("before composing message")
         // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
         // a resumed window that Compose's root-targeted touch injection cannot focus.
@@ -363,7 +378,10 @@ class ChatScreenTest {
             )
         }
         assertTrue("IME input must reach the ViewModel before send.", inputReachedViewModel)
-        Log.i(FOCUS_LOG_TAG, "SEND_TYPED|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SEND_TYPED|textLength=${text.length}|stateInputLength=${stateSnapshot().input.length}|composer=${composerSnapshot()}",
+        )
         awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()
         awaitMainWindowFocus("after keyboard dismissal")
@@ -371,17 +389,22 @@ class ChatScreenTest {
         try {
             sendButton.assertIsDisplayed().assertIsEnabled().performClick()
         } catch (failure: Throwable) {
-            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("chat-send-action") }
+            Log.e(FOCUS_LOG_TAG, "SEND_ACTION_FAILURE|type=${failure.javaClass.simpleName}")
             throw failure
         }
         val submitted = runCatching { compose.waitUntil(10_000) {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
         } }.isSuccess
         val state = stateSnapshot()
-        Log.i(FOCUS_LOG_TAG, "SEND_SUBMITTED|text=$text|stateInput=${state.input}|composer=${composerSnapshot()}|loading=${state.isLoading}|messages=${state.conversation.messages.map { it.role to it.text }}")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SEND_SUBMITTED|textLength=${text.length}|stateInputLength=${state.input.length}|composer=${composerSnapshot()}|" +
+                "loading=${state.isLoading}|messageCount=${state.conversation.messages.size}|" +
+                "messageStates=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+        )
         assertTrue(
-            "Send action did not append the message; input=${state.input}, loading=${state.isLoading}, " +
-                "error=${state.errorMessage}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+            "Send action did not append the message; inputLength=${state.input.length}, loading=${state.isLoading}, " +
+                "errorPresent=${state.errorMessage != null}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
             submitted,
         )
     }
@@ -402,7 +425,7 @@ class ChatScreenTest {
                 }.isSuccess
             }
         }.isSuccess
-        if (!demoLabelSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-demo-label")
+        if (!demoLabelSettled) Log.e(FOCUS_LOG_TAG, "DEMO_LABEL_TIMEOUT|responsiveLayoutCheck=true")
         assertTrue("The correct responsive demo label must become visible.", demoLabelSettled)
         send("hello")
         awaitResponse("Demo response: I received “hello”.")
@@ -423,17 +446,21 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
-        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_SEND|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_SEND|stateInputLength=${stateSnapshot().input.length}|composer=${composerSnapshot()}")
         send("rotation-check")
         awaitResponse("Demo response: I received “rotation-check”.")
-        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_RECREATE|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_RECREATE|stateInputLength=${stateSnapshot().input.length}|composer=${composerSnapshot()}")
         compose.activityRule.scenario.recreate()
         compose.waitUntil(30_000) {
             val state = stateSnapshot()
             !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
         }
         val restored = stateSnapshot()
-        Log.i(FOCUS_LOG_TAG, "ROTATION_AFTER_RECREATE|stateInput=${restored.input}|composer=${composerSnapshot()}|messages=${restored.conversation.messages.map { it.role to it.text }}")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "ROTATION_AFTER_RECREATE|stateInputLength=${restored.input.length}|composer=${composerSnapshot()}|" +
+                "messageStates=${restored.conversation.messages.map { it.role.name + ":" + it.status }}",
+        )
         val restoredUserIndex = restored.conversation.messages.indexOfFirst { it.text == "rotation-check" }
         assertTrue("Restored user message is missing", restoredUserIndex >= 0)
         compose.waitUntil(10_000) {
@@ -441,7 +468,10 @@ class ChatScreenTest {
         }
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
         val duplicateNodes = compose.onAllNodesWithText("rotation-check", useUnmergedTree = true).fetchSemanticsNodes()
-        Log.i(FOCUS_LOG_TAG, "ROTATION_TEXT_NODES|count=${duplicateNodes.size}|nodes=${duplicateNodes.map { "id=${it.id},config=${it.config},bounds=${it.boundsInWindow}" }}")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "ROTATION_TEXT_NODES|count=${duplicateNodes.size}|nodes=${duplicateNodes.map { "id=${it.id},bounds=${it.boundsInWindow}" }}",
+        )
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
         assertDisplayedWithEvidence("chat-restored-conversation") {

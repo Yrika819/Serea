@@ -67,11 +67,11 @@
       "ci_target_sha": "8017e7e9e8987dc66361eb9297cf87535d8ef7b1",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "SUPERSEDED",
+      "classification": "NOVEL",
       "confidence": "HIGH",
-      "evidence": "contains #202/#203 commits and reconciliation; see critical-pr-evidence.json and pr-diffs/",
+      "evidence": "combined diagnostic delta versus main; includes #202/#203 history",
       "priority": "P1",
-      "recommended_action": "DEFER; avoid aggregate stack"
+      "recommended_action": "DEFER; consider only if diagnostics in scope"
     },
     {
       "number": 203,
@@ -90,11 +90,11 @@
       "ci_target_sha": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "NOVEL",
+      "classification": "SUPERSEDED",
       "confidence": "HIGH",
-      "evidence": "v4 migration diagnostic on #199 stack; see critical-pr-evidence.json and pr-diffs/",
+      "evidence": "successor #204 contains the migration diagnostic lineage",
       "priority": "P1",
-      "recommended_action": "DEFER unless migration in scope"
+      "recommended_action": "DEFER; avoid individual stack"
     },
     {
       "number": 202,
@@ -113,11 +113,11 @@
       "ci_target_sha": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "NOVEL",
+      "classification": "SUPERSEDED",
       "confidence": "HIGH",
-      "evidence": "Compose host/lifecycle test delta on #199 stack; see critical-pr-evidence.json and pr-diffs/",
+      "evidence": "successor #204 contains the diagnostic lineage",
       "priority": "P1",
-      "recommended_action": "DEFER diagnostics"
+      "recommended_action": "DEFER; avoid individual stack"
     },
     {
       "number": 201,
@@ -322,9 +322,9 @@
       "dependency_prs": "UNKNOWN",
       "classification": "PATCH_EQUIVALENT",
       "confidence": "MEDIUM",
-      "evidence": "result tree equals #191; route novel vs main; see critical-pr-evidence.json and pr-diffs/",
+      "evidence": "result tree identical to #191",
       "priority": "P0",
-      "recommended_action": "DISCARD_CANDIDATE duplicate"
+      "recommended_action": "DISCARD_CANDIDATE; duplicate"
     },
     {
       "number": 192,
@@ -368,9 +368,9 @@
       "dependency_prs": "UNKNOWN",
       "classification": "PATCH_EQUIVALENT",
       "confidence": "MEDIUM",
-      "evidence": "result tree equals #193; route novel vs main; see critical-pr-evidence.json and pr-diffs/",
+      "evidence": "result tree identical to #193",
       "priority": "P0",
-      "recommended_action": "DEFER; source candidate only for targeted rework"
+      "recommended_action": "REUSE_WITH_FIXES; single retained candidate"
     },
     {
       "number": 190,

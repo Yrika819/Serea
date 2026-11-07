@@ -100,12 +100,19 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: >-
-            ./gradlew --no-daemon :app:connectedIsolatedAndroidTest
-            -PsereaIsolatedNativeRuntime=true
-            -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp"
-            -PsereaNativeRuntimeAbi=x86_64
-            -Pandroid.testInstrumentationRunnerArguments.class=app.serea.android.NativeJniReleaseContractTest
+          script: |
+            set +e
+            ./gradlew --no-daemon :app:connectedIsolatedAndroidTest --stacktrace \
+              -PsereaIsolatedNativeRuntime=true \
+              -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp" \
+              -PsereaNativeRuntimeAbi=x86_64 \
+              -Pandroid.testInstrumentationRunnerArguments.class=app.serea.android.NativeJniReleaseContractTest
+            status=$?
+            mkdir -p "$RUNNER_TEMP/native-jni-diagnostics"
+            adb logcat -d -v threadtime '*:E' > "$RUNNER_TEMP/native-jni-diagnostics/logcat-errors.txt" || true
+            cp -R app/build/outputs/androidTest-results/connected/isolated "$RUNNER_TEMP/native-jni-diagnostics/test-results" 2>/dev/null || true
+            cp -R app/build/reports/androidTests/connected/isolated "$RUNNER_TEMP/native-jni-diagnostics/test-report" 2>/dev/null || true
+            exit "$status"
       - name: Upload isolated APK and provenance
         if: always() && hashFiles('android/app/build/outputs/apk/isolated/app-isolated.apk') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -120,3 +127,10 @@ jobs:
             ${{ runner.temp }}/native-library.sha256
             ${{ runner.temp }}/native-source-provenance.txt
           if-no-files-found: error
+      - name: Upload JNI test diagnostics
+        if: always() && matrix.abi == 'x86_64'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: g10-b1-jni-test-diagnostics
+          path: ${{ runner.temp }}/native-jni-diagnostics/**
+          if-no-files-found: warn

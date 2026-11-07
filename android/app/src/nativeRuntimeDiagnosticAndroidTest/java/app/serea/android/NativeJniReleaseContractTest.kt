@@ -1,17 +1,20 @@
 package app.serea.android
 
 import java.io.File
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.runners.JUnit4
 import java.util.concurrent.TimeUnit
 
 /** JNI-only ownership checks; no model fixture is loaded by this contract test. */
-@RunWith(AndroidJUnit4::class)
+// These JNI contract checks do not use AndroidJUnit4-specific APIs. The stock
+// JUnit4 runner avoids the extension runner's reflective delegation layer while
+// remaining hosted by AndroidJUnitRunner on the isolated diagnostic APK.
+@RunWith(JUnit4::class)
 class NativeJniReleaseContractTest {
     @Test fun unloadedEngineIsReleasedAndForeignFreeCannotClaimSuccess() = runBlocking {
         val backend = LlamaCppLocalModelInferenceBackend()

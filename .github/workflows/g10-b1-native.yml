@@ -1,0 +1,65 @@
+name: G10-B1 isolated Native Runtime
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/app/src/main/cpp/**'
+      - 'android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt'
+      - 'android/app/build.gradle.kts'
+      - '.github/workflows/g10-b1-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-native:
+    name: Isolated llama.cpp ${{ matrix.abi }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [x86_64, arm64-v8a]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android native toolchain
+        run: sdkmanager 'ndk;28.2.13676358' 'cmake;3.31.6'
+      - name: Fetch exact llama.cpp source revision
+        run: |
+          git init "$RUNNER_TEMP/llama.cpp"
+          git -C "$RUNNER_TEMP/llama.cpp" remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C "$RUNNER_TEMP/llama.cpp" fetch --depth=1 origin 276378515ceebee5d14bcc8536603dd5c87491a2
+          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/llama.cpp" rev-parse HEAD)" = 276378515ceebee5d14bcc8536603dd5c87491a2
+          test -z "$(git -C "$RUNNER_TEMP/llama.cpp" status --porcelain --untracked-files=all)"
+      - name: Verify opt-in variant isolation
+        run: ./gradlew --no-daemon :app:verifyLocalNativeRuntimeVariantIsolation -PsereaIsolatedNativeRuntime=true
+      - name: Build isolated APK for one ABI
+        run: ./gradlew --no-daemon :app:assembleIsolated -PsereaIsolatedNativeRuntime=true -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp" -PsereaNativeRuntimeAbi='${{ matrix.abi }}'
+      - name: Verify APK contains only requested Native ABI
+        run: |
+          apk=android/app/build/outputs/apk/isolated/app-isolated.apk
+          test -s "$apk"
+          unzip -l "$apk" | tee "$RUNNER_TEMP/apk-files.txt"
+          grep -q "lib/${{ matrix.abi }}/libserea_local_llama.so" "$RUNNER_TEMP/apk-files.txt"
+          if grep 'lib/.*libserea_local_llama.so' "$RUNNER_TEMP/apk-files.txt" | grep -v "lib/${{ matrix.abi }}/"; then
+            echo 'Unexpected Native ABI packaged' >&2; exit 1
+          fi
+          sha256sum "$apk" | tee "$RUNNER_TEMP/apk.sha256"
+      - name: Upload isolated APK and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: g10-b1-isolated-native-${{ matrix.abi }}
+          path: |
+            android/app/build/outputs/apk/isolated/app-isolated.apk
+            ${{ runner.temp }}/apk.sha256
+            ${{ runner.temp }}/apk-files.txt
+          if-no-files-found: error

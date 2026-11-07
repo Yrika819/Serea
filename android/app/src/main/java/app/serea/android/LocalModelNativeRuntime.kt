@@ -100,7 +100,7 @@ internal class LlamaCppLocalModelInferenceBackend(
                                 success && !closed && continuation.isActive
                             }
                             if (!publish) {
-                                val freed = runCatching { nativeFree(engineId) }.getOrDefault(false)
+                                val freed = releaseNativeOwnershipIfPresent()
                                 processNativeReleaseCoordinator.releasing(ownershipToken)
                                 if (freed) processNativeReleaseCoordinator.released(ownershipToken)
                                 else processNativeReleaseCoordinator.failed(ownershipToken)
@@ -112,7 +112,7 @@ internal class LlamaCppLocalModelInferenceBackend(
                             }
                         } catch (failure: Throwable) {
                             runCatching { processNativeReleaseCoordinator.releasing(ownershipToken) }
-                            val freed = runCatching { nativeFree(engineId) }.getOrDefault(false)
+                            val freed = runCatching { releaseNativeOwnershipIfPresent() }.getOrDefault(false)
                             if (freed) runCatching { processNativeReleaseCoordinator.released(ownershipToken) }
                             else runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
                             releaseResult.complete(if (freed) Result.success(Unit) else Result.failure(failure))
@@ -271,7 +271,14 @@ internal class LlamaCppLocalModelInferenceBackend(
         runCatching { sink(name, Debug.getPss().toLong()) }
     }
 
+    /** A failed nativeLoad rolls its partial allocation back before returning false. */
+    private fun releaseNativeOwnershipIfPresent(): Boolean {
+        if (!nativeOwnsModel(engineId)) return true
+        return nativeFree(engineId) && !nativeOwnsModel(engineId)
+    }
+
     private external fun nativeLoad(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean
+    private external fun nativeOwnsModel(engineId: Long): Boolean
     private external fun nativeGenerate(engineId: Long, prompt: String, maxOutputTokens: Int, generationId: Long): String
     private external fun nativeCancel(engineId: Long, generationId: Long): Boolean
     private external fun nativeForgetCancellation(engineId: Long, generationId: Long)

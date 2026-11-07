@@ -712,6 +712,15 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv * en
     });
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeOwnsModel(JNIEnv * env, jobject, jlong engine_id) {
+    return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        return active_engine_id.load(std::memory_order_acquire) == engine_id &&
+                model != nullptr && context != nullptr && sampler != nullptr ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
 #if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
 extern "C" JNIEXPORT void JNICALL
 Java_app_serea_android_NativeJniFailureSeam_failNextLoadAfterModel(JNIEnv * env, jobject) {

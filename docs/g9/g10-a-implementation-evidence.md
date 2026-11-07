@@ -77,22 +77,23 @@ The three G10-A Android test identities are in `serea-non-required-test-identiti
 
 ## Execution evidence
 
-Evidence must be populated from CI for the final PR HEAD. Do not count a skipped test as a pass.
+Evidence below distinguishes the current PR HEAD checked for this report from the implementation commit. Do not count a skipped test as a pass.
 
 | Check | Result | Evidence |
 |---|---|---|
-| `git diff --check` | PASS | local diff through implementation commit `952edd9ceddcfca99cd8c9900d05c6501606b466` |
-| Commit identity | PASS | PR HEAD commit identity check for `952edd9` |
-| Gradle JVM/unit tests locally | NOT_RUN | Gradle 8.14.6 distribution download failed with `Connection refused`; CI used the exact checked-out commit |
-| Android Unit | PASS | Android workflow run `42362618544`, job `128373994337` |
-| API 26 G10-A focused instrumentation | PASS, 43 tests, 0 failures/errors/skips | focused run `42362618566`, job `128374289932`, artifact `13570835913`; includes `cancellationDuringFakeGenerationDoesNotPersistAssistantReply` |
-| API 35 G10-A focused instrumentation | PASS, 43 tests, 0 failures/errors/skips | focused run `42362618566`, job `128373972797`, artifact `13570660878`; includes `cancellationDuringFakeGenerationDoesNotPersistAssistantReply` |
-| API 26 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42362618544`, job `128376097869`, artifact `13571495828`; process-death recovery PASS |
-| API 35 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42362618544`, job `128376097834`, artifact `13570613871`; process-death recovery PASS |
-| Required gates | PASS, 4/4 | Linux fast `42362618559`; Linux MSRV and stable full `42362618499`; Android Emulator Required Gate in run `42362618544`, job `128382219632` |
-| Independent review | COMMENTED, no critical findings | PR review `5811502823`, implementation commit `952edd9` |
+| Current checked PR HEAD | `4e61dc5b682b669c54b40b74d0c68b95bc100260` | Source and evidence-document commit checked by workflow run `42365498110`; Android checkout provenance records this exact source SHA |
+| `git diff --check` | PASS | clean worktree and diff check on `4e61dc5` |
+| Commit identity | PASS | Current PR HEAD uses `143304522+Yrika819@users.noreply.github.com`; PR HEAD identity gate passed |
+| Gradle JVM/unit tests locally | NOT_RUN | Gradle 8.14.6 distribution download failed with `Connection refused`; no local emulator is configured |
+| Android Unit and Build | PASS | Android workflow run `42365498110`, jobs `128382609435` and `128382609492` |
+| API 26 G10-A focused instrumentation | PASS, 3 runs × 43 tests, 0 failures/errors/skips | focused workflow run `42365498132`; attempt 1 job `128382925116`, attempt 2 job `128385030388`, attempt 3 job `128387207818`; latest artifact `13571754423` |
+| API 35 G10-A focused instrumentation | PASS, 3 runs × 43 tests, 0 failures/errors/skips | focused workflow run `42365498132`; attempt 1 job `128382575998`, attempt 2 job `128385028603`, attempt 3 job `128387208811`; latest artifact `13572610193` |
+| API 26 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42365498110`, job `128384220216`, artifact `13572142580`; process-death recovery PASS |
+| API 35 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42365498110`, job `128384220364`, artifact `13573000004`; process-death recovery PASS |
+| Required gates | PASS, 4/4 | Linux fast run `42365498104`; Linux MSRV and stable full run `42365498081`; Android Emulator Required Gate run `42365498110`, job `128390717384` |
+| Independent review | COMMENTED, no critical findings | PR review `5811688735` on exact HEAD `4e61dc5b682b669c54b40b74d0c68b95bc100260` |
 
-The test and Formal evidence above is for source commit `952edd9ceddcfca99cd8c9900d05c6501606b466`. Any later documentation-only commit must receive its own current-head Required checks and reviewer confirmation; it does not replace or relabel these source-level results.
+The cancellation-race implementation is in `952edd9ceddcfca99cd8c9900d05c6501606b466`; the evidence above binds its behavior to the checked source SHA `4e61dc5b682b669c54b40b74d0c68b95bc100260`. Subsequent changes are limited to this evidence document and must be evaluated against their own PR-head checks and review before merge.
 
 No local emulator/device is configured in this workspace. Local Gradle/JUnit, API 26/35 instrumentation, and process-death results are not claimed as PASS.
 

@@ -283,7 +283,14 @@ internal class RoutedModelChatPort(
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         if (request.selectedModelId != null) throw ModelChatFailure("Model ID is assigned only by the router.")
         val current = policy()
-        val selected = router.select(RoutingRequest(request.message, request.context.sumOf { it.text.length }), current)
+        val selected = router.select(
+            RoutingRequest(
+                text = request.message,
+                contextCharacters = request.context.sumOf { it.text.length },
+                requestedOutputTokens = current.requestedOutputTokens,
+            ),
+            current,
+        )
         val model = selected.model ?: throw ModelChatFailure(selected.reason)
         val routedRequest = request.copy(selectedModelId = model.id)
         val preparedRequest = if (request.egressContract == null && contractFactory != null) {

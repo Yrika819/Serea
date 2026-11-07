@@ -1,8 +1,8 @@
 # G10–G15 Execution Plan (targets, not guarantees)
 
 ## G10 (Nov 11–20): inference route and integration prerequisites
-1. Map Android ChatViewModel → adapter → Rust router/FFI, using source/tests; no provider credentials. Resolve #191/#193 before reuse; compare exact patch and tests. If usable, adapt in a focused PR; otherwise implement a default-off adapter with fake runtime tests.
-2. Define inference contract, cancellation, load/unload, memory pressure, background resume, ARM64 ABI and model license/size constraints. Do not bundle a model until license and Pixel 7a memory/thermal measurements pass on a dedicated device.
+1. G10-A is the first implementation unit: connect the existing `LocalModelChatAdapter` behind the test-only default-off selector, with a deterministic injected Fake Backend. Keep `MainActivity` on Demo. See `g10-a-implementation-evidence.md`; no historical adapter stack is cherry-picked.
+2. G10-B is gated on an Owner-selected model/runtime/license and a dedicated disposable ARM64 device. Only then add a lifecycle/eviction bridge, fresh consent after eviction, and memory/thermal/ABI validation. Do not bundle a model before those decisions and checks.
 3. Keep Calendar fake. Document OAuth client, scopes, data policy and account choice; await owner decision before real consent/API. Then separate PRs: OAuth authorization, read-only transport/pagination, UI/error/revoke, device acceptance.
 4. PR #208 is a CI optimization candidate only; require comparison of workflow outputs/required checks before any reuse.
 
@@ -25,10 +25,10 @@ Critical path: owner model/provider/data-policy choice → adapter contract → 
 
 For every task, retain focused tests plus formal 26/35 JUnit, native/SQLite checks as applicable; completion requires tests to execute and evidence to name the tested SHA. Key risks are model licensing/memory, provider approval, emulator-only confidence, and release credentials.
 
-## G9-R3 decision gate update
+## G9-R4 and G10-A implementation decision
 
-Do not start G10 inference implementation by rebuilding the adapter. First perform a narrowly scoped integration spike PR: compose existing `LocalModelChatAdapter` behind current Egress/Usage wrappers and the explicit local consent contract, with a fake `LocalModelInferenceBackendFactory`; keep it default-off and never alter `MainActivity`'s default Demo route. This must establish route selection, cancellation, history restoration behavior, and fail-closed egress. Add focused JVM tests for explicit selection/consent and Android ViewModel integration tests for send/cancel/process recreation; then run API 26/35 Formal Required Gate. No real model or provider required.
+The G9-R4 audit closed the pre-spike question: main already has the reusable `LocalModelChatAdapter`, typed single-use consent registry, Egress/Usage wrappers, and extensive adapter lifecycle tests. Candidate PRs #165/#166/#169/#178/#179/#182 concern real-runtime limits and ARM64 validation; #185 concerns consent after actual eviction; #195/#198 concern memory-trim integration. These do not block a Fake Backend-only composition spike and are not imported wholesale.
 
-Before that spike, resolve candidate PRs #165/#166/#169 (native runtime limits/ARM64 capability), #178/#179/#182 (ARM64 emulator harness), #195/#198 (memory trim/lifecycle), and #185 (consent after eviction) from the existing 175 snapshot. They may constrain or duplicate the spike. Candidate extraction across the 175-record snapshot finds 116 keyword/path candidates; machine-readable result is `g10-pr-candidates.json`. The listed native/lifecycle candidates are still REVIEW and affect safe G10 scope, so READY_FOR_G10 is blocked until at least these are checked against main and each other.
+G10-A is now the bounded default-off composition described in `g10-a-spike-spec.md`. It adds a Debug/isolated-only selector and Android test composition; normal `MainActivity` remains Demo. It must prove focused JVM and API 26/35 test behavior, preserve the existing 105 formal identities, and include a real force-stop boundary for consent invalidation. It does not prove model inference, ABI compatibility on Pixel hardware, memory eviction/reload, or Personal Beta readiness.
 
-G10-A details are specified in `g10-a-spike-spec.md`. Native runtime constraints and ARM64 guest tooling from #165/#166/#169/#178/#179/#182 are subsequent gates for real inference, not prerequisites for a Fake Backend spike. Fresh single-use consent after eviction (#185) is a pre-spike acceptance invariant; optional trim-memory callback #195 and its Android test #198 can follow, while the spike must still test adapter cancellation/close/eviction serialization directly.
+The 175-snapshot PR candidate extract remains a historical search aid, not an implementation queue. Revisit its Local Model candidates only when scoping G10-B or real inference. G10-A completion is not approval to enable a model or provider.

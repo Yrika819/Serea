@@ -51,7 +51,8 @@ verify_database_file() {
 
 phase campaign-consume "$campaign_token"
 phase prepare
-echo "Process-death harness: checking prepared encrypted database"
+phase local-model-consent-seed
+echo "Process-death harness: checking prepared encrypted database and ephemeral local consent"
 verify_database_file
 echo "Process-death harness: force-stopping target app without clearing data"
 adb shell am force-stop "$package"
@@ -61,6 +62,7 @@ verify_database_file
 adb shell am start -W -n "$activity" >/dev/null
 sleep 2
 phase verify
+phase local-model-consent-verify
 
 # Verify Delete All survives a second real force-stop/relaunch boundary.
 phase delete-all
@@ -75,4 +77,4 @@ after_path=$(adb shell pm path "$package" | tr -d '\r')
 demo_after_path=$(adb shell pm path "$demo_package" | tr -d '\r')
 test "$before_path" = "$after_path"
 test "$demo_before_path" = "$demo_after_path"
-echo "PASS: isolated Android OS Process Death recovery on API ${EXPECTED_API_LEVEL} (encrypted history, Usage Ledger OUTCOME_UNKNOWN, recovery without replay, deletion, isolated package preserved, demo sentinel preserved)."
+echo "PASS: isolated Android OS Process Death recovery on API ${EXPECTED_API_LEVEL} (encrypted history, Usage Ledger OUTCOME_UNKNOWN, recovery without replay, local consent invalidation, deletion, isolated package preserved, demo sentinel preserved)."

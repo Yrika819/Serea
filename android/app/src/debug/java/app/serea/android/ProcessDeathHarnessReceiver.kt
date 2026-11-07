@@ -31,6 +31,18 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 check(intent.action == ACTION) { "Unsupported harness action" }
                 validateTargetPackage(context, phase)
                 validateDisposableDevice()
+                if (phase == "local-model-consent-seed") {
+                    operation = "seed ephemeral fake local-model consent"
+                    seedLocalModelConsent(context)
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
+                if (phase == "local-model-consent-verify") {
+                    operation = "verify fake local-model consent was not restored"
+                    runBlocking { verifyLocalModelConsentNotRestored(context) }
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
                 if (phase == "campaign-seed") {
                     operation = "seed campaign marker"
                     seedInstrumentationMarker(context, token)
@@ -118,7 +130,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         val expectedPackage = when (phase) {
             "campaign-seed-and-claim" -> PERSONAL_BETA_PACKAGE
             "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
-            "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
+            "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify", "local-model-consent-seed", "local-model-consent-verify" -> ISOLATED_PACKAGE
             else -> error("Unknown harness phase")
         }
         check(betaValidationPhase || updateCompatibilityPhase || context.packageName == expectedPackage) {
@@ -136,6 +148,85 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
             (fingerprint.contains("generic") || fingerprint.contains("sdk_gphone"))) {
             "Refusing harness operations on a physical or unrecognized Android device"
         }
+    }
+
+
+    /** Debug-only OS process-death proof: only a synthetic proof ID is retained by the harness. */
+    private fun seedLocalModelConsent(context: Context) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val conversationId = "g10-a-process-death-conversation"
+        val request = ModelChatRequest(
+            conversationId = conversationId, message = "synthetic local consent process-death check",
+            sendId = "g10-a-process-death-send", classification = DataClassification.PUBLIC,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        val registry = LocalModelAuthorizationRegistry(
+            { now }, currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding(conversationId, 0)
+            },
+        )
+        val proof = registry.approve(request, "serea-local/process-death-fixture", conversationGeneration = 0)
+        check(LocalModelConsentProcessDeathState.pending == null) {
+            "Local consent process-death state was already populated before seed"
+        }
+        LocalModelConsentProcessDeathState.pending = PendingLocalModelConsent(registry, proof)
+        val marker = File(context.noBackupFilesDir, LOCAL_MODEL_CONSENT_MARKER)
+        check(!marker.exists() && marker.createNewFile()) { "Refusing to replace local consent test marker" }
+        marker.writeText(proof.id)
+        // Keep both references in a Debug-process singleton. Verification requires a true process
+        // restart to clear this state; an Activity recreation or second receiver call must fail.
+    }
+
+    private suspend fun verifyLocalModelConsentNotRestored(context: Context) {
+        check(LocalModelConsentProcessDeathState.pending == null) {
+            "Local consent test state survived; the target process was not restarted"
+        }
+        val marker = File(context.noBackupFilesDir, LOCAL_MODEL_CONSENT_MARKER)
+        check(marker.isFile) { "Missing local model process-death test marker" }
+        val oldProofId = marker.readText()
+        check(oldProofId.matches(Regex("[0-9a-fA-F-]{36}"))) { "Malformed synthetic consent marker" }
+        val now = android.os.SystemClock.elapsedRealtime()
+        val conversationId = "g10-a-process-death-conversation"
+        val request = ModelChatRequest(
+            conversationId = conversationId, message = "synthetic local consent process-death check",
+            sendId = "g10-a-process-death-send", classification = DataClassification.PUBLIC,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        val contract = EgressContract(
+            conversationId = conversationId, currentMessageId = request.sendId,
+            origin = DataOrigin.USER_AUTHORED, classification = request.classification,
+            destination = ChatEgressGate.LOCAL_MODEL_DESTINATION, plannedBody = request.message,
+            context = request.context, preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = null, expiresAtMillis = null,
+            selectedModelId = "serea-local/process-death-fixture", target = EgressTarget.LOCAL_MODEL,
+            plannedBodySourceLineage = request.bodySourceLineage,
+            localModelConsent = LocalModelConsentProof.issue(
+                id = oldProofId, request = request, selectedModelId = "serea-local/process-death-fixture",
+                conversationGeneration = 0, approvedAtMillis = now, expiresAtMillis = now + 30_000,
+                providerHandoff = null,
+            ),
+        )
+        val freshRegistry = LocalModelAuthorizationRegistry(
+            { now }, currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding(conversationId, 0)
+            },
+        )
+        check(!freshRegistry.consumeOnce(checkNotNull(contract.localModelConsent), contract)) {
+            "A pre-death local-model proof was accepted by the fresh process registry"
+        }
+        val freshRoute = LocalModelChatFeatureRouter(
+            demoPort = MockModelChatPort(0),
+            localModelPort = MockModelChatPort(0),
+            expectedLocalModelId = "serea-local/process-death-fixture",
+        )
+        check(runCatching {
+            freshRoute.resolve(
+                LocalModelChatFeatureRouter.Selection.LocalModel("serea-local/process-death-fixture"),
+            )
+        }.exceptionOrNull() is PreDispatchModelChatFailure) {
+            "A fresh process did not restore the test-only route to default-off"
+        }
+        check(marker.delete()) { "Unable to remove synthetic local consent test marker" }
     }
 
     private fun assertFreshDebugDataNamespace(context: Context) {
@@ -401,7 +492,8 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
         private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"
         private const val DEBUG_SENTINEL_AUTHORIZATION = "serea-debug-sentinel-authorization"
-        private val DESTRUCTIVE_PHASES = setOf("prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify")
+        private const val LOCAL_MODEL_CONSENT_MARKER = "g10-a-test-consent-id"
+        private val DESTRUCTIVE_PHASES = setOf("prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify", "local-model-consent-seed", "local-model-consent-verify")
         private const val TASK_COMPLETED_ID = "00000000-0000-0000-0000-000000000026"
         private const val TASK_TODO_ID = "00000000-0000-0000-0000-000000000035"
         private const val TASK_DELETED_ID = "00000000-0000-0000-0000-000000000099"
@@ -409,3 +501,13 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val TAG = "SereaProcessDeath"
     }
 }
+
+/** Process-local test state; deliberately has no persistence path and must reset on force-stop. */
+private object LocalModelConsentProcessDeathState {
+    @Volatile var pending: PendingLocalModelConsent? = null
+}
+
+private data class PendingLocalModelConsent(
+    val registry: LocalModelAuthorizationRegistry,
+    val proof: LocalModelConsentProof,
+)

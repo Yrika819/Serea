@@ -1,5 +1,5 @@
 # Explicit non-required identities excluded from the formal Required Gate JUnit set.
-# Selected UI regressions run through the separate focused API 26/35 campaign.
+# Selected UI and G10-A fake local-model regressions run through focused API 26/35 campaigns.
 app.serea.android.diagnostics.IndependentImeCompositionTest#A_directInputConnectionBaseline
 app.serea.android.diagnostics.IndependentImeCompositionTest#B_realImeCompositionWithoutSynchronizationBoundaries
 app.serea.android.diagnostics.IndependentImeCompositionTest#C_realImeCompositionWithSynchronizationBoundaries
@@ -21,3 +21,7 @@ app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClose
 app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
 app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
 app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview
+
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#explicitlySelectedFakeRouteSendsOnceAndSettlesUsage
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#missingConsentFailsBeforeUsageAndBackendDispatch
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#cancellationDuringFakeGenerationDoesNotPersistAssistantReply

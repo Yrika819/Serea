@@ -1372,9 +1372,9 @@
     },
     "check_total": 30,
     "checks_target_sha": "3ed787d0e4bf678d92a21117e57e81c9b3d0de31",
-    "classification": "SUPERSEDED",
+    "classification": "NOVEL",
     "spike_requirement": "NOT_REQUIRED",
-    "disposition_evidence": "#182 is descendant of #179 with stable emulator provenance"
+    "disposition_evidence": "adds stable emulator package provenance atop #178/#179 combined stack; no later successor among audited candidates"
   },
   {
     "number": 185,

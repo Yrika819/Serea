@@ -55,6 +55,14 @@ The test's one-time approval hook issues a proof for the routed model, exact sen
 
 No Gmail/Calendar-originated data is used. The Android process-death harness retains the issued registry/proof in a Debug-only process singleton and stores only a synthetic proof identifier in the disposable isolated package. After host `force-stop` and relaunch, it first requires the singleton to be empty (so a second broadcast without a process restart fails), then verifies that a fresh in-memory registry rejects the reconstructed pre-death proof and a fresh default-off route rejects Local Model selection. This is a real OS process boundary in the existing emulator harness; it does not simulate actual Activity/process death with a ViewModel-only test.
 
+## G10-A-R1 cancellation race
+
+The first post-undraft API 26 Focused run failed on the original G10-A code SHA `69a5056c611d6d0b7325175a86e221e641183ea1`: [workflow run 42358932765](https://github.com/Yrika819/Serea/actions/runs/42358932765), job `128363349094`, [API 26 Focused evidence artifact](https://github.com/Yrika819/Serea/actions/runs/42358932765/artifacts/13568943334). The JUnit XML reports 43 cases, one failure and zero errors/skips. The sole failed assertion is `cancelCalls > 0` at `LocalModelChatViewModelIntegrationAndroidTest.kt:130`; the preceding assertion that no assistant message was persisted passed.
+
+The failure was a test synchronization race, not a production cancellation defect. `ChatViewModel.cancelCurrent()` cancels the active coroutine. The fake `generate()` completes `generationFinished` in its `finally` as cancellation unwinds. `LocalModelChatAdapter.send()` then catches that `CancellationException` and invokes `cancelActive()`. Completing `generationFinished` therefore does not mean the adapter's subsequent `cancelActive()` call has already run; the failed assertion observed that gap.
+
+The test fake now exposes `cancellationObserved`, completed by its `cancelActive()`. After the existing bounded wait for `generationFinished`, the test waits up to 15 seconds for this explicit call notification before checking `cancelCalls`. The assistant-not-persisted assertion, `OUTCOME_UNKNOWN` Usage contract, bounded waits, and single backend close assertion remain. No production code, Egress/Usage behavior, Demo composition, timeout policy, or Formal test identity was changed.
+
 ## Test inventory
 
 | Test surface | Coverage | Formal set |
@@ -73,14 +81,18 @@ Evidence must be populated from CI for the final PR HEAD. Do not count a skipped
 
 | Check | Result | Evidence |
 |---|---|---|
-| `git diff --check` | PASS (local) | implementation worktree |
-| Shell syntax for focused/process-death scripts | PASS (local) | `bash -n` |
-| Gradle JVM/unit tests | NOT_RUN locally | Gradle 8.14.6 wrapper download failed with connection refused |
-| API 26 G10-A focused instrumentation | PENDING CI | Must include all three named Android tests and JUnit XML |
-| API 35 G10-A focused instrumentation | PENDING CI | Must include all three named Android tests and JUnit XML |
-| API 26 / API 35 Formal instrumentation | PENDING CI | Existing 105-test set; process-death harness includes consent check |
-| Required checks 4/4 | PENDING CI | Must match final PR HEAD SHA |
-| Independent review | PENDING | Must be recorded against final PR HEAD; resolve material findings |
+| `git diff --check` | PASS | local diff through implementation commit `952edd9ceddcfca99cd8c9900d05c6501606b466` |
+| Commit identity | PASS | PR HEAD commit identity check for `952edd9` |
+| Gradle JVM/unit tests locally | NOT_RUN | Gradle 8.14.6 distribution download failed with `Connection refused`; CI used the exact checked-out commit |
+| Android Unit | PASS | Android workflow run `42362618544`, job `128373994337` |
+| API 26 G10-A focused instrumentation | PASS, 43 tests, 0 failures/errors/skips | focused run `42362618566`, job `128374289932`, artifact `13570835913`; includes `cancellationDuringFakeGenerationDoesNotPersistAssistantReply` |
+| API 35 G10-A focused instrumentation | PASS, 43 tests, 0 failures/errors/skips | focused run `42362618566`, job `128373972797`, artifact `13570660878`; includes `cancellationDuringFakeGenerationDoesNotPersistAssistantReply` |
+| API 26 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42362618544`, job `128376097869`, artifact `13571495828`; process-death recovery PASS |
+| API 35 Formal instrumentation | PASS, 105 tests, 0 failures/errors/skips | Android run `42362618544`, job `128376097834`, artifact `13570613871`; process-death recovery PASS |
+| Required gates | PASS, 4/4 | Linux fast `42362618559`; Linux MSRV and stable full `42362618499`; Android Emulator Required Gate in run `42362618544`, job `128382219632` |
+| Independent review | COMMENTED, no critical findings | PR review `5811502823`, implementation commit `952edd9` |
+
+The test and Formal evidence above is for source commit `952edd9ceddcfca99cd8c9900d05c6501606b466`. Any later documentation-only commit must receive its own current-head Required checks and reviewer confirmation; it does not replace or relabel these source-level results.
 
 No local emulator/device is configured in this workspace. Local Gradle/JUnit, API 26/35 instrumentation, and process-death results are not claimed as PASS.
 

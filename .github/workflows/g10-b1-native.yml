@@ -29,9 +29,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
       - name: Install pinned Android native toolchain
-        run: sdkmanager 'ndk;28.2.13676358' 'cmake;3.31.6'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358' 'cmake;3.31.6'
       - name: Fetch exact llama.cpp source revision
         run: |
           git init "$RUNNER_TEMP/llama.cpp"

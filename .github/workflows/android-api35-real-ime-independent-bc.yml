@@ -98,6 +98,7 @@ jobs:
               "docs/agent-reports/g5-orchestrator-ledger.md"|\
               "docs/agent-reports/g5-cloud-egress.md"|\
               "docs/agent-reports/evidence/g5-cloud-egress-20261028/"*|\
+              ".github/workflows/ci.yml"|\
               "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt"|\
               "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt"|\
               "docs/diagnostics/2026-11-05-formal-observability.md"|\

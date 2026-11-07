@@ -1,6 +1,8 @@
 import importlib.util
 import io
 from pathlib import Path
+import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -114,6 +116,59 @@ class ObserverTest(unittest.TestCase):
         self.assertTrue(self.sample(output, command=timeout))
         self.assertIn('target_pid_tracking=INCOMPLETE reason=TIMEOUT', output.getvalue())
         self.assertNotIn('process_pid_transition=DISAPPEARED', output.getvalue())
+
+    def test_pidof_failure_is_not_recorded_as_process_disappearance(self):
+        data = device_sample().replace(
+            f'package={PACKAGES[0]}\npids=123\npidof_exit=0',
+            f'package={PACKAGES[0]}\npids=\npidof_exit=127')
+        output = io.StringIO()
+        self.assertTrue(self.sample(output, command=command_for(data=data)))
+        self.assertIn('target_pid_tracking=INCOMPLETE', output.getvalue())
+        self.assertIn('pid_list:app.serea.android.isolated', output.getvalue())
+        self.assertNotIn('process_pid_transition=DISAPPEARED', output.getvalue())
+        self.assertNotIn('target_pid_tracking=RECORDED count=0', output.getvalue())
+
+    def test_adb_disconnect_does_not_clear_last_known_pids(self):
+        self.summary.previous_pids[PACKAGES[0]] = {'123'}
+
+        def disconnected(cmd, timeout=5, stdin=None):
+            if 'get-state' in cmd:
+                return 1, 7, 'offline\n', False
+            return 1, 8, 'device offline', False
+
+        output = io.StringIO()
+        self.assertTrue(self.sample(output, command=disconnected))
+        self.assertIn('adb_state_status=COMMAND_ERROR', output.getvalue())
+        self.assertIn('target_pid_tracking=INCOMPLETE', output.getvalue())
+        self.assertNotIn('process_pid_transition=DISAPPEARED', output.getvalue())
+        self.assertEqual(self.summary.previous_pids[PACKAGES[0]], {'123'})
+
+    def test_truncated_device_output_is_incomplete_not_a_zero_pid_sample(self):
+        def truncated(cmd, timeout=5, stdin=None):
+            if 'get-state' in cmd:
+                return 0, 7, 'device\n', False
+            return 0, 16384, 'x' * 16384, True
+
+        output = io.StringIO()
+        self.assertTrue(self.sample(output, command=truncated))
+        self.assertIn('target_pid_tracking=INCOMPLETE reason=OUTPUT_TRUNCATED', output.getvalue())
+        self.assertNotIn('process_pid_transition=DISAPPEARED', output.getvalue())
+
+    def test_command_timeout_terminates_child_and_returns_bounded_status(self):
+        started = time.monotonic()
+        code, size, _, truncated = observer.command(
+            [sys.executable, '-c', 'import time; time.sleep(10)'], timeout=0.1)
+        self.assertEqual(code, 124)
+        self.assertEqual(size, 0)
+        self.assertFalse(truncated)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_command_output_is_capped(self):
+        code, size, _, truncated = observer.command(
+            [sys.executable, '-c', "import sys; sys.stdout.write('x' * 100000)"], timeout=5)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(size, 16384)
+        self.assertTrue(truncated)
 
     def test_instrumentation_pid_disappearance_collects_its_exit_info(self):
         responses = [device_sample(), device_sample(instrumentation_pids=())]

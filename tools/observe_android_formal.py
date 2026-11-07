@@ -225,10 +225,17 @@ def sample(out, serial, cycle, api_level, summary, run_command=command):
     out.write(process_data + '\n')
     disappeared_packages = []
     parsed = {package: package_pids(process_data, package) for package in PACKAGES}
-    if process_code == 0 and not process_truncated and all(value is not None for value in parsed.values()):
-        summary.pid_samples += 1
+    if process_code == 0 and not process_truncated:
+        missing = device_gaps(process_data)
+        if all(value is not None for value in parsed.values()):
+            summary.pid_samples += 1
+        else:
+            summary.device_process_failures += 1
+            summary.gaps.update(gap for gap in missing if gap.startswith('pid_list:'))
         for package in PACKAGES:
             current = parsed[package]
+            if current is None:
+                continue
             if current:
                 summary.packages_seen.add(package)
             if package == PACKAGES[0]:
@@ -236,19 +243,20 @@ def sample(out, serial, cycle, api_level, summary, run_command=command):
             elif package == PACKAGES[1]:
                 summary.instrumentation_pid_seen |= bool(current)
             previous = summary.previous_pids.get(package)
-            if previous is not None:
-                lost = previous - current
-            else:
-                lost = set()
+            lost = previous - current if previous is not None else set()
             if lost:
                 disappeared_packages.append(package)
                 summary.pid_disappearances += len(lost)
                 out.write(f'process_pid_transition=DISAPPEARED package={package} count={len(lost)} current_count={len(current)} at={stamp()}\n')
             summary.previous_pids[package] = current
-        out.write(f'target_pid_tracking=RECORDED count={len(parsed[PACKAGES[0]])}\n')
-        out.write(f'instrumentation_pid_tracking=RECORDED count={len(parsed[PACKAGES[1]])}\n')
-        out.write(f'test_ime_pid_tracking=RECORDED count={len(parsed[PACKAGES[2]])}\n')
-        missing = device_gaps(process_data)
+        for package, field_name in ((PACKAGES[0], 'target_pid_tracking'),
+                                    (PACKAGES[1], 'instrumentation_pid_tracking'),
+                                    (PACKAGES[2], 'test_ime_pid_tracking')):
+            current = parsed[package]
+            if current is None:
+                out.write(f'{field_name}=INCOMPLETE reason=PIDOF_UNAVAILABLE\n')
+            else:
+                out.write(f'{field_name}=RECORDED count={len(current)}\n')
         if missing:
             summary.gaps.update(missing)
             out.write('device_resource_observation=INCOMPLETE missing=' + ','.join(sorted(missing)) + '\n')

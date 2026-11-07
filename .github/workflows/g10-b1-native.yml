@@ -49,6 +49,8 @@ jobs:
       - name: Build isolated APK for one ABI
         run: ./android/gradlew -p android --no-daemon :app:assembleIsolated -PsereaIsolatedNativeRuntime=true -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp" -PsereaNativeRuntimeAbi='${{ matrix.abi }}'
       - name: Verify APK contains only requested Native ABI
+        env:
+          SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           apk=android/app/build/outputs/apk/isolated/app-isolated.apk
           test -s "$apk"
@@ -75,7 +77,11 @@ jobs:
           done < "$RUNNER_TEMP/native-needed-libraries.txt"
           ! grep -Eiq 'lib(llama|ggml).*\.so' "$RUNNER_TEMP/native-needed-libraries.txt"
           sha256sum "$native_so" | tee "$RUNNER_TEMP/native-library.sha256"
-          { git rev-parse HEAD; sha256sum android/app/src/main/cpp/llama_jni.cpp android/app/src/main/cpp/CMakeLists.txt; } > "$RUNNER_TEMP/native-source-provenance.txt"
+          {
+            printf 'PR_HEAD_SHA=%s\n' "$SEREA_PR_HEAD_SHA"
+            printf 'CI_CHECKOUT_SHA=%s\n' "$(git rev-parse HEAD)"
+            sha256sum android/app/src/main/cpp/llama_jni.cpp android/app/src/main/cpp/CMakeLists.txt
+          } > "$RUNNER_TEMP/native-source-provenance.txt"
           sha256sum "$apk" | tee "$RUNNER_TEMP/apk.sha256"
       - name: Install API 35 emulator image for the JNI ownership smoke test
         if: matrix.abi == 'x86_64'

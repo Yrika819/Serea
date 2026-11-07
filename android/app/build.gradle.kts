@@ -21,6 +21,7 @@ val betaSigningInputsReady = listOf(
     betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
 ).all { !it.isNullOrBlank() }
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
+val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
 val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
 val updateTestVersionCode = providers.gradleProperty("sereaVersionCode").orNull?.toIntOrNull()
 val updateTestStorePath = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
@@ -43,6 +44,8 @@ android {
     compileSdk = 35
     testBuildType = "isolated"
 
+    buildFeatures { buildConfig = true }
+
     defaultConfig {
         applicationId = "app.serea.android"
         minSdk = 26
@@ -50,6 +53,7 @@ android {
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
     }
 
     signingConfigs {
@@ -84,6 +88,11 @@ android {
             // private database, so the disposable isolated target must remain debuggable.
             applicationIdSuffix = ".isolated"
             matchingFallbacks += listOf("debug")
+            buildConfigField(
+                "boolean",
+                "LOCAL_NATIVE_RUNTIME_ENABLED",
+                isolatedNativeRuntimeOptIn.toString(),
+            )
         }
         release {
             isMinifyEnabled = false

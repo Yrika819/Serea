@@ -77,11 +77,11 @@ The three G10-A Android test identities are in `serea-non-required-test-identiti
 
 ## Execution evidence
 
-Evidence below distinguishes the current PR HEAD checked for this report from the implementation commit. Do not count a skipped test as a pass.
+The execution evidence below is bound to the last fully verified source/test HEAD. Later documentation-only PR commits are not included in those workflow runs; check the current PR checks and review separately. Do not count a skipped test as a pass.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Current checked PR HEAD | `4e61dc5b682b669c54b40b74d0c68b95bc100260` | Source and evidence-document commit checked by workflow run `42365498110`; Android checkout provenance records this exact source SHA |
+| Last fully verified source/test HEAD | `4e61dc5b682b669c54b40b74d0c68b95bc100260` | Source and evidence-document commit checked by workflow run `42365498110`; Android checkout provenance records this exact source SHA |
 | `git diff --check` | PASS | clean worktree and diff check on `4e61dc5` |
 | Commit identity | PASS | Current PR HEAD uses `143304522+Yrika819@users.noreply.github.com`; PR HEAD identity gate passed |
 | Gradle JVM/unit tests locally | NOT_RUN | Gradle 8.14.6 distribution download failed with `Connection refused`; no local emulator is configured |
@@ -93,7 +93,7 @@ Evidence below distinguishes the current PR HEAD checked for this report from th
 | Required gates | PASS, 4/4 | Linux fast run `42365498104`; Linux MSRV and stable full run `42365498081`; Android Emulator Required Gate run `42365498110`, job `128390717384` |
 | Independent review | COMMENTED, no critical findings | PR review `5811688735` on exact HEAD `4e61dc5b682b669c54b40b74d0c68b95bc100260` |
 
-The cancellation-race implementation is in `952edd9ceddcfca99cd8c9900d05c6501606b466`; the evidence above binds its behavior to the checked source SHA `4e61dc5b682b669c54b40b74d0c68b95bc100260`. Subsequent changes are limited to this evidence document and must be evaluated against their own PR-head checks and review before merge.
+The cancellation-race implementation is in `952edd9ceddcfca99cd8c9900d05c6501606b466`; the evidence above binds its behavior to source SHA `4e61dc5b682b669c54b40b74d0c68b95bc100260`. Later evidence-document commits are documentation-only; their own PR-head checks and review must pass before merge, while these code-test results remain attributed to the source SHA above.
 
 No local emulator/device is configured in this workspace. Local Gradle/JUnit, API 26/35 instrumentation, and process-death results are not claimed as PASS.
 

@@ -39,7 +39,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 }
                 if (phase == "local-model-consent-verify") {
                     operation = "verify fake local-model consent was not restored"
-                    verifyLocalModelConsentNotRestored(context)
+                    runBlocking { verifyLocalModelConsentNotRestored(context) }
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
@@ -177,7 +177,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         // restart to clear this state; an Activity recreation or second receiver call must fail.
     }
 
-    private fun verifyLocalModelConsentNotRestored(context: Context) {
+    private suspend fun verifyLocalModelConsentNotRestored(context: Context) {
         check(LocalModelConsentProcessDeathState.pending == null) {
             "Local consent test state survived; the target process was not restarted"
         }

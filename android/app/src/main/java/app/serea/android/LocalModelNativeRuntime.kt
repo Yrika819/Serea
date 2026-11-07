@@ -110,7 +110,7 @@ internal class LlamaCppLocalModelInferenceBackend private constructor(
                         }
                         if (!mayStartNativeLoad) {
                             if (coordinator.releaseWithoutNativeStart(ownershipToken)) {
-                                completeRelease(NativeReleaseResult.Released) // JNI never acquired an engine.
+                                completeRelease(NativeReleaseResult.NotAcquired) // JNI never acquired an engine.
                             }
                             continuation.failIfActive(LocalModelBackendStartDeniedException())
                             return@execute
@@ -337,7 +337,7 @@ internal class LlamaCppLocalModelInferenceBackend private constructor(
             }
             check(coordinator.released(ownershipToken)) { "Coordinator rejected release of an unloaded Native lease" }
         }
-        if (completion.isSuccess) completeRelease(NativeReleaseResult.Released)
+        if (completion.isSuccess) completeRelease(NativeReleaseResult.NotAcquired)
         else failRelease(completion.exceptionOrNull()!!)
     }
 

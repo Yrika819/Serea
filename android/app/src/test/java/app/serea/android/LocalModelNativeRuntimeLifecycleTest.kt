@@ -89,6 +89,7 @@ class LocalModelNativeRuntimeLifecycleTest {
         assertEquals(0, calls.loadCount)
         assertEquals(0, calls.freeCount)
         assertTrue(backend.awaitReleased(1, TimeUnit.SECONDS))
+        assertEquals(NativeReleaseResult.NotAcquired, backend.awaitReleaseResult(1, TimeUnit.SECONDS))
         assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
     }
 

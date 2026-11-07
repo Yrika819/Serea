@@ -98,8 +98,13 @@ jobs:
               "docs/agent-reports/g5-orchestrator-ledger.md"|\
               "docs/agent-reports/g5-cloud-egress.md"|\
               "docs/agent-reports/evidence/g5-cloud-egress-20261028/"*|\
+              ".github/workflows/ci.yml"|\
               "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt"|\
               "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt"|\
+              "docs/diagnostics/2026-11-05-formal-observability.md"|\
+              "tools/tests/test_android_formal_observer.py"|\
+              "tools/observe_android_formal.py"|\
+              "tools/run_android_instrumentation_campaign.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
               "tools/run_android_instrumentation_campaign.sh"|\

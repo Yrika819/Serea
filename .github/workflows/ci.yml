@@ -101,6 +101,9 @@ jobs:
       - name: Workspace smoke regression tests
         run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 
+      - name: Formal instrumentation observer regression tests
+        run: python3 -m unittest tools.tests.test_android_formal_observer
+
       - name: Commit identity guard tests
         run: python3 -m unittest discover -s tests -p commit_identity_tests.py
 

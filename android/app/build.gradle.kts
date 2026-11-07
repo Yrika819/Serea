@@ -21,6 +21,20 @@ val betaSigningInputsReady = listOf(
     betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
 ).all { !it.isNullOrBlank() }
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
+val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
+val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
+    gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation" }
+val nativeRuntimeAbi = providers.gradleProperty("sereaNativeRuntimeAbi").orNull ?: "x86_64"
+val llamaCppSource = if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
+    providers.gradleProperty("sereaLlamaCppSource").orNull
+        ?: providers.environmentVariable("SEREA_LLAMA_CPP_SOURCE").orNull
+        ?: error("Native diagnostic requires -PsereaLlamaCppSource=<pinned clean checkout>.")
+} else null
+if (isolatedNativeRuntimeOptIn && nativeRuntimeAbi !in setOf("x86_64", "arm64-v8a")) {
+    error("sereaNativeRuntimeAbi must be x86_64 or arm64-v8a.")
+}
+val nativeEnabledBuildTypes = mutableSetOf<String>()
+val nativeDisabledBuildTypes = mutableSetOf<String>()
 val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
 val updateTestVersionCode = providers.gradleProperty("sereaVersionCode").orNull?.toIntOrNull()
 val updateTestStorePath = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
@@ -43,13 +57,31 @@ android {
     compileSdk = 35
     testBuildType = "isolated"
 
+    buildFeatures { buildConfig = true }
+    if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) ndkVersion = "28.2.13676358"
+
     defaultConfig {
         applicationId = "app.serea.android"
         minSdk = 26
         targetSdk = 35
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
-        testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        // The Native diagnostic runs only the no-model JNI contract on a disposable emulator.
+        // Keep the campaign-gated Formal runner for every ordinary app/test build.
+        testInstrumentationRunner = if (isolatedNativeRuntimeOptIn) {
+            "androidx.test.runner.AndroidJUnitRunner"
+        } else {
+            "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        }
+        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
+        if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
+            ndk { abiFilters += nativeRuntimeAbi }
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DLLAMA_SRC=$llamaCppSource"
+                }
+            }
+        }
     }
 
     signingConfigs {
@@ -84,6 +116,12 @@ android {
             // private database, so the disposable isolated target must remain debuggable.
             applicationIdSuffix = ".isolated"
             matchingFallbacks += listOf("debug")
+            buildConfigField(
+                "boolean",
+                "LOCAL_NATIVE_RUNTIME_ENABLED",
+                isolatedNativeRuntimeOptIn.toString(),
+            )
+            buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"$nativeRuntimeAbi\"")
         }
         release {
             isMinifyEnabled = false
@@ -96,6 +134,11 @@ android {
             if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
         }
     }
+    if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
+        externalNativeBuild {
+            cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.31.6" }
+        }
+    }
 
     sourceSets {
         // Instrumentation and the process-death harness use a separate Android
@@ -103,6 +146,13 @@ android {
         getByName("isolated") {
             java.srcDir("src/debug/java")
             manifest.srcFile("src/isolated/AndroidManifest.xml")
+        }
+        if (isolatedNativeRuntimeOptIn) {
+            // JNI ownership smoke tests are compiled only for the explicit native
+            // diagnostic build; regular Formal instrumentation identities stay fixed.
+            getByName("androidTest") {
+                java.srcDir("src/nativeRuntimeDiagnosticAndroidTest/java")
+            }
         }
         if (betaValidationHarness) {
             // Only the disposable-emulator verifier opts into the debug-only
@@ -120,6 +170,29 @@ android {
     }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+androidComponents {
+    beforeVariants(selector().all()) { variant ->
+        if (isolatedNativeRuntimeOptIn) {
+            if (variant.buildType == "isolated") nativeEnabledBuildTypes += variant.buildType!!
+            else {
+                nativeDisabledBuildTypes += variant.buildType.orEmpty()
+                variant.enable = false
+            }
+        }
+    }
+}
+
+tasks.register("verifyLocalNativeRuntimeVariantIsolation") {
+    group = "verification"
+    doLast {
+        check(isolatedNativeRuntimeOptIn) { "Use -PsereaIsolatedNativeRuntime=true." }
+        check(nativeEnabledBuildTypes == setOf("isolated")) { "Native enabled variants: $nativeEnabledBuildTypes" }
+        check(nativeDisabledBuildTypes.containsAll(setOf("debug", "beta", "release"))) {
+            "Native disabled variants: $nativeDisabledBuildTypes"
+        }
+    }
 }
 
 // AGP omits dependency baseline profiles from debuggable APKs. The isolated target stays

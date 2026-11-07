@@ -177,6 +177,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 android_dir="$repo_root/android"
 test_root=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/serea-personal-beta.XXXXXX")
 results="$android_dir/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+beta_native_results="$test_root/native-apk-exclusion.txt"
 demo_package='app.serea.android.demo'
 beta_package='app.serea.android.beta'
 beta_activity="$beta_package/app.serea.android.MainActivity"
@@ -361,7 +362,15 @@ build_beta() {
   local args=(--no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleBeta "-PsereaBetaVersionCode=$version")
   if [[ "$harness" == true ]]; then args+=("-PsereaPersonalBetaValidationHarness=true"); fi
   (cd "$android_dir" && ./gradlew "${args[@]}")
-  cp "$android_dir/app/build/outputs/apk/beta/app-beta.apk" "$output"
+  local beta_apk="$android_dir/app/build/outputs/apk/beta/app-beta.apk"
+  if unzip -Z1 "$beta_apk" | grep -E '^lib/[^/]+/lib(serea_local_llama|llama|ggml)[^/]*\.so$'; then
+    echo "Native inference library unexpectedly packaged in temporary-key Beta APK: $beta_apk" >&2
+    return 1
+  fi
+  echo "PASS: temporary-key Beta APK excludes Native inference libraries (versionCode=$version)."
+  printf 'beta_native_library_exclusion_versionCode=%s result=PASS apk_sha256=%s\n' \
+    "$version" "$(sha256sum "$beta_apk" | awk '{print $1}')" >> "$beta_native_results"
+  cp "$beta_apk" "$output"
   bash "$repo_root/tools/verify_personal_beta_apk.sh" "$output" "$version" \
     "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256"
 }
@@ -482,4 +491,5 @@ mkdir -p "$(dirname "$results")"
   echo 'owner_signing_key_used=no'
   echo 'demo_uninstall_attempted=no'
 } > "$results"
+cat "$beta_native_results" >> "$results"
 cat "$results"

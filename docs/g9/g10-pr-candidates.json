@@ -1,0 +1,1463 @@
+{
+  "snapshot_main": "72dbd245c46fa111a22e9d85e22410278a259326",
+  "snapshot_count": 175,
+  "candidates": [
+    {
+      "number": 204,
+      "title": "test(android): integrate isolated Chat and Room diagnostics",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt;android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt;android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "8017e7e9e8987dc66361eb9297cf87535d8ef7b1",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 203,
+      "title": "test(android): diagnose v4 history database migration",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt;android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 202,
+      "title": "test(android): isolate local chat compose host",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt;android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 201,
+      "title": "docs: prepare V12 Android ARM64 release preflight",
+      "hits": [
+        "arm64",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g10-v12-native-android-preflight.md",
+      "head_sha": "085442b7c8bd778179852ed79a1117a5e27fc0f4",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 199,
+      "title": "test(android): integrate local route with Chat ViewModel",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 198,
+      "title": "test(android): verify local model trim callback lifecycle",
+      "hits": [
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_fake_google_process_death.sh;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 196,
+      "title": "test(android): compose gated local chat route",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "head_sha": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 195,
+      "title": "feat(android): add isolated local model memory trim bridge",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/LocalModelMemoryLifecycle.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "head_sha": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 193,
+      "title": "feat(android): isolate default-off local model Chat route",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "localmodel"
+      ],
+      "paths": "android/app/build.gradle.kts;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt",
+      "head_sha": "518b2328f8815fde042c26dc5593958052933a40",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 191,
+      "title": "feat(android): isolate default-off local model Chat route",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "localmodel"
+      ],
+      "paths": "android/app/build.gradle.kts;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt",
+      "head_sha": "31bbab289c52802ca0f2be142c8dcebd97767737",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 190,
+      "title": "G10: refresh Owner packet with G9E evidence",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g9r-ci-security-release.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md",
+      "head_sha": "ce87c71a266d6771caa6228f6843634d1cb4a542",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 187,
+      "title": "G9D: integrate reviewed API35 and Fake process death fixes",
+      "hits": [
+        "chat"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;tests/android_emulator_workflow_tests.py;tools/run_android_fake_google_process_death.sh",
+      "head_sha": "68dd17e687b80bdad0134099077a886fca4de836",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 185,
+      "title": "docs: require fresh local-model consent after eviction",
+      "hits": [
+        "model"
+      ],
+      "paths": "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "head_sha": "4db504fc718d1c062c97a4418b005693aa670ad9",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 183,
+      "title": "test(android): dismiss IME before API 35 soft limit assertion",
+      "hits": [
+        "chat"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt",
+      "head_sha": "681f28e2c434c8571a7cab9354cafd6f92e417aa",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 182,
+      "title": "ci(native): verify stable emulator package before ARM64 guest run",
+      "hits": [
+        "chat",
+        "model",
+        "arm64",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/check-emulator-host-libraries.sh;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-emulator-host-libraries.sh;tools/g8-local-model-native/test-emulator-package-version.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-emulator-package.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "3ed787d0e4bf678d92a21117e57e81c9b3d0de31",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 179,
+      "title": "ci(native): run ARM64 preflight on focused workflow trigger base",
+      "hits": [
+        "chat",
+        "model",
+        "arm64",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/check-emulator-host-libraries.sh;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-emulator-host-libraries.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 178,
+      "title": "fix(native): include Android SDK paths in QEMU preflight",
+      "hits": [
+        "model"
+      ],
+      "paths": "tools/g8-local-model-native/check-emulator-host-libraries.sh;tools/g8-local-model-native/test-emulator-host-libraries.sh",
+      "head_sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 177,
+      "title": "fix(native): fail closed on unresolved emulator library diagnostics",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/check-emulator-host-libraries.sh;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-emulator-host-libraries.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "08335a0a21f08a3f5061e84a1fb85cea435d18ae",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 175,
+      "title": "docs: define local model Chat lifecycle and memory gates",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "head_sha": "b7e9a7a8a9c10905f0de2f2aaf1c1f41994bd985",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 174,
+      "title": "docs: checkpoint G9 closure and ARM64 recovery",
+      "hits": [
+        "arm64"
+      ],
+      "paths": "docs/agent-reports/g9c-orchestrator-ledger.md",
+      "head_sha": "479a6653ffa102bc49aafa6d567dc06ba181e52d",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 172,
+      "title": "test(android): restore Fake Google death harness after UTP",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;tests/android_emulator_workflow_tests.py;tools/run_android_fake_google_process_death.sh",
+      "head_sha": "28f52c2999795ab6d1c83aa456d5186205c8307a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 171,
+      "title": "fix(native): install and verify ARM64 emulator host dependencies",
+      "hits": [
+        "chat",
+        "model",
+        "arm64",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/check-emulator-host-libraries.sh;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-emulator-host-libraries.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "8d4d3cdb44f44d31dc06299579f53427886c35c8",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 169,
+      "title": "fix(native): enforce llama.cpp runtime capability bounds",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 168,
+      "title": "test(android): fix calendar UI navigation and diagnostics",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt",
+      "head_sha": "272f68ecf7f8072b812b13e46064a108bab5ef2b",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 167,
+      "title": "G10 preflight evidence checkpoint refresh",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g9r-ci-security-release.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md",
+      "head_sha": "ca49dc4ab4731b5820732d381a24a225ff5ae0c7",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 166,
+      "title": "G9R Native runtime limits and bounded ARM64 guest validation",
+      "hits": [
+        "chat",
+        "model",
+        "arm64",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-limits-followup.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 165,
+      "title": "fix(native): bound model limits and diagnostics",
+      "hits": [
+        "chat",
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;docs/agent-reports/g9r-native-runtime-limits-followup.md;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/summarize-runtime-metrics.py;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/test-summarize-runtime-metrics.py;tools/g8-local-model-native/test-upload-allowlist.py;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 163,
+      "title": "G9R: record static local model compatibility matrix",
+      "hits": [
+        "model"
+      ],
+      "paths": "docs/agent-reports/g9r-static-model-matrix.md",
+      "head_sha": "2c109276bcbdd4e14fb2b6e9558962516f2df32c",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 162,
+      "title": "G9RC: integrate reviewed Android UI test recovery",
+      "hits": [
+        "calendar",
+        "oauth",
+        "googleauth",
+        "release"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/CalendarMockWebServerTls.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarMockWebServerTls.kt;android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleCalendarDemoLoopbackIntegrationTest.kt;docs/agent-reports/g8-agent-c-release-preflight.md;docs/agent-reports/g9r-android-ui-recovery.md;docs/agent-reports/g9rc-orchestrator-ledger.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md",
+      "head_sha": "6b7a741362b58b6bbc7728e69de90d929391dcaf",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 161,
+      "title": "G9R: recover Android Google and Gmail UI tests",
+      "hits": [
+        "calendar",
+        "oauth",
+        "googleauth"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/CalendarMockWebServerTls.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleTrustedHandoffShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarMockWebServerTls.kt;android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleCalendarDemoLoopbackIntegrationTest.kt;docs/agent-reports/g9r-android-ui-recovery.md;docs/agent-reports/g9r-orchestrator-ledger.md",
+      "head_sha": "ff42d9bcd08010dd7100d708d17fc676bcd5e739",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 160,
+      "title": "G9R: recover native cancellation diagnostics",
+      "hits": [
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "025aff71effb03e0fe3bd540079530369e9beaf7",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 159,
+      "title": "[DRAFT] G9R owner decision and release preflight packet",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g8-agent-c-release-preflight.md;docs/agent-reports/g9r-ci-security-release.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md",
+      "head_sha": "982c8271698c5ea323e7a4d19f4dd662087db2c5",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 158,
+      "title": "G9R Native Runtime Runner Recovery",
+      "hits": [
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;docs/agent-reports/g9r-native-runtime-recovery.md;tools/g8-local-model-native/instrumentation-gate.sh;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-instrumentation-gate.sh;tools/g8-local-model-native/test-instrumentation-stream.py;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/verify-cmake-clean-checkout.sh;tools/g8-local-model-native/verify-instrumentation-stream.py",
+      "head_sha": "80e9990625b000e9d56a78743a7460ac120d4979",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 157,
+      "title": "Android G9 UI and IME instrumentation recovery",
+      "hits": [
+        "calendar",
+        "googleauth"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleTrustedHandoffShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt",
+      "head_sha": "4075ce2de11df3cee05b1b64d2aa6b8899376064",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 156,
+      "title": "G9R CI, security, and release evidence",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g9r-ci-security-release.md",
+      "head_sha": "bd281b1781eb1ab822c4266bfd6c54162b1538d2",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 155,
+      "title": "G9R recovery campaign integration checkpoint",
+      "hits": [
+        "calendar",
+        "googleauth"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleTrustedHandoffShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;docs/agent-reports/g9r-orchestrator-ledger.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md",
+      "head_sha": "c6d9b3971c19d75c6824de616e703b105b6be71f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 152,
+      "title": "test: stabilize Fake Google and Gmail UI checks",
+      "hits": [
+        "calendar",
+        "googleauth"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;docs/agent-reports/g9-google-gmail-ui-fix-review.md",
+      "head_sha": "a9da3b71fff786fc93d3365249ea8087477b31b2",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 150,
+      "title": "[DRAFT] G8N Lane B: Minimize Gmail Chat handoff data",
+      "hits": [
+        "chat"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/handoff/GoogleTrustedHandoff.kt;android/app/src/test/java/app/serea/android/handoff/GoogleTrustedHandoffTest.kt;docs/agent-reports/evidence/g8n-gmail-body-only-4e4b8f9/GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8n-gmail-body-only-4e4b8f9/SHA256SUMS;docs/agent-reports/evidence/g8n-gmail-body-only-4e4b8f9/source-and-runtime.txt;docs/agent-reports/g8n-lane-b-google-gmail-ui.md",
+      "head_sha": "50a56acd22fb363cf5354a3d39e67b01d980491a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 149,
+      "title": "[DRAFT] G8N integration candidate \u2014 emulator harness recovery",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "calendar",
+        "oauth",
+        "googleauth",
+        "egress",
+        "security",
+        "localmodel"
+      ],
+      "paths": "docs/agent-reports/evidence/g8n-native-49e14da/SHA256SUMS;docs/agent-reports/evidence/g8n-native-49e14da/artifact-provenance.txt;docs/agent-reports/evidence/g8n-native-49e14da/cleanup-boundary.txt;docs/agent-reports/evidence/g8n-native-49e14da/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml;docs/agent-reports/evidence/g8n-native-49e14da/junit/TEST-app.serea.android.LocalModelNativeRuntimeTest.xml;docs/agent-reports/evidence/g8n-native-49e14da/model-license-metadata.json;docs/agent-reports/evidence/g8n-native-49e14da/source-and-runtime.txt;docs/agent-reports/evidence/g8n-native-49e14da/source.txt;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/SHA256SUMS;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.AdaptiveModelRouterTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.AppProviderCompositionTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.CloudEgressBodyLineageAttackMatrixTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.ProfileVerifierCacheMarkerTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.SereaNavigationStateTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.UsageLedgerCostTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.assistant.taskproposal.TaskProposalTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.CalendarAgendaTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.CalendarDomainParserTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.CalendarSecurityTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaFormattingTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaUiControllerTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaUiSecurityTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.gmail.GmailSecurityPortsTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.gmail.ui.GmailViewModelTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.handoff.GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.tasks.TaskDomainTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.tasks.TaskProposalTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.tasks.TaskRepositoryTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/junit/TEST-app.serea.android.tasks.TaskViewModelTest.xml;docs/agent-reports/evidence/g8n-pr146-d444e7c/summary.txt;docs/agent-reports/g8n-orchestrator-ledger.md;tests/android_emulator_workflow_tests.py;tools/android_package_path.sh;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "3a0f0c1897f2115549e7682d6fcc1783c44604f3",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 148,
+      "title": "[DRAFT] G8N CI, security, and release evidence packet",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g8n-ci-security-release.md",
+      "head_sha": "a00a4a224a7b36854b70d883acfd35253cf200d6",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 147,
+      "title": "[DRAFT] G8N native runtime diagnostics and Bonsai 2 evaluation",
+      "hits": [
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8n-native-bonsai-evaluation.md;docs/agent-reports/g9-native-model-license-comparison.md;tools/g8-local-model-native/preflight.sh;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/test-jni-contract.py;tools/g8-local-model-native/test-preflight.sh;tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "head_sha": "36700f6c99d15db428c6d434c657ac76593df3f9",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 146,
+      "title": "[DRAFT] G8 integration candidate r1 \u2014 Fake Calendar UI and security preflight",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "calendar",
+        "oauth",
+        "googleauth",
+        "egress",
+        "security",
+        "release",
+        "localmodel"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/GmailHtmlInertUiSecurityTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/googleauth/CalendarDemoSessionFactory.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationLifecycleTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleCalendarDemoLoopbackIntegrationTest.kt;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/SHA256SUMS;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.CloudEgressBodyLineageAttackMatrixTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.UsageLedgerCostTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.calendar.CalendarSecurityTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.gmail.GmailSecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.gmail.ui.GmailViewModelTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g8-parent-focused-d0f32fc/junit/TEST-app.serea.android.handoff.GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/SHA256SUMS;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/summary.txt;docs/agent-reports/evidence/g8-parent-focused-fb47d50/SHA256SUMS;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.CloudEgressBodyLineageAttackMatrixTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.UsageLedgerCostTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.calendar.CalendarSecurityTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.gmail.GmailSecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.gmail.ui.GmailViewModelTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/junit/TEST-app.serea.android.handoff.GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8-parent-focused-fb47d50/summary.txt;docs/agent-reports/evidence/g8-parent-integrated-00d554b/SHA256SUMS;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.AdaptiveModelRouterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.AppProviderCompositionTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.CloudEgressBodyLineageAttackMatrixTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.LocalModelChatAdapterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.ProfileVerifierCacheMarkerTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.SereaNavigationStateTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.UsageLedgerCostTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.assistant.taskproposal.TaskProposalTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.CalendarAgendaTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.CalendarDomainParserTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.CalendarSecurityTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.ui.CalendarAgendaFormattingTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.ui.CalendarAgendaUiControllerTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.calendar.ui.CalendarAgendaUiSecurityTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.gmail.GmailSecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.gmail.ui.GmailViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.handoff.GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.tasks.TaskDomainTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.tasks.TaskProposalTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.tasks.TaskRepositoryTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/TEST-app.serea.android.tasks.TaskViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-00d554b/summary.txt;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/SHA256SUMS;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.AdaptiveModelRouterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.AppProviderCompositionTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.CloudEgressBodyLineageAttackMatrixTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.ProfileVerifierCacheMarkerTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.SereaNavigationStateTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.UsageLedgerCostTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.assistant.taskproposal.TaskProposalTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.CalendarAgendaTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.CalendarDomainParserTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.CalendarSecurityTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaFormattingTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaUiControllerTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.calendar.ui.CalendarAgendaUiSecurityTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.gmail.GmailSecurityPortsTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.gmail.ui.GmailViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.handoff.GoogleTrustedHandoffTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.tasks.TaskDomainTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.tasks.TaskProposalTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.tasks.TaskRepositoryTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/junit/TEST-app.serea.android.tasks.TaskViewModelTest.xml;docs/agent-reports/evidence/g8-parent-integrated-eba68eb/summary.txt;docs/agent-reports/evidence/g8-parent-oauth-stale-consent-f857b29/SHA256SUMS;docs/agent-reports/evidence/g8-parent-oauth-stale-consent-f857b29/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g8-parent-oauth-stale-consent-f857b29/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-oauth-stale-consent-f857b29/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-oauth-stale-consent-f857b29/summary.txt;docs/agent-reports/evidence/g8-release-security-00d554b/SHA256SUMS;docs/agent-reports/evidence/g8-release-security-00d554b/android-debug-artifact-bound.cdx.json;docs/agent-reports/evidence/g8-release-security-00d554b/android-lockfile-inventory.cdx.json;docs/agent-reports/evidence/g8-release-security-00d554b/summary.txt;docs/agent-reports/evidence/g8-release-security-d0f32fc/android-debug-artifact-bound.cdx.json;docs/agent-reports/evidence/g8-release-security-d0f32fc/android-lockfile-inventory.cdx.json;docs/agent-reports/evidence/g8-release-security-d0f32fc/android-lockfile-inventory.cdx.json.sha256;docs/agent-reports/evidence/g8-release-security-d0f32fc/artifact-sha256.txt;docs/agent-reports/evidence/g8-release-security-d0f32fc/summary.txt;docs/agent-reports/g8-agent-a-oauth-ui.md;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g8-agent-c-release-preflight.md;docs/agent-reports/g8-orchestrator-ledger.md;docs/agent-reports/g9-gmail-preflight.md;docs/agent-reports/g9-native-model-license-comparison.md;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/android_package_path.sh;tools/run_android_fake_google_process_death.sh;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "d444e7cc04c8f1c4c6d12b1412cfe3a76258af66",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 145,
+      "title": "G8 Agent A: Fake Calendar consent UI and loopback flow",
+      "hits": [
+        "model",
+        "calendar",
+        "oauth",
+        "googleauth"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarHandoffRevocationUiTest.kt;android/app/src/isolated/AndroidManifest.xml;android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt;android/app/src/main/java/app/serea/android/googleauth/CalendarDemoSessionFactory.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationLifecycleTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleCalendarDemoLoopbackIntegrationTest.kt;docs/agent-reports/g8-agent-a-oauth-ui.md;tests/android_emulator_workflow_tests.py;tools/run_android_fake_google_process_death.sh",
+      "head_sha": "9240ec5fc433fe3274ab2b5871ff0fb4df182913",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 144,
+      "title": "[DRAFT] G8: isolated llama.cpp LocalModel runtime candidate",
+      "hits": [
+        "model",
+        "localmodel"
+      ],
+      "paths": ".github/workflows/g8-local-native-runtime-focused.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt;android/app/src/main/cpp/CMakeLists.txt;android/app/src/main/cpp/llama_jni.cpp;android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt;android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt;docs/agent-reports/g8-agent-b-native-runtime.md;docs/agent-reports/g9-native-model-license-comparison.md;tools/g8-local-model-native/run-e2e.sh;tools/g8-local-model-native/test-cleanup.sh;tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "head_sha": "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 143,
+      "title": "[DRAFT] G9 Fake Gmail inert HTML UI preflight",
+      "hits": [
+        "security"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/GmailHtmlInertUiSecurityTest.kt;docs/agent-reports/g9-gmail-preflight.md",
+      "head_sha": "d93674154ee0a5297a3a55e9ad25edabcfdf914b",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 142,
+      "title": "[DRAFT] G8 Agent C: G7 closure and release security preflight",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g8-agent-c-release-preflight.md",
+      "head_sha": "fa28794f1958f901a169573ac19ca954d5eb76fa",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 141,
+      "title": "[SUPERSEDED / DO NOT MERGE] G8 integration candidate (commit identity guard failed)",
+      "hits": [
+        "model",
+        "calendar",
+        "oauth",
+        "googleauth",
+        "security",
+        "release"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/GmailHtmlInertUiSecurityTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationAppIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleCalendarDemoLoopbackUiTest.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/googleauth/CalendarDemoSessionFactory.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationLifecycleTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleCalendarDemoLoopbackIntegrationTest.kt;docs/agent-reports/evidence/g8-parent-focused-e7dff90/SHA256SUMS;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.calendar.CalendarOAuthMockE2ETest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/junit/TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml;docs/agent-reports/evidence/g8-parent-focused-e7dff90/summary.txt;docs/agent-reports/g8-agent-a-oauth-ui.md;docs/agent-reports/g8-agent-c-release-preflight.md;docs/agent-reports/g8-orchestrator-ledger.md;docs/agent-reports/g9-gmail-preflight.md;tests/android_emulator_workflow_tests.py;tools/android_package_path.sh;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "d0f32fcf845208f065e8edbdb498ec00448a1b65",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 137,
+      "title": "G6-A: Add Fake Google trusted handoff to Chat",
+      "hits": [
+        "chat",
+        "calendar"
+      ],
+      "paths": "android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/GoogleTrustedHandoffUiTest.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/handoff/GoogleHandoffPreviewDialog.kt;android/app/src/main/java/app/serea/android/handoff/GoogleTrustedHandoff.kt;android/app/src/test/java/app/serea/android/handoff/GoogleTrustedHandoffTest.kt;docs/agent-reports/g6-a-google-trusted-handoff.md;tests/android_instrumentation_results_tests.py;tools/run_android_functional_focused.sh",
+      "head_sha": "ff3ccce70161ec83f4b1c0bd831f0a8b0755603b",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 136,
+      "title": "G6-B: Add local model adapter and consent boundary",
+      "hits": [
+        "chat",
+        "model",
+        "security",
+        "localmodel"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt;android/app/src/main/java/app/serea/android/LocalModelSecurity.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/UsageAccounting.kt;android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt;docs/agent-reports/g6-b-local-ai-adapter.md",
+      "head_sha": "57841f878ef5c08ec3be78951bb0ca5dbebdf3aa",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 135,
+      "title": "G6-C: prepare OAuth and release readiness evidence",
+      "hits": [
+        "oauth",
+        "release"
+      ],
+      "paths": "docs/agent-reports/g6-c-release-readiness.md",
+      "head_sha": "178d9b6bce37de92856888d11ccf57b1bea00de7",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 133,
+      "title": "G4: harden real IME diagnostics and Google lifecycle coverage",
+      "hits": [
+        "chat",
+        "model",
+        "calendar",
+        "googleauth",
+        "egress",
+        "security"
+      ],
+      "paths": ".github/workflows/android-api35-real-ime-independent-bc.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt;android/app/src/debug/AndroidManifest.xml;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/DemoChatComposition.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java;android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/gradle-summary.txt;docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/sha256sums.txt;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/sha256sums.txt;docs/agent-reports/evidence/g4-egress-body-lineage-integrated-b3ee75b/summary.txt;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/gradle-summary.txt;docs/agent-reports/evidence/g4-egress-body-lineage-review-2/sha256sums.txt;docs/agent-reports/evidence/g4-egress-body-lineage/TEST-app.serea.android.ChatViewModelTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage/TEST-app.serea.android.OllamaCloudAdapterTest.xml;docs/agent-reports/evidence/g4-egress-body-lineage/TEST-app.serea.android.SecurityPortsTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle-exact-head-dfc139c.log;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt;docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt;docs/agent-reports/g2-google-policy-readiness-2026-10-28.md;docs/agent-reports/g2-p0-backend-acceptance-review.md;docs/agent-reports/g4-egress-body-lineage.md;docs/agent-reports/g4-orchestrator-ledger.md;docs/verification/api35-real-ime-independent-bc.md;tools/run_serea_phase_r3_single_ime_case.sh;tools/serea_real_ime_avd_guards.sh;tools/test_serea_real_ime_avd_guards.sh",
+      "head_sha": "b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 131,
+      "title": "Bind Android debug APK digest to lockfile SBOM evidence",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-release-security-focused.yml;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_artifact_sbom_tests.py;tools/bind_android_apk_sbom.py",
+      "head_sha": "7353964fef41d9751b51029c9617cd7313cfa34c",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 129,
+      "title": "[Draft] G4 Android Personal Beta readiness integration",
+      "hits": [
+        "chat",
+        "model",
+        "calendar",
+        "oauth",
+        "googleauth",
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-release-security-focused.yml;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/schemas/app.serea.android.SereaHistoryDatabase/5.json;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/main/java/app/serea/android/ChatContext.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/main/java/app/serea/android/calendar/transport/CalendarAccessTokenPort.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailAccessTokenPort.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationLifecycleTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-remote-failure-targeted/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-remote-failure-targeted/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/gradle-run.log;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/isolated-android-test-compile.log;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/sha256sums.txt;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/gradle-run.log;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/isolated-android-test-compile.log;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/sha256sums.txt;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-final-targeted/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-final-targeted/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-final-targeted/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-first-failure/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-first-failure/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-first-failure/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g4-google-revocation-integration/gradle-androidtest-compile.log.gz;docs/agent-reports/evidence/g4-google-revocation-integration/gradle-six-class.log.gz;docs/agent-reports/evidence/g4-google-revocation-integration/identity-harness-unittest.txt;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/summary.txt;docs/agent-reports/evidence/g4-release-readiness/android-lockfile-inventory.cdx.json;docs/agent-reports/evidence/g4-release-readiness/android-lockfile-inventory.cdx.json.sha256;docs/agent-reports/evidence/g4-release-readiness/distribution-tests.txt;docs/agent-reports/evidence/g4-release-readiness/sbom-tests.txt;docs/agent-reports/evidence/g4-resume-2c62444/host-focused.log;docs/agent-reports/g2-google.md;docs/agent-reports/g4-guava-security-fix.md;docs/agent-reports/g4-orchestrator-ledger.md;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_emulator_workflow_tests.py;tests/android_lockfile_sbom_tests.py;tools/android_emulator_lifecycle.sh;tools/test_personal_beta_identity.sh",
+      "head_sha": "113a81ea5ab8739740edf0d7c17deb2354adad78",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 127,
+      "title": "G3 recovery: stabilize isolated inference diagnostic",
+      "hits": [
+        "chat",
+        "model",
+        "inference"
+      ],
+      "paths": ".github/workflows/g3-ondevice-poc.yml;artifacts/g3-ondevice-poc/failure-40515091197-junit.xml;artifacts/g3-ondevice-poc/failure-40515091197-logcat-excerpt.txt;artifacts/g3-ondevice-poc/failure-40515091197-root-cause.txt;artifacts/g3-ondevice-poc/gradle-unit-after-40a6f1e.log;artifacts/g3-ondevice-poc/gradle-unit-after-7ed9cc9.log;artifacts/g3-ondevice-poc/gradle-unit-after-f90b229.log;artifacts/g3-ondevice-poc/host-junit-after-40a6f1e-summary.txt;artifacts/g3-ondevice-poc/host-junit-after-40a6f1e.xml;artifacts/g3-ondevice-poc/host-junit-after-7ed9cc9-summary.txt;artifacts/g3-ondevice-poc/host-junit-after-7ed9cc9.xml;artifacts/g3-ondevice-poc/host-junit-after-f90b229-summary.txt;artifacts/g3-ondevice-poc/host-junit-after-f90b229.xml;artifacts/g3-ondevice-poc/review-e5e8783-api-selection.log;artifacts/g3-ondevice-poc/review-e5e8783-apk-and-jni-sha256.txt;artifacts/g3-ondevice-poc/review-e5e8783-cleanup.log;artifacts/g3-ondevice-poc/review-e5e8783-diff-check.log;artifacts/g3-ondevice-poc/review-e5e8783-host-junit.xml;artifacts/g3-ondevice-poc/review-e5e8783-jvm.log;artifacts/g3-ondevice-poc/review-e5e8783-local-sdk-toolchain-revisions.json;artifacts/g3-ondevice-poc/review-e5e8783-metadata-contracts.log;artifacts/g3-ondevice-poc/review-e5e8783-model-license.json;artifacts/g3-ondevice-poc/review-e5e8783-native-and-apk.log;artifacts/g3-ondevice-poc/review-e5e8783-native-source.log;artifacts/g3-ondevice-poc/review-e5e8783-shell-syntax.log;artifacts/g3-ondevice-poc/review-e5e8783-source-contracts.log;artifacts/g3-ondevice-poc/review-e5e8783-target-apk-permissions.txt;artifacts/g3-ondevice-poc/review-e5e8783-workflow-yaml.log;docs/agent-reports/g3-ai.md;tools/g3-ondevice-poc/README.md;tools/g3-ondevice-poc/RESUME-REQUEST-2026-10-27.md;tools/g3-ondevice-poc/app/src/androidTest/java/app/serea/g3poc/OnDeviceInferenceTest.kt;tools/g3-ondevice-poc/app/src/main/cpp/llama_jni.cpp;tools/g3-ondevice-poc/app/src/main/java/app/serea/g3poc/GgufModelChatPort.kt;tools/g3-ondevice-poc/app/src/test/java/app/serea/g3poc/ModelChatPortContractTest.kt;tools/g3-ondevice-poc/scripts/api_selection.py;tools/g3-ondevice-poc/scripts/capture-model-license.py;tools/g3-ondevice-poc/scripts/run-diagnostic.sh;tools/g3-ondevice-poc/scripts/test-api-selection.py;tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py;tools/g3-ondevice-poc/scripts/test-native-source-contract.py;tools/g3-ondevice-poc/scripts/test-poc-metadata-contracts.py;tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py;tools/g3-ondevice-poc/scripts/verify-apk-permissions.py",
+      "head_sha": "a2bafeea77160e8e2746bdfdd0d309348ac04aa7",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 126,
+      "title": "Draft: isolated on-device AI feasibility harness (G3)",
+      "hits": [
+        "chat",
+        "model",
+        "inference"
+      ],
+      "paths": ".github/workflows/g3-ondevice-poc.yml;artifacts/g3-ondevice-poc/download-bound-final-review.log;artifacts/g3-ondevice-poc/download-bound-test.log;artifacts/g3-ondevice-poc/gradle-androidtest-final-review.log;artifacts/g3-ondevice-poc/gradle-androidtest-network.log;artifacts/g3-ondevice-poc/gradle-assemble-cancellation-fix.log;artifacts/g3-ondevice-poc/gradle-assemble-engine-lease.log;artifacts/g3-ondevice-poc/gradle-assemble-final-review.log;artifacts/g3-ondevice-poc/gradle-assemble.log;artifacts/g3-ondevice-poc/gradle-build-failure.log;artifacts/g3-ondevice-poc/gradle-unit-cancellation-fix.log;artifacts/g3-ondevice-poc/gradle-unit-engine-lease.log;artifacts/g3-ondevice-poc/gradle-unit-final-review.log;artifacts/g3-ondevice-poc/gradle-unit.log;artifacts/g3-ondevice-poc/host-junit.xml;docs/agent-reports/g3-ai.md;tools/g3-ondevice-poc/.gitignore;tools/g3-ondevice-poc/README.md;tools/g3-ondevice-poc/app/build.gradle.kts;tools/g3-ondevice-poc/app/src/androidTest/java/app/serea/g3poc/OnDeviceInferenceTest.kt;tools/g3-ondevice-poc/app/src/main/AndroidManifest.xml;tools/g3-ondevice-poc/app/src/main/cpp/CMakeLists.txt;tools/g3-ondevice-poc/app/src/main/cpp/llama_jni.cpp;tools/g3-ondevice-poc/app/src/main/java/app/serea/g3poc/GgufModelChatPort.kt;tools/g3-ondevice-poc/app/src/test/java/app/serea/g3poc/ModelChatPortContractTest.kt;tools/g3-ondevice-poc/build.gradle.kts;tools/g3-ondevice-poc/gradle.properties;tools/g3-ondevice-poc/gradle/wrapper/gradle-wrapper.jar;tools/g3-ondevice-poc/gradle/wrapper/gradle-wrapper.properties;tools/g3-ondevice-poc/gradlew;tools/g3-ondevice-poc/model-fixture.json;tools/g3-ondevice-poc/scripts/run-diagnostic.sh;tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py;tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py;tools/g3-ondevice-poc/settings.gradle.kts",
+      "head_sha": "8ca55a32096bc4449717c2fd3332b0602381d7d5",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 125,
+      "title": "G4: integrate Fake Google authorization lifecycle readiness",
+      "hits": [
+        "model",
+        "calendar",
+        "oauth",
+        "googleauth",
+        "security",
+        "release"
+      ],
+      "paths": "android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/main/java/app/serea/android/calendar/transport/CalendarAccessTokenPort.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailAccessTokenPort.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationLifecycleTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-remote-failure-targeted/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-remote-failure-targeted/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/gradle-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt;docs/agent-reports/evidence/g2-oauth-02-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-focused/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/gradle-run.log;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/isolated-android-test-compile.log;docs/agent-reports/evidence/g2-revoke-cancellation-shared-generation-six-class-pass/sha256sums.txt;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/gradle-run.log;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/isolated-android-test-compile.log;docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/sha256sums.txt;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-final-targeted/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-final-targeted/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-final-targeted/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-first-failure/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-first-failure/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-first-failure/gradle-summary.txt;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g2-revoke-race-six-class-pass/gradle-summary.txt;docs/agent-reports/evidence/g4-google-revocation-integration/gradle-androidtest-compile.log.gz;docs/agent-reports/evidence/g4-google-revocation-integration/gradle-six-class.log.gz;docs/agent-reports/evidence/g4-google-revocation-integration/identity-harness-unittest.txt;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/junit/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml;docs/agent-reports/evidence/g4-google-revocation-integration/summary.txt;docs/agent-reports/evidence/g4-release-readiness/android-lockfile-inventory.cdx.json;docs/agent-reports/evidence/g4-release-readiness/android-lockfile-inventory.cdx.json.sha256;docs/agent-reports/evidence/g4-release-readiness/distribution-tests.txt;docs/agent-reports/evidence/g4-release-readiness/sbom-tests.txt;docs/agent-reports/evidence/g4-resume-2c62444/host-focused.log;docs/agent-reports/g2-google.md;docs/agent-reports/g4-guava-security-fix.md;docs/agent-reports/g4-orchestrator-ledger.md;tests/android_emulator_workflow_tests.py;tools/android_emulator_lifecycle.sh;tools/test_personal_beta_identity.sh",
+      "head_sha": "2ecec61d8f2c0ec0b00d047b7d226d62307dc742",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 123,
+      "title": "Draft: Personal Beta functional integration (Lane A)",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "calendar",
+        "googleauth",
+        "egress",
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-functional-focused.yml;.github/workflows/android-release-security-focused.yml;.github/workflows/android.yml;.github/workflows/native-platforms.yml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/GoogleAuthorizationDemoUiTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/AppProviderComposition.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/DemoChatComposition.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaUiController.kt;android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailViewModel.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoPanel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorizationDemoViewModel.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleCalendarAuthorizationAdapter.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleGmailAuthorizationAdapter.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/AppProviderCompositionTest.kt;android/app/src/test/java/app/serea/android/GoogleOriginEgressAdversarialTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiControllerTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiSecurityTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/gmail/transport/GmailHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailViewModelTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;docs/plans/2026-10-26-personal-beta-functional-capability-matrix.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tests/android_lockfile_sbom_tests.py;tools/generate_android_lockfile_sbom.py;tools/run_android_functional_focused.sh;tools/run_android_instrumentation_campaign.sh;tools/test_personal_beta_identity.sh;tools/wait_for_android_default_ime.sh",
+      "head_sha": "3924b36080ffa43331f065a15db80c604c243355",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 122,
+      "title": "P0 functional integration: Fake-first providers, Chat, and Tasks",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "calendar",
+        "googleauth",
+        "egress",
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-functional-focused.yml;.github/workflows/android-release-security-focused.yml;.github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/AppProviderComposition.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/DemoChatComposition.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaUiController.kt;android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailViewModel.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleCalendarAuthorizationAdapter.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleGmailAuthorizationAdapter.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/AppProviderCompositionTest.kt;android/app/src/test/java/app/serea/android/GoogleOriginEgressAdversarialTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiControllerTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiSecurityTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/gmail/transport/GmailHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailViewModelTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/plans/2026-10-26-personal-beta-functional-capability-matrix.md;docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_lockfile_sbom_tests.py;tools/generate_android_lockfile_sbom.py;tools/run_android_functional_focused.sh",
+      "head_sha": "b64a517ec33dd672c17cd604a912045116ad963a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 121,
+      "title": "[Draft] Test local demo and adversarial egress boundaries",
+      "hits": [
+        "egress"
+      ],
+      "paths": "android/app/src/test/java/app/serea/android/GoogleOriginEgressAdversarialTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt",
+      "head_sha": "8853c2afe25497e8abdd55282e85331efee3f009",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 120,
+      "title": "Security: add Android lockfile SBOM and release checks",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-release-security-focused.yml;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_lockfile_sbom_tests.py;tools/generate_android_lockfile_sbom.py",
+      "head_sha": "772b1cd37f43b3f92276271abe8c67aabb74f7d0",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 119,
+      "title": "[Draft] Add adversarial egress and local Fake routing tests",
+      "hits": [
+        "egress"
+      ],
+      "paths": "android/app/src/test/java/app/serea/android/GoogleOriginEgressAdversarialTest.kt;android/app/src/test/java/app/serea/android/LocalFakeRoutingAdversarialTest.kt",
+      "head_sha": "5e7de02e4993450c3f4103242b91aa6a6f638c6a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 118,
+      "title": "Security: preserve Android release posture and add lockfile SBOM inventory",
+      "hits": [
+        "security",
+        "release"
+      ],
+      "paths": ".github/workflows/android-release-security-focused.yml;docs/security/android-personal-beta-release-posture-2026-10-26.md;tests/android_lockfile_sbom_tests.py;tools/generate_android_lockfile_sbom.py",
+      "head_sha": "ccefdb49d400fbfd43e0c5e34966bfec9a22b994",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 117,
+      "title": "R4-R7: close Candidate D, Real IME, Calendar, and Identity Required gates",
+      "hits": [
+        "chat",
+        "model",
+        "calendar"
+      ],
+      "paths": ".github/workflows/android.yml;.github/workflows/serea-r3-ime-diagnostic.yml;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/androidTest/AndroidManifest.xml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt;android/app/src/androidTest/java/app/serea/android/diagnostics/PhaseR25StartupSmokeTest.kt;android/app/src/androidTest/res/xml/serea_test_ime.xml;android/app/src/debug/AndroidManifest.xml;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/r25-ime-test/build.gradle.kts;android/r25-ime-test/src/main/AndroidManifest.xml;android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java;android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java;android/r25-ime-test/src/main/res/xml/serea_test_ime.xml;android/settings.gradle.kts;docs/diagnostics/phase-r3-real-ime.md;docs/verification/personal-beta-autonomous-closure.md;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/instrumentation_to_junit.py;tools/run_android_instrumentation_campaign.sh;tools/run_serea_phase_r2.sh;tools/run_serea_phase_r25.sh;tools/run_serea_phase_r25_anr_matrix.sh;tools/run_serea_phase_r3_ci_case.sh;tools/run_serea_phase_r3_real_ime.sh;tools/test_personal_beta_identity.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "151ea9d66d32de01b195f4262beb67516823c281",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 116,
+      "title": "R4/R5: use Android-bound IME and stabilize Calendar gestures",
+      "hits": [
+        "calendar"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/assets/serea-non-required-test-identities.txt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;docs/verification/personal-beta-autonomous-closure.md;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "d449f22c5d05597d7d02529e19ea9a92f608567d",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 111,
+      "title": "[Candidate D] Recover composer cursor after activity recreation",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;tests/android_emulator_workflow_tests.py;tools/run_android_instrumentation_campaign.sh;tools/test_personal_beta_identity.sh",
+      "head_sha": "dc98547b256c3a2c1551814cdcf4a07ebc2373c8",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 109,
+      "title": "Diagnose Personal Beta identity gate failure",
+      "hits": [
+        "chat",
+        "calendar"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;crates/serea-storage/src/store.rs;crates/serea-task-engine/tests/crash.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/test_personal_beta_identity.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "f3274f13f88c1449b9b900a94c8d96325ba8c13a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 108,
+      "title": "[Diagnostic] Isolate Serea Android composer regressions (C)",
+      "hits": [
+        "chat",
+        "calendar",
+        "egress"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;crates/serea-storage/src/store.rs;crates/serea-task-engine/tests/crash.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "a703d7365c69498bb80c8e6d0d6052ccf63ec041",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 107,
+      "title": "[Diagnostic] Isolate Serea Android composer regressions (A)",
+      "hits": [
+        "chat",
+        "calendar",
+        "egress"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;crates/serea-storage/src/store.rs;crates/serea-task-engine/tests/crash.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "bfa873b650c15e011e11608490a4178188962981",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 106,
+      "title": "[Diagnostic] Isolate Serea Android composer regressions (B)",
+      "hits": [
+        "chat",
+        "calendar",
+        "egress"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;crates/serea-storage/src/store.rs;crates/serea-task-engine/tests/crash.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "331a20f288990a66700022e4f6a88b8260bc1d5c",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 105,
+      "title": "Fix Windows Host Ctrl-C delivery and record lifecycle evidence",
+      "hits": [
+        "model"
+      ],
+      "paths": ".github/workflows/native-root-cause-campaign.yml;Cargo.lock;crates/serea-host/Cargo.toml;crates/serea-host/src/main.rs;crates/serea-host/src/synthetic_model.rs;crates/serea-host/tests/host_lifecycle.rs;tools/run_native_root_cause_diagnostics.sh",
+      "head_sha": "75caed79afee11781f4179295aa77996fc88f955",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 103,
+      "title": "Security: isolate Beta signing; acceptance remains blocked",
+      "hits": [
+        "security",
+        "firebase",
+        "release"
+      ],
+      "paths": ".github/workflows/android-personal-beta-contract-tests.yml;.github/workflows/android-personal-beta.yml;.github/workflows/android.yml;android/app/build.gradle.kts;docs/security/ANDROID-BETA-SIGNING-ISOLATION.md;docs/security/SECURITY-RELEASE-READINESS-2026-10-23.md;tests/android_beta_release_tests.py;tests/android_firebase_distribution_tests.py;tools/android_beta_release.py;tools/android_firebase_distribution.py;tools/install_pinned_android_release_tools.sh;tools/install_pinned_gh_cli.sh;tools/run_pinned_osv_scanner.sh;tools/test_android_beta_release_pipeline.sh;tools/test_android_update_compatibility.sh;tools/test_android_update_compatibility_guard.sh;tools/test_personal_beta_identity.sh",
+      "head_sha": "be7ea2217a437c3f30fe30111bc7cd2850fc97c0",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 102,
+      "title": "Add account-bound Gmail and Calendar provider sessions",
+      "hits": [
+        "calendar",
+        "googleauth"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleCalendarAuthorizationAdapter.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleGmailAuthorizationAdapter.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailProviderSessionsTest.kt;android/app/src/test/java/app/serea/android/gmail/transport/GmailHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/plans/2026-10-23-android-provider-acceptance.md",
+      "head_sha": "dd1e17b8226c40f0074b173009217291b74ba5a4",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 101,
+      "title": "[DRAFT] Serea Beta security and release readiness",
+      "hits": [
+        "security",
+        "firebase",
+        "release"
+      ],
+      "paths": ".github/workflows/android-personal-beta.yml;docs/security/SECURITY-RELEASE-READINESS-2026-10-23.md;tests/android_firebase_distribution_tests.py;tools/android_firebase_distribution.py;tools/test_android_update_compatibility.sh;tools/test_android_update_compatibility_guard.sh",
+      "head_sha": "0c342409155aaa04c732a637827d3391376f6c67",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 100,
+      "title": "Repair PR #99 Android and native CI gates",
+      "hits": [
+        "chat",
+        "calendar"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;crates/serea-storage/src/store.rs;crates/serea-task-engine/tests/crash.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py",
+      "head_sha": "ad868af753672c546c52411ce151904360633acc",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 99,
+      "title": "Recover PR #98 Android and Windows lifecycle gates",
+      "hits": [
+        "calendar"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;crates/serea-host/src/main.rs;crates/serea-host/src/test_readiness.rs;crates/serea-host/tests/host_lifecycle.rs;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tools/android-instrumentation-additional-tests.txt;tools/android-instrumentation-required-tests.txt;tools/run_android_instrumentation_campaign.sh;tools/summarize_android_test_lifecycle.py;tools/verify_android_instrumentation.py",
+      "head_sha": "8140bd759e7a01041364ebc443ba452f546d325a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 94,
+      "title": "feat(gmail): add read-only HTTP adapter foundation",
+      "hits": [
+        "googleauth"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/gmail/transport/GmailAccessTokenPort.kt;android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleGmailAuthorizationAdapter.kt;android/app/src/test/java/app/serea/android/gmail/transport/GmailHttpReadPortTest.kt;docs/plans/2026-10-22-personal-beta-lane-2-gmail-readonly.md",
+      "head_sha": "109aacb16583896727b4a815697e880387d68023",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 93,
+      "title": "feat(calendar): add gated read-only provider sessions",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt;android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt;docs/plans/2026-10-22-personal-beta-lane-1-calendar.md",
+      "head_sha": "1cbfad4ffb16296155865a2dd333ffdec893f7eb",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 91,
+      "title": "REL-C: distribute Owner-signed Android Beta through Firebase",
+      "hits": [
+        "firebase"
+      ],
+      "paths": ".github/workflows/android-firebase-distribution-tests.yml;.github/workflows/android-firebase-distribution.yml;.github/workflows/android-internal-beta.yml;docs/plans/2026-ANDROID-M0-04-STABLE-SIGNING.md;docs/plans/2026-ANDROID-REL-C-FIREBASE-DISTRIBUTION.md;tests/android_firebase_distribution_tests.py;tools/android_firebase_distribution.py;tools/firebase-distribution/package-lock.json;tools/firebase-distribution/package.json",
+      "head_sha": "e1b0c96129f917579234c81b516c70de830f7fb4",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 90,
+      "title": "SEC-A2 Phase II: publisher authenticity evidence",
+      "hits": [
+        "security"
+      ],
+      "paths": "docs/security/evidence/gradle-publisher-authenticity-matrix.csv;docs/security/gradle-publisher-authenticity.md",
+      "head_sha": "17ff2c7bc7fe351b33c775f83ae45fa821f878c1",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 89,
+      "title": "SEC-A2 Phase II: complete dependency graph evidence",
+      "hits": [
+        "security"
+      ],
+      "paths": "docs/security/SEC-A2-lane-a-complete-dependency-graph.md;docs/security/evidence/gradle-8.14.6-lane-a-expanded-candidate.xml;docs/security/evidence/gradle-8.14.6-lane-a-help-candidate.xml;docs/security/evidence/gradle-lane-a-task-coverage.csv;docs/security/evidence/gradle-lane-a-utp-observed-hashes.csv",
+      "head_sha": "757d2d61a23c1569d413865cafabe5687a5eabe7",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 88,
+      "title": "SEC-A2 Phase II: verification enforcement readiness",
+      "hits": [
+        "security"
+      ],
+      "paths": "docs/security/gradle-verification-enforcement-readiness.md;tools/test_gradle_dependency_verification.sh",
+      "head_sha": "0a89171823f8c91b5732b936de245e29f7d0522f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 86,
+      "title": "docs(security): audit Gradle verification readiness (SEC-A2)",
+      "hits": [
+        "security"
+      ],
+      "paths": "docs/security/evidence/gradle-8.14.6-generated-candidate.xml;docs/security/evidence/gradle-dependency-inventory.csv;docs/security/gradle-dependency-verification.md;tools/audit_gradle_dependency_candidates.py;tools/test_gradle_dependency_verification.sh",
+      "head_sha": "e4dc8baea5f94a4314511dfb2afb70a7baa84285",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 85,
+      "title": "fix(android): repair Calendar agenda touch scrolling",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiControllerTest.kt",
+      "head_sha": "6a86cc83b4b87fc4e346010ff4748855316ecc45",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 84,
+      "title": "fix(android): restore persisted settings budget on reentry",
+      "hits": [
+        "chat"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/main/java/app/serea/android/MainActivity.kt",
+      "head_sha": "2c38221b06de44573d6b79afb8ff70ebea9d8f93",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 82,
+      "title": "fix(android): recover required instrumentation UI flows",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalDemoScreenTest.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreenTest.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/calendar/CalendarAgendaTest.kt;tests/android_emulator_workflow_tests.py;tools/prepare_isolated_instrumentation_target.sh;tools/run_android_instrumentation_campaign.sh",
+      "head_sha": "316f19ccc66af4a27d7514d6510f108de6452172",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 81,
+      "title": "SEC-B: upgrade Android toolchain to AGP 8.12.3",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/build.gradle.kts",
+      "head_sha": "7487a88f808c85ac92d197a7e15a28829429f604",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 75,
+      "title": "Android Required Gate recovery: ProfileVerifier and emulator evidence",
+      "hits": [
+        "chat"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaInstrumentationLifecycleListener.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalDemoScreenTest.kt;android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/test/java/app/serea/android/ProfileVerifierCacheMarkerTest.kt;tests/android_emulator_workflow_tests.py;tools/run_android_instrumentation_campaign.sh;tools/summarize_android_test_lifecycle.py",
+      "head_sha": "4488dd7aeaf84e73b4c4b919bab4926bf04c0c70",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 73,
+      "title": "Android Q4: final isolated acceptance and UI gate recovery",
+      "hits": [
+        "chat"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/gradle.lockfile;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskRepository.kt;android/app/src/test/java/app/serea/android/tasks/TaskRepositoryTest.kt;tests/android_emulator_workflow_tests.py",
+      "head_sha": "490fc1fd60d6d2b55e85881a5d72fc637a502e2f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 72,
+      "title": "Android Beta: close PR #71 isolation and acceptance findings",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/README.md;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalDemoScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreen.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewSession.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt;docs/plans/2026-ANDROID-PHASE2-PIXEL7A-TEST-CHECKLIST.md;tests/android_emulator_workflow_tests.py;tools/assert_disposable_android_emulator.sh;tools/prepare_isolated_instrumentation_target.sh;tools/run_android_data_sentinel.sh;tools/run_android_instrumentation_campaign.sh;tools/run_android_process_death_harness.sh",
+      "head_sha": "ae01353e2eabdd1ccd6d4b3828cfe276fdac9bec",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 71,
+      "title": "Android Q4: integrate navigation, Gmail, Calendar and TaskProposal UI",
+      "hits": [
+        "chat",
+        "model",
+        "calendar",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/MockUiStateIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt;android/app/src/androidTest/java/app/serea/android/SereaThemeTest.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalDemoScreenTest.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/main/java/app/serea/android/DestinationContract.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SereaAppShell.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalDemoScreen.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreen.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewSession.kt;android/app/src/main/java/app/serea/android/calendar/FakeCalendarProvider.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaUiController.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailViewModel.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskViewModel.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/SereaNavigationStateTest.kt;android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaFormattingTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiControllerTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiFake.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiSecurityTest.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailUiTestFake.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailViewModelTest.kt;docs/plans/2026-ANDROID-Q4-DAY-UI-INTEGRATION-REPORT.md;docs/plans/2026-ANDROID-Q4-NIGHT-CALENDAR-UI-REPORT.md;docs/plans/2026-ANDROID-Q4-NIGHT-GMAIL-UI-REPORT.md;docs/plans/2026-ANDROID-Q4-NIGHT-TASKPROPOSAL-REPORT.md;tests/android_emulator_workflow_tests.py;tests/android_instrumentation_results_tests.py;tests/android_unit_junit_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_instrumentation.py;tools/verify_android_unit_junit.py",
+      "head_sha": "fb93268ff8ad628991b67df741787c0bee24165a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 70,
+      "title": "Recover Android required gate and close night audit regressions",
+      "hits": [
+        "chat",
+        "model",
+        "calendar",
+        "egress",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskViewModel.kt;android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarSecurityTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailDomainParserTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskViewModelTest.kt;docs/plans/2026-ANDROID-Q4-NIGHT-GATE-RECOVERY.md;tests/android_emulator_workflow_tests.py;tests/android_unit_junit_results_tests.py;tools/run_android_instrumentation_campaign.sh;tools/verify_android_unit_junit.py",
+      "head_sha": "fd4321df03a3834044e3432bc288e2512b543fd2",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 69,
+      "title": "[Serea] Android mock Gmail inbox UI",
+      "hits": [
+        "model"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/gmail/ui/GmailScreen.kt;android/app/src/main/java/app/serea/android/gmail/ui/GmailViewModel.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailUiTestFake.kt;android/app/src/test/java/app/serea/android/gmail/ui/GmailViewModelTest.kt;docs/plans/2026-ANDROID-Q4-NIGHT-GMAIL-UI-REPORT.md",
+      "head_sha": "4b20786a9ae065ee94b1b77d64160f48656e0835",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 67,
+      "title": "Android: add mock Calendar agenda UI",
+      "hits": [
+        "calendar",
+        "security"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaScreen.kt;android/app/src/main/java/app/serea/android/calendar/ui/CalendarAgendaUiController.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaFormattingTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiControllerTest.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiFake.kt;android/app/src/test/java/app/serea/android/calendar/ui/CalendarAgendaUiSecurityTest.kt;docs/plans/2026-ANDROID-Q4-NIGHT-CALENDAR-UI-REPORT.md",
+      "head_sha": "8d61120e61ab3a1e4387527fd9143ecc7212c675",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 66,
+      "title": "Android Q4: integrate Gmail, Calendar, OAuth, Chat UX, Tasks and CI",
+      "hits": [
+        "chat",
+        "model",
+        "calendar",
+        "oauth",
+        "googleauth"
+      ],
+      "paths": ".github/workflows/android-calendar-readonly.yml;.github/workflows/android.yml;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/schemas/app.serea.android.tasks.TasksDatabase/1.json;android/app/src/androidTest/java/app/serea/android/ChatHistoryUxTest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskDateTimePickerTest.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewScreen.kt;android/app/src/main/java/app/serea/android/assistant/taskproposal/TaskProposalReviewSession.kt;android/app/src/main/java/app/serea/android/calendar/CalendarModels.kt;android/app/src/main/java/app/serea/android/calendar/GoogleCalendarEventParser.kt;android/app/src/main/java/app/serea/android/calendar/transport/CalendarAccessTokenPort.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/main/java/app/serea/android/gmail/FakeGmailProvider.kt;android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt;android/app/src/main/java/app/serea/android/gmail/GmailModels.kt;android/app/src/main/java/app/serea/android/gmail/GmailReadPort.kt;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleCalendarAuthorizationAdapter.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarDomainParserTest.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;android/app/src/test/java/app/serea/android/gmail/GmailDomainParserTest.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/plans/2026-ANDROID-CALENDAR-HTTP-REPORT.md;docs/plans/2026-ANDROID-CHAT-HISTORY-UX-REPORT.md;docs/plans/2026-ANDROID-CI-COVERAGE-REPORT.md;docs/plans/2026-ANDROID-GMAIL-DOMAIN-REPORT.md;docs/plans/2026-ANDROID-GOOGLE-AUTH-REPORT.md;docs/plans/2026-ANDROID-Q4-ABCDEFG-INTEGRATION-REPORT.md;docs/plans/2026-ANDROID-TASK-PROPOSAL-REVIEW-REPORT.md;docs/plans/2026-ANDROID-TASK-UX-REPORT.md;tests/android_instrumentation_results_tests.py;tests/android_unit_junit_results_tests.py;tools/verify_android_instrumentation.py;tools/verify_android_unit_junit.py",
+      "head_sha": "072aa2b823523f7a92196299dd86cfb3509a78e3",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 65,
+      "title": "Android: Google authorization foundation",
+      "hits": [
+        "googleauth"
+      ],
+      "paths": "android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/main/java/app/serea/android/googleauth/FakeGoogleAuthorizationGateway.kt;android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt;android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt;docs/plans/2026-ANDROID-GOOGLE-AUTH-REPORT.md",
+      "head_sha": "13068668c8602e5f7fbe1c1c50281a210faa3b98",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 64,
+      "title": "Android Gmail read-only domain, fake provider, and MIME parser",
+      "hits": [
+        "model"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/gmail/FakeGmailProvider.kt;android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt;android/app/src/main/java/app/serea/android/gmail/GmailModels.kt;android/app/src/main/java/app/serea/android/gmail/GmailReadPort.kt;android/app/src/test/java/app/serea/android/gmail/GmailDomainParserTest.kt;docs/plans/2026-ANDROID-GMAIL-DOMAIN-REPORT.md",
+      "head_sha": "4249d3e0bb861efee3a4c6470c13f902912be875",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 63,
+      "title": "Android D: improve chat history UX and prevent empty conversations",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": "android/app/src/androidTest/java/app/serea/android/ChatHistoryUxTest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;docs/plans/2026-ANDROID-CHAT-HISTORY-UX-REPORT.md",
+      "head_sha": "997d174695726a9f627e8fcf0719c43b01b88703",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 62,
+      "title": "Android CI: run all unit tests and include PR #58 Calendar base",
+      "hits": [
+        "calendar"
+      ],
+      "paths": ".github/workflows/android-calendar-readonly.yml;.github/workflows/android.yml;docs/plans/2026-ANDROID-CI-COVERAGE-REPORT.md",
+      "head_sha": "87999492e6318ccd3580f7cbd581e987a826a316",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 59,
+      "title": "Add read-only Google Calendar HTTP adapter",
+      "hits": [
+        "calendar"
+      ],
+      "paths": "android/app/src/main/java/app/serea/android/calendar/transport/CalendarAccessTokenPort.kt;android/app/src/main/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPort.kt;android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt;docs/plans/2026-ANDROID-CALENDAR-HTTP-REPORT.md",
+      "head_sha": "9f9d41954c4112b7abdb38684ce543027b0450ac",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 58,
+      "title": "Android M0-08: integrate provider, usage ledger, local tasks and calendar",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "calendar",
+        "security"
+      ],
+      "paths": ".github/workflows/android-calendar-readonly.yml;.github/workflows/android.yml;android/app/schemas/app.serea.android.SereaHistoryDatabase/4.json;android/app/schemas/app.serea.android.tasks/1.json;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TasksDatabaseTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/AndroidManifest.xml;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/UsageAccounting.kt;android/app/src/main/java/app/serea/android/calendar/CalendarModels.kt;android/app/src/main/java/app/serea/android/calendar/CalendarPermissionPolicy.kt;android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt;android/app/src/main/java/app/serea/android/calendar/FakeCalendarProvider.kt;android/app/src/main/java/app/serea/android/calendar/GoogleCalendarEventParser.kt;android/app/src/main/java/app/serea/android/tasks/TaskCrypto.kt;android/app/src/main/java/app/serea/android/tasks/TaskDao.kt;android/app/src/main/java/app/serea/android/tasks/TaskModels.kt;android/app/src/main/java/app/serea/android/tasks/TaskProposal.kt;android/app/src/main/java/app/serea/android/tasks/TaskRepository.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskViewModel.kt;android/app/src/main/java/app/serea/android/tasks/TasksActivity.kt;android/app/src/main/java/app/serea/android/tasks/TasksDatabase.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/app/src/test/java/app/serea/android/UsageLedgerCostTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarAgendaTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarDomainParserTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarSecurityTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskDomainTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskRepositoryTest.kt;docs/plans/2026-ANDROID-M0-05A-PROVIDER-ROUTING-REPORT.md;docs/plans/2026-ANDROID-M0-05B-USAGE-LEDGER-REPORT.md;docs/plans/2026-ANDROID-M0-06A-LOCAL-TASKS-REPORT.md;docs/plans/2026-ANDROID-M0-07A-CALENDAR-READONLY-REPORT.md;docs/plans/2026-ANDROID-M0-08-ABCD-INTEGRATION-REPORT.md;tools/run_android_process_death_harness.sh",
+      "head_sha": "239aaa181cdcfea756cf6c9ebb5eca9194caf7cf",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 57,
+      "title": "Android M0-07A: Google Calendar read-only mock foundation",
+      "hits": [
+        "model",
+        "calendar",
+        "security"
+      ],
+      "paths": ".github/workflows/android-calendar-readonly.yml;android/app/src/main/java/app/serea/android/calendar/CalendarModels.kt;android/app/src/main/java/app/serea/android/calendar/CalendarPermissionPolicy.kt;android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt;android/app/src/main/java/app/serea/android/calendar/FakeCalendarProvider.kt;android/app/src/main/java/app/serea/android/calendar/GoogleCalendarEventParser.kt;android/app/src/test/java/app/serea/android/calendar/CalendarAgendaTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarDomainParserTest.kt;android/app/src/test/java/app/serea/android/calendar/CalendarSecurityTest.kt;docs/plans/2026-ANDROID-M0-07A-CALENDAR-READONLY-REPORT.md",
+      "head_sha": "ecbdd73ffed3a9cbb6de8fbf54f511793cf58192",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 56,
+      "title": "Android M0-06A: standalone encrypted local task management",
+      "hits": [
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/schemas/app.serea.android.tasks/1.json;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TasksDatabaseTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/AndroidManifest.xml;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/tasks/TaskCrypto.kt;android/app/src/main/java/app/serea/android/tasks/TaskDao.kt;android/app/src/main/java/app/serea/android/tasks/TaskModels.kt;android/app/src/main/java/app/serea/android/tasks/TaskProposal.kt;android/app/src/main/java/app/serea/android/tasks/TaskRepository.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskViewModel.kt;android/app/src/main/java/app/serea/android/tasks/TasksActivity.kt;android/app/src/main/java/app/serea/android/tasks/TasksDatabase.kt;android/app/src/test/java/app/serea/android/tasks/TaskDomainTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskRepositoryTest.kt;docs/plans/2026-ANDROID-M0-06A-LOCAL-TASKS-REPORT.md;tools/run_android_process_death_harness.sh",
+      "head_sha": "274fb97c9b7609157cffba13e6ca92f7365de34d",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 55,
+      "title": "Android M0-05A: provider integration identity recovery",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;docs/plans/2026-ANDROID-M0-05A-PROVIDER-ROUTING-REPORT.md",
+      "head_sha": "347dcba414babd1cc75b2e86c539278bbf95ddec",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 54,
+      "title": "Android M0-06A: standalone encrypted local task management",
+      "hits": [
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/tasks/TaskScreenTest.kt;android/app/src/androidTest/java/app/serea/android/tasks/TasksDatabaseTest.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/AndroidManifest.xml;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/tasks/TaskCrypto.kt;android/app/src/main/java/app/serea/android/tasks/TaskDao.kt;android/app/src/main/java/app/serea/android/tasks/TaskModels.kt;android/app/src/main/java/app/serea/android/tasks/TaskProposal.kt;android/app/src/main/java/app/serea/android/tasks/TaskRepository.kt;android/app/src/main/java/app/serea/android/tasks/TaskScreen.kt;android/app/src/main/java/app/serea/android/tasks/TaskViewModel.kt;android/app/src/main/java/app/serea/android/tasks/TasksActivity.kt;android/app/src/main/java/app/serea/android/tasks/TasksDatabase.kt;android/app/src/test/java/app/serea/android/tasks/TaskDomainTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskProposalTest.kt;android/app/src/test/java/app/serea/android/tasks/TaskRepositoryTest.kt;docs/plans/2026-ANDROID-M0-06A-LOCAL-TASKS-REPORT.md;tools/run_android_process_death_harness.sh",
+      "head_sha": "3a54ace78f4d4a2992e5b011d99ea9348d3ae30f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 53,
+      "title": "Android M0-05B: durable per-model usage and cost ledger",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/schemas/app.serea.android.SereaHistoryDatabase/4.json;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/UsageLedgerDatabaseTest.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/UsageAccounting.kt;android/app/src/test/java/app/serea/android/UsageLedgerCostTest.kt;docs/plans/2026-ANDROID-M0-05B-USAGE-LEDGER-REPORT.md",
+      "head_sha": "34f90471e5adf37de064137587d533304fe60325",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 52,
+      "title": "Android M0-05A: model routing and provider integration",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;docs/plans/2026-ANDROID-M0-05A-PROVIDER-ROUTING-REPORT.md",
+      "head_sha": "0f917945b2c4964ca0bbffe75be2ff6cf692dd27",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 49,
+      "title": "Android: fix Pixel 7a action overflow and safe history deletion",
+      "hits": [
+        "chat",
+        "model"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt",
+      "head_sha": "083edcffcbaebbbada3828a0304a7a431b648f0d",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 47,
+      "title": "Android: adaptive model routing and Beta device readiness",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/MockHttpChatPort.kt;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/test/java/app/serea/android/AdaptiveModelRouterTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;docs/plans/2026-ANDROID-AND-M0-02-ADAPTIVE-MODEL-ROUTING.md;docs/plans/2026-ANDROID-PHASE2-PIXEL7A-TEST-CHECKLIST.md",
+      "head_sha": "e3792ebec4c94f834b4bed722802f025aa809736",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 45,
+      "title": "AND-M0-01 Android direct provider integration candidate",
+      "hits": [
+        "chat",
+        "model",
+        "router",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/README.md;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/src/androidTest/java/app/serea/android/ChatHttpE2ETest.kt;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/androidTest/java/app/serea/android/MockHttpChatPort.kt;android/app/src/debug/AndroidManifest.xml;android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt;android/app/src/main/java/app/serea/android/ChatContext.kt;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/java/app/serea/android/UsageAccounting.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;crates/serea-model-router/src/lib.rs;docs/decisions/ADR-0044-android-independent-chat-mode.md;docs/decisions/ADR-0045-android-phase2-encrypted-history-and-cloud-probe.md;docs/plans/2026-ANDROID-AND-M0-01-OWNER-PACKET.md;tools/run_android_process_death_harness.sh",
+      "head_sha": "3e5697a73f032c750f5c66e9548706399d201595",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 44,
+      "title": "Android: cloud-ready multi-turn chat and lifecycle reliability",
+      "hits": [
+        "chat",
+        "model",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/README.md;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/main/java/app/serea/android/ChatContext.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;docs/plans/2026-ANDROID-AND-DEV-03-OWNER-PACKET.md;tests/android_instrumentation_results_tests.py;tools/verify_android_instrumentation.py",
+      "head_sha": "4f2d1cc87db7457e7bc9c346b1f2667515e4e969",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 42,
+      "title": "Android Phase 2: secure history and bounded cloud probe",
+      "hits": [
+        "chat",
+        "model",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/README.md;android/app/build.gradle.kts;android/app/gradle.lockfile;android/app/schemas/app.serea.android.SereaHistoryDatabase/1.json;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/androidTest/java/app/serea/android/EncryptedHistoryTest.kt;android/app/src/main/AndroidManifest.xml;android/app/src/main/java/app/serea/android/CloudProvider.kt;android/app/src/main/java/app/serea/android/EncryptedStorage.kt;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/OllamaCloudAdapterTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/build.gradle.kts;docs/decisions/ADR-0045-android-phase2-encrypted-history-and-cloud-probe.md;docs/decisions/README.md;docs/plans/2026-ANDROID-PHASE2-IMPLEMENTATION-REPORT.md;docs/plans/2026-ANDROID-PHASE2-OWNER-DECISION-PACKET.md;docs/plans/2026-ANDROID-PHASE2-PIXEL7A-TEST-CHECKLIST.md;tests/android_instrumentation_results_tests.py;tools/verify_android_instrumentation.py",
+      "head_sha": "fa1c44a207e348f1b48f1f1b9194a3c501eef593",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 41,
+      "title": "Start standalone Android demo chat prototype",
+      "hits": [
+        "chat",
+        "model",
+        "security"
+      ],
+      "paths": ".github/workflows/android.yml;android/README.md;android/app/build.gradle.kts;android/app/proguard-rules.pro;android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt;android/app/src/main/AndroidManifest.xml;android/app/src/main/java/app/serea/android/MainActivity.kt;android/app/src/main/java/app/serea/android/SecurityPorts.kt;android/app/src/main/res/drawable/ic_serea.xml;android/app/src/main/res/xml/backup_rules.xml;android/app/src/main/res/xml/data_extraction_rules.xml;android/app/src/test/java/app/serea/android/ChatViewModelTest.kt;android/app/src/test/java/app/serea/android/SecurityPortsTest.kt;android/build.gradle.kts;android/gradle.properties;android/gradle/wrapper/gradle-wrapper.jar;android/gradle/wrapper/gradle-wrapper.properties;android/gradlew;android/gradlew.bat;android/settings.gradle.kts;docs/decisions/ADR-0044-android-independent-chat-mode.md;docs/decisions/README.md;docs/plans/2026-ANDROID-PHASE1-IMPLEMENTATION-REPORT.md;docs/plans/2026-ANDROID-PHASE2-OWNER-DECISIONS.md",
+      "head_sha": "58c9d44bcc788df2540ea3bdf8e07609dfa5aaa3",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 39,
+      "title": "[P8B] Add test-only single-transaction Candidate C observation",
+      "hits": [
+        "arm64"
+      ],
+      "paths": "Cargo.lock;crates/serea-host/Cargo.toml;crates/serea-host/src/candidate_c_test_only.rs;crates/serea-host/src/main.rs;crates/serea-storage/Cargo.toml;crates/serea-storage/src/blob_tests.rs;crates/serea-storage/src/candidate_c_test_only.rs;crates/serea-storage/src/lib.rs;crates/serea-storage/src/migration_0005_tests.rs;crates/serea-storage/src/tx.rs;crates/serea-task-engine/Cargo.toml;crates/serea-task-engine/src/engine.rs;crates/serea-task-engine/tests/recovery.rs;crates/serea-task-engine/tests/workflow.rs;docs/plans/P8B-CANDIDATE-C-BOUNDED-IMPLEMENTATION-PLAN.md;docs/plans/P8B-CANDIDATE-C-TEST-ONLY-PROOF-REPORT.md;docs/plans/P8B-POST-PR36-CAMPAIGN-REPORT.md;docs/plans/P8B-WINDOWS-ARM64-DIAGNOSIS.md;docs/plans/P8B-overnight-report-2026-10-18.md;tools/p8b_authority_cargo_probe/run.py",
+      "head_sha": "dbdf0c7ee7016e4a729117337a9839e0bb99f80f",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 38,
+      "title": "[P8B] Test-only Candidate C Host boundary probe",
+      "hits": [
+        "arm64"
+      ],
+      "paths": "Cargo.lock;crates/serea-host/Cargo.toml;crates/serea-host/src/candidate_c_test_only.rs;crates/serea-host/src/main.rs;docs/plans/P8B-CANDIDATE-C-BOUNDED-IMPLEMENTATION-PLAN.md;docs/plans/P8B-CANDIDATE-C-TEST-ONLY-PROOF-REPORT.md;docs/plans/P8B-POST-PR36-CAMPAIGN-REPORT.md;docs/plans/P8B-WINDOWS-ARM64-DIAGNOSIS.md;docs/plans/P8B-overnight-report-2026-10-18.md",
+      "head_sha": "2bc39bdc1d77b6fba48bfb6cd292807dfec365b5",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 37,
+      "title": "[P8B] Record post-PR36 stabilization and Candidate C contract",
+      "hits": [
+        "model",
+        "arm64"
+      ],
+      "paths": "docs/plans/P8B-CANDIDATE-C-CONTRACT.md;docs/plans/P8B-INTEGRATION-PLAN.md;docs/plans/P8B-OWNER-DECISION-PACKET.md;docs/plans/P8B-POST-PR36-CAMPAIGN-REPORT.md;docs/plans/P8B-PR-STACK-AUDIT.md;docs/plans/P8B-STACK-MANIFEST.json;docs/plans/P8B-WINDOWS-ARM64-DIAGNOSIS.md;tools/windows_arm64_model_smoke_diagnostic.ps1",
+      "head_sha": "5220f2e1493a136ef248e82a730e506254065936",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    },
+    {
+      "number": 20,
+      "title": "[P8A] Record approved dispatch V1 directions",
+      "hits": [
+        "model"
+      ],
+      "paths": "docs/architecture/01-system-overview.md;docs/architecture/02-trust-boundaries.md;docs/architecture/03-crate-map.md;docs/architecture/04-execution-pipeline.md;docs/architecture/README.md;docs/decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md;docs/decisions/ADR-0044-p8-durable-dispatch-v1-directions.md;docs/decisions/README.md;docs/plans/P7-P8-cross-phase-contract-and-test-plan.md;docs/plans/P8-owner-authorized-directions-2026-10-16.md;docs/plans/P8-synthetic-exec-plan-2026-10-16.md;docs/plans/P8A-owner-decision-package.md;docs/protocols/00-protocol-index.md;docs/protocols/01-capability-protocol.md;docs/protocols/02-task-protocol.md;docs/protocols/03-model-protocol.md;docs/protocols/05-approval-protocol.md;docs/protocols/06-event-protocol.md;docs/protocols/07-device-protocol.md;docs/protocols/08-goallatch-adapter-protocol.md;docs/protocols/10-bounds-protocol.md;docs/protocols/11-scheduler-protocol.md",
+      "head_sha": "5f78762e1b358ac928a42aab43d8bb215089194a",
+      "classification": "REVIEW",
+      "reason": "candidate extraction only; detailed triage not performed"
+    }
+  ]
+}

@@ -7,3 +7,9 @@
 5. **Overlay:** confirm whether home-screen overlay is a hard acceptance requirement; recommend defer pending user-visible permission flow and accessibility review.
 6. **Release:** authorize protected signing environment, owner key handling, certificate fingerprint, Firebase/OIDC and rollback only after RC review.
 7. **Device testing:** designate a clean test device/profile with no personal data; personal Pixel 7a remains untouched.
+
+## G9-R3 additions
+
+- Approve the G10 integration spike only as default-off, test-backend-only work; normal Chat remains Demo. No production inference enablement follows from this approval.
+- Decide after the spike whether to pursue on-device inference. Model license/provenance, supported ARM64 runtime, device RAM/thermal budget and test-device access remain gates.
+- Owner decision on actual model file/license and any cloud provider remains required before runtime activation or external egress.

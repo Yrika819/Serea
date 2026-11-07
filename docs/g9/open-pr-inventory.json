@@ -44,11 +44,11 @@
       "ci_target_sha": "158720bbfea6f0daa13440f0450a76bfcfab0ac0",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
-      "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: .github/workflows/android-functional-focused.yml; commits 158720bbfea6; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "classification": "PATCH_EQUIVALENT",
+      "confidence": "HIGH",
+      "evidence": "effective changes already in current main workflow; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P1",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=CI"
+      "recommended_action": "DISCARD_CANDIDATE; no reuse"
     },
     {
       "number": 204,
@@ -67,11 +67,11 @@
       "ci_target_sha": "8017e7e9e8987dc66361eb9297cf87535d8ef7b1",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
-      "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/src/androidTest/assets/serea-non-required-test-identities.txt, android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt, android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt, android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt, tests/android_emulator_workflow_tests.py, tests/android_instrumentation_results_tests.py, tools/run_android_instrumentation_campaign.sh; commits 6751a9eb83ac, aafe21fb6e55, 042114fcbd52, a7710d1c917b, b83dfeb6f94a, d318da4102ae, ec6c7e15c484, 8017e7e9e898; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "classification": "SUPERSEDED",
+      "confidence": "HIGH",
+      "evidence": "contains #202/#203 commits and reconciliation; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P1",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER; avoid aggregate stack"
     },
     {
       "number": 203,
@@ -90,11 +90,11 @@
       "ci_target_sha": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
-      "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/src/androidTest/assets/serea-non-required-test-identities.txt, android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt, android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt, tests/android_emulator_workflow_tests.py, tests/android_instrumentation_results_tests.py, tools/run_android_instrumentation_campaign.sh; commits a7710d1c917b, b83dfeb6f94a; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "classification": "NOVEL",
+      "confidence": "HIGH",
+      "evidence": "v4 migration diagnostic on #199 stack; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P1",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER unless migration in scope"
     },
     {
       "number": 202,
@@ -113,11 +113,11 @@
       "ci_target_sha": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
-      "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/src/androidTest/assets/serea-non-required-test-identities.txt, android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt, android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt, tests/android_emulator_workflow_tests.py, tests/android_instrumentation_results_tests.py, tools/run_android_instrumentation_campaign.sh; commits 6751a9eb83ac, aafe21fb6e55, 042114fcbd52; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "classification": "NOVEL",
+      "confidence": "HIGH",
+      "evidence": "Compose host/lifecycle test delta on #199 stack; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P1",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER diagnostics"
     },
     {
       "number": 201,
@@ -182,11 +182,11 @@
       "ci_target_sha": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
-      "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/src/androidTest/assets/serea-non-required-test-identities.txt, android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt, tests/android_emulator_workflow_tests.py, tests/android_instrumentation_results_tests.py, tools/run_android_instrumentation_campaign.sh; commits c1d163b4091f, 018d19f025e5; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "classification": "NOVEL",
+      "confidence": "HIGH",
+      "evidence": "ChatViewModel instrumentation/harness; test absent main; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P0",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER until composition connected"
     },
     {
       "number": 198,
@@ -251,11 +251,11 @@
       "ci_target_sha": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
+      "classification": "NOVEL",
       "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt; commits b30cd55ae0ae; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "evidence": "test-only stacked route delta; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P0",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER; adapt test only if route built"
     },
     {
       "number": 195,
@@ -320,11 +320,11 @@
       "ci_target_sha": "518b2328f8815fde042c26dc5593958052933a40",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
+      "classification": "PATCH_EQUIVALENT",
       "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/build.gradle.kts, android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt, android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt, android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt, android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt; commits 518b2328f881; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "evidence": "result tree equals #191; route novel vs main; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P0",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DISCARD_CANDIDATE duplicate"
     },
     {
       "number": 192,
@@ -366,11 +366,11 @@
       "ci_target_sha": "31bbab289c52802ca0f2be142c8dcebd97767737",
       "ci_conclusion": "See checks on head SHA; not fetched in this pass",
       "dependency_prs": "UNKNOWN",
-      "classification": "REVIEW",
+      "classification": "PATCH_EQUIVALENT",
       "confidence": "MEDIUM",
-      "evidence": "GitHub REST PR record; changed paths: android/app/build.gradle.kts, android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt, android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt, android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt, android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt; commits ca8a2bbdc068, 31bbab289c52; open PR is not proof of merge/equivalence; per-PR diff/base comparison remains",
+      "evidence": "result tree equals #193; route novel vs main; see critical-pr-evidence.json and pr-diffs/",
       "priority": "P0",
-      "recommended_action": "Detailed diff and merge-base/patch-id review before reuse; category=AI/Local Model"
+      "recommended_action": "DEFER; source candidate only for targeted rework"
     },
     {
       "number": 190,

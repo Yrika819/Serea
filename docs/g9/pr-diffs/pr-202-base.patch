@@ -1,0 +1,231 @@
+diff --git a/android/app/src/androidTest/assets/serea-non-required-test-identities.txt b/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
+index 92055f5..085e1b5 100644
+--- a/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
++++ b/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
+@@ -5,6 +5,7 @@ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConse
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#localSelectionWithoutConsentFailsBeforeUsageAndProviderDispatch
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#userCancellationDuringLocalInferenceKeepsUnknownUsageWithoutFallback
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#clearingViewModelStoreCancelsLocalWorkAndFinalizesUnknownUsage
++app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage
+ app.serea.android.diagnostics.IndependentImeCompositionTest#A_directInputConnectionBaseline
+ app.serea.android.diagnostics.IndependentImeCompositionTest#B_realImeCompositionWithoutSynchronizationBoundaries
+ app.serea.android.diagnostics.IndependentImeCompositionTest#C_realImeCompositionWithSynchronizationBoundaries
+diff --git a/android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt b/android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt
+index cbe8631..a3f6fcc 100644
+--- a/android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt
++++ b/android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt
+@@ -1,5 +1,19 @@
+ package app.serea.android
+ 
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.material3.Button
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.test.assertExists
++import androidx.compose.ui.test.junit4.createComposeRule
++import androidx.compose.ui.test.onNodeWithText
++import androidx.compose.ui.test.performClick
++import androidx.compose.ui.test.performTextInput
+ import androidx.lifecycle.ViewModelProvider
+ import androidx.lifecycle.ViewModelStore
+ import androidx.test.ext.junit.runners.AndroidJUnit4
+@@ -7,11 +21,13 @@ import androidx.test.platform.app.InstrumentationRegistry
+ import kotlinx.coroutines.awaitCancellation
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.runBlocking
+-import kotlinx.coroutines.withTimeout
+ import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.withTimeout
+ import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
+ import org.junit.Assert.assertNotNull
+ import org.junit.Assert.assertTrue
++import org.junit.Rule
+ import org.junit.Test
+ import org.junit.runner.RunWith
+ import java.io.File
+@@ -23,6 +39,44 @@ import java.util.concurrent.atomic.AtomicInteger
+ /** Test-only ViewModel composition. It never wires Local Model Chat into product Chat. */
+ @RunWith(AndroidJUnit4::class)
+ class LocalModelChatViewModelIntegrationAndroidTest {
++    @get:Rule val compose = createComposeRule()
++
++    @Test fun testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage() = runBlocking {
++        val fixture = fixture(blockUntilCancelled = false)
++        try {
++            assertFalse("product Chat route remains disabled", BuildConfig.LOCAL_MODEL_CHAT_ENABLED)
++            compose.setContent { TestOnlyLocalModelChatHost(fixture) }
++
++            compose.onNodeWithText("Select local model").performClick()
++            compose.onNodeWithText("Confirm local consent").performClick()
++            compose.onNodeWithText("Select unavailable model").performClick()
++            compose.onNodeWithText("Select local model").performClick()
++            compose.onNodeWithText("Local prompt").performTextInput("answer using the fake provider")
++            compose.onNodeWithText("Send local request").performClick()
++
++            compose.waitUntil(5_000) { fixture.viewModel.state.value.errorMessage != null }
++            assertTrue(fixture.viewModel.state.value.errorMessage.orEmpty().contains("consent", ignoreCase = true))
++            assertTrue("switching away and back invalidates the earlier consent", fixture.usageDao.reservations.isEmpty())
++            assertEquals(0, fixture.backend.loadCalls.get())
++            assertEquals(0, fixture.backend.generateCalls.get())
++            assertEquals(0, fixture.demo.calls.get())
++
++            compose.onNodeWithText("Confirm local consent").performClick()
++            compose.onNodeWithText("Local prompt").performTextInput("answer using the fake provider")
++            compose.onNodeWithText("Send local request").performClick()
++            compose.waitUntil(5_000) {
++                fixture.viewModel.state.value.conversation.messages.any { it.role == MessageRole.ASSISTANT }
++            }
++            compose.onNodeWithText("fake local answer").assertExists()
++            val user = fixture.viewModel.state.value.conversation.messages.last { it.role == MessageRole.USER }
++            assertEquals(UsageLedgerState.SETTLED.name, fixture.usageDao.reservation(user.id)?.state)
++            assertEquals(1, fixture.backend.generateCalls.get())
++            assertEquals(0, fixture.demo.calls.get())
++        } finally {
++            fixture.close()
++        }
++    }
++
+     @Test fun selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay() = runBlocking {
+         val fixture = fixture(blockUntilCancelled = false)
+         try {
+@@ -127,6 +181,25 @@ class LocalModelChatViewModelIntegrationAndroidTest {
+         }
+     }
+ 
++    @Composable
++    private fun TestOnlyLocalModelChatHost(fixture: Fixture) {
++        val state by fixture.viewModel.state.collectAsState()
++        Column {
++            Button(onClick = fixture.intent::selectLocalModel) { Text("Select local model") }
++            Button(onClick = fixture.intent::selectUnavailableModel) { Text("Select unavailable model") }
++            Button(onClick = fixture.intent::confirmLocalConsent) { Text("Confirm local consent") }
++            OutlinedTextField(
++                value = state.input,
++                onValueChange = fixture.viewModel::updateInput,
++                label = { Text("Local prompt") },
++                modifier = Modifier.fillMaxWidth(),
++            )
++            Button(onClick = fixture.viewModel::sendMessage, enabled = !state.isLoading) { Text("Send local request") }
++            if (state.errorMessage != null) Text(state.errorMessage.orEmpty())
++            state.conversation.messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { Text(it.text) }
++        }
++    }
++
+     private fun fixture(blockUntilCancelled: Boolean): Fixture {
+         val context = InstrumentationRegistry.getInstrumentation().targetContext
+         val modelFile = File.createTempFile("serea-viewmodel-local-fake-", ".gguf", context.cacheDir)
+@@ -148,7 +221,8 @@ class LocalModelChatViewModelIntegrationAndroidTest {
+             artifact = artifact,
+             modelFile = modelFile,
+             backendFactory = LocalModelInferenceBackendFactory { backend },
+-            deviceAbi = android.os.Build.SUPPORTED_ABIS.first { it in artifact.supportedAbis },
++            // The Fake backend uses this deterministic adapter fixture selector; it does not load JNI.
++            deviceAbi = "x86_64",
+         )
+         val wallClock = 1_800_000_000_000L
+         val dao = ViewModelIntegrationUsageDao()
+@@ -222,16 +296,20 @@ class LocalModelChatViewModelIntegrationAndroidTest {
+     private class TestOnlyLocalModelIntent {
+         @Volatile var selectedModelId: String? = null
+             private set
+-        @Volatile private var localConsentConfirmed = false
++        @Volatile private var consentedModelId: String? = null
+ 
+-        fun selectLocalModel() { selectedModelId = TEST_MODEL_ID }
+-        fun confirmLocalConsent() { check(selectedModelId == TEST_MODEL_ID); localConsentConfirmed = true }
++        fun selectLocalModel() { selectModel(TEST_MODEL_ID) }
++        fun selectUnavailableModel() { selectModel("serea-local/unavailable-test-model") }
++        private fun selectModel(modelId: String) {
++            if (selectedModelId != modelId) consentedModelId = null
++            selectedModelId = modelId
++        }
++        fun confirmLocalConsent() { check(selectedModelId == TEST_MODEL_ID); consentedModelId = TEST_MODEL_ID }
+         fun selectAndConfirmLocalModel() { selectLocalModel(); confirmLocalConsent() }
+         fun consumeConsentFor(modelId: String?): Boolean = synchronized(this) {
+-            if (modelId == TEST_MODEL_ID && selectedModelId == modelId && localConsentConfirmed) {
+-                localConsentConfirmed = false
+-                true
+-            } else false
++            val approved = modelId == TEST_MODEL_ID && selectedModelId == modelId && consentedModelId == modelId
++            consentedModelId = null
++            approved
+         }
+     }
+ 
+diff --git a/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt b/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt
+index eda51da..3d11ee1 100644
+--- a/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt
++++ b/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt
+@@ -45,7 +45,16 @@ class LocalModelMemoryLifecycleAndroidTest {
+             runtimeRevision = "2763785",
+             supportedAbis = setOf("arm64-v8a", "x86_64"),
+         )
+-        val deviceAbi = android.os.Build.SUPPORTED_ABIS.first { it in artifact.supportedAbis }
++        assertTrue(
++            "this callback diagnostic must also execute on the API 26 x86 emulator",
++            android.os.Build.SUPPORTED_ABIS.any { it in setOf("x86", "x86_64") },
++        )
++        if (android.os.Build.VERSION.SDK_INT == 26) {
++            assertTrue("API 26 workflow is expected to use its x86 emulator image", "x86" in android.os.Build.SUPPORTED_ABIS)
++        }
++        // Synthetic selector for the adapter Fake profile; no JNI or native ABI is exercised here.
++        val deviceAbi = "x86_64"
++        assertTrue(deviceAbi in artifact.supportedAbis)
+         val adapter = LocalModelChatAdapter(
+             artifact = artifact,
+             modelFile = modelFile,
+diff --git a/tests/android_emulator_workflow_tests.py b/tests/android_emulator_workflow_tests.py
+index fe7554c..0ee2421 100644
+--- a/tests/android_emulator_workflow_tests.py
++++ b/tests/android_emulator_workflow_tests.py
+@@ -1056,9 +1056,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+ 
+         identities = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
+         self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay", identities)
+-        self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4', campaign)
++        self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage", identities)
++        self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 5', campaign)
+         self.assertIn('local-chat-viewmodel-integration=$result', campaign)
+         self.assertNotIn("local_chat_viewmodel_test", result_condition)
++        memory_test = (ROOT / "android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt").read_text(encoding="utf-8")
++        self.assertIn('deviceAbi = "x86_64"', memory_test)
++        self.assertIn('android.os.Build.VERSION.SDK_INT == 26', memory_test)
++        self.assertIn('"x86" in android.os.Build.SUPPORTED_ABIS', memory_test)
+         self.assertGreater(campaign.index('run_diagnostic_stage local-chat-viewmodel-integration'),
+                            campaign.index('if [[ "$test_ime_installed" == true ]]'))
+ 
+diff --git a/tests/android_instrumentation_results_tests.py b/tests/android_instrumentation_results_tests.py
+index a00c093..fbf3498 100644
+--- a/tests/android_instrumentation_results_tests.py
++++ b/tests/android_instrumentation_results_tests.py
+@@ -141,7 +141,7 @@ class InstrumentationResultTests(unittest.TestCase):
+         self.assertEqual(2, len(additional_tests))
+         self.assertFalse(required_tests & additional_tests)
+         # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
+-        self.assertEqual(26, len(non_required_tests))
++        self.assertEqual(27, len(non_required_tests))
+         self.assertFalse(non_required_tests & (required_tests | additional_tests))
+         required: dict[str, int] = {}
+         for class_name, _ in required_tests:
+diff --git a/tools/run_android_instrumentation_campaign.sh b/tools/run_android_instrumentation_campaign.sh
+index 71d0a19..e48598c 100644
+--- a/tools/run_android_instrumentation_campaign.sh
++++ b/tools/run_android_instrumentation_campaign.sh
+@@ -845,9 +845,10 @@ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConse
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#localSelectionWithoutConsentFailsBeforeUsageAndProviderDispatch
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#userCancellationDuringLocalInferenceKeepsUnknownUsageWithoutFallback
+ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#clearingViewModelStoreCancelsLocalWorkAndFinalizesUnknownUsage
++app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage
+ TESTS
+ )
+-  if run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4 '' "$local_chat_viewmodel_tests"; then
++  if run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 5 '' "$local_chat_viewmodel_tests"; then
+     local_chat_viewmodel_test=PASS
+   else
+     local_chat_viewmodel_test="$(cat "$evidence/stages/local-chat-viewmodel-integration/status.txt" 2>/dev/null || printf 'FAIL')"

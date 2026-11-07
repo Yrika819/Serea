@@ -74,6 +74,54 @@ class LocalModelNativeRuntimeLifecycleTest {
         assertEquals(NativeReleaseResult.NotAcquired, backend.awaitReleaseResult(1, TimeUnit.SECONDS))
     }
 
+    @Test fun cancellationDuringNativeLoadRollsBackTheModelAndCompletesRelease() = runTest {
+        val calls = FakeNativeCalls().apply { blockLoad = true }
+        val coordinator = NativeReleaseCoordinator()
+        val executor = ManualExecutor()
+        val backend = backend(calls, coordinator, executor)
+
+        val loading = launch { backend.load(modelFile().path, nativeLimits()) }
+        runCurrent()
+        val worker = Thread { executor.runNext() }.apply { start() }
+        assertTrue(calls.loadStarted.await(3, TimeUnit.SECONDS))
+        loading.cancelAndJoin()
+        calls.releaseLoad.countDown()
+        worker.join(1_000)
+        assertFalse(worker.isAlive)
+        runCurrent()
+
+        assertEquals(1, calls.loadCount)
+        assertEquals(1, calls.freeCount)
+        assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
+        assertEquals(NativeReleaseResult.Released, backend.awaitReleaseResult(1, TimeUnit.SECONDS))
+    }
+
+    @Test fun closeDuringNativeLoadRollsBackBeforeAnyLaterReleaseCanComplete() = runTest {
+        val calls = FakeNativeCalls().apply { blockLoad = true }
+        val coordinator = NativeReleaseCoordinator()
+        val executor = ManualExecutor()
+        val backend = backend(calls, coordinator, executor)
+
+        val loading = async { runCatching { backend.load(modelFile().path, nativeLimits()) } }
+        runCurrent()
+        val worker = Thread { executor.runNext() }.apply { start() }
+        assertTrue(calls.loadStarted.await(3, TimeUnit.SECONDS))
+        backend.close()
+        assertEquals(NativeReleaseCoordinator.State.RELEASING, coordinator.currentState())
+        calls.releaseLoad.countDown()
+        worker.join(1_000)
+        assertFalse(worker.isAlive)
+        runCurrent()
+        assertTrue(loading.await().isFailure)
+        executor.runNext() // the queued close task observes that rollback already released the lease
+        runCurrent()
+
+        assertEquals(1, calls.loadCount)
+        assertEquals(1, calls.freeCount)
+        assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
+        assertEquals(NativeReleaseResult.Released, backend.awaitReleaseResult(1, TimeUnit.SECONDS))
+    }
+
     @Test fun closeWinsQueuedLoadRaceWithoutCallingJniAndIsIdempotent() = runTest {
         val calls = FakeNativeCalls()
         val coordinator = NativeReleaseCoordinator()
@@ -363,7 +411,10 @@ class LocalModelNativeRuntimeLifecycleTest {
         var loadSucceeds = true
         var ownershipUnknownAfterLoad = false
         var throwOnCancelledGenerate = false
+        var blockLoad = false
         @Volatile private var cancellationRequested = false
+        val loadStarted = CountDownLatch(1)
+        val releaseLoad = CountDownLatch(1)
         var blockGenerate = false
         val generateStarted = CountDownLatch(1)
         private val releaseGeneration = CountDownLatch(1)
@@ -373,6 +424,10 @@ class LocalModelNativeRuntimeLifecycleTest {
             if (owner != 0L) throw IllegalStateException("foreign test owner")
             owner = engineId
             if (!loadSucceeds) owner = 0L // C++ load rollback contract
+            if (blockLoad) {
+                loadStarted.countDown()
+                check(releaseLoad.await(3, TimeUnit.SECONDS))
+            }
             return loadSucceeds
         }
 

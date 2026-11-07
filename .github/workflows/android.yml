@@ -91,7 +91,7 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest :r25-ime-test:assembleDebug :app:compileBetaKotlin
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleBeta assembleIsolated assembleIsolatedAndroidTest :r25-ime-test:assembleDebug :app:compileBetaKotlin
       - name: Verify default APKs exclude Native inference libraries
         shell: bash
         run: |
@@ -105,6 +105,12 @@ jobs:
               exit 1
             fi
           done
+          beta_apk="$(find android/app/build/outputs/apk/beta -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$beta_apk" && test -s "$beta_apk"
+          if unzip -Z1 "$beta_apk" | grep -E '^lib/[^/]+/lib(serea_local_llama|llama|ggml)[^/]*\.so$'; then
+            echo "Native inference library unexpectedly packaged in beta APK: $beta_apk" >&2
+            exit 1
+          fi
       - name: Android lint
         working-directory: android
         run: ./gradlew --no-daemon lintDebug lintIsolated

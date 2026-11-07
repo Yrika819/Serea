@@ -121,6 +121,17 @@ internal class NativeReleaseCoordinator {
 
     @Synchronized fun owns(token: Any): Boolean = owner === token && state != State.RELEASED
 
+    @Synchronized fun releaseWithoutNativeStart(token: Any): Boolean {
+        if (owner !== token) return false
+        if (state == State.ACTIVE) {
+            owner = null
+            state = State.RELEASED
+            return true
+        }
+        // RELEASING belongs to close(); that queued release task will publish the terminal state.
+        return state == State.RELEASED
+    }
+
     @Synchronized fun currentState(): State = state
 }
 

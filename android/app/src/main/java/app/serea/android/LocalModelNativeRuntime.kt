@@ -60,6 +60,7 @@ internal class LlamaCppLocalModelInferenceBackend(
     private val ownershipToken = Any()
     private var nextGenerationId = 1L
     private var diagnosticInferenceIndex = 0
+    private var nativeLoadEntered = false
     @Volatile private var closed = false
     @Volatile private var loaded = false
     private var loadAttempted = false
@@ -81,10 +82,14 @@ internal class LlamaCppLocalModelInferenceBackend(
                     loadAttempted = true
                     processNativeReleaseCoordinator.acquire(ownershipToken)
                     executor.execute {
-                        if (!mayContinue(continuation)) {
-                            processNativeReleaseCoordinator.releasing(ownershipToken)
-                            processNativeReleaseCoordinator.released(ownershipToken)
-                            releaseResult.complete(Result.success(Unit)) // JNI never acquired an engine.
+                        val mayStartNativeLoad = synchronized(lifecycleLock) {
+                            if (closed || !continuation.isActive) false
+                            else { nativeLoadEntered = true; true }
+                        }
+                        if (!mayStartNativeLoad) {
+                            if (processNativeReleaseCoordinator.releaseWithoutNativeStart(ownershipToken)) {
+                                releaseResult.complete(Result.success(Unit)) // JNI never acquired an engine.
+                            }
                             continuation.failIfActive(LocalModelBackendStartDeniedException())
                             return@execute
                         }
@@ -236,6 +241,12 @@ internal class LlamaCppLocalModelInferenceBackend(
                         executor.shutdown()
                         return@execute
                     }
+                    if (!nativeLoadEntered) {
+                        processNativeReleaseCoordinator.released(ownershipToken)
+                        releaseResult.complete(Result.success(Unit))
+                        executor.shutdown()
+                        return@execute
+                    }
                     val result = runCatching {
                         check(nativeFree(engineId)) { "JNI did not confirm native model release" }
                     }
@@ -264,9 +275,6 @@ internal class LlamaCppLocalModelInferenceBackend(
     /** Nonblocking observation of release; failure and timeout never grant ownership. */
     internal suspend fun awaitReleased(timeout: Long, unit: TimeUnit): Boolean =
         kotlinx.coroutines.withTimeoutOrNull(unit.toMillis(timeout)) { releaseResult.await().isSuccess } ?: false
-
-    private fun mayContinue(continuation: CancellableContinuation<*>): Boolean =
-        synchronized(lifecycleLock) { !closed && continuation.isActive }
 
     private fun <T> CancellableContinuation<T>.failIfActive(failure: Throwable) {
         if (isActive) resumeWithException(failure)

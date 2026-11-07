@@ -47,4 +47,24 @@ class NativeReleaseCoordinatorTest {
             capabilities.validate(LocalModelRuntimeLimits(contextTokens = 512), capabilities.maxModelFileBytes + 1)
         }.isFailure)
     }
+
+    @Test fun closeBeforeQueuedLoadDispatchLeavesReleaseForCloseOwner() {
+        val coordinator = NativeReleaseCoordinator()
+        val token = Any()
+        coordinator.acquire(token)
+        coordinator.releasing(token) // close wins the dispatch race and owns finalization
+        assertFalse(coordinator.releaseWithoutNativeStart(token))
+        assertEquals(NativeReleaseCoordinator.State.RELEASING, coordinator.currentState())
+        coordinator.released(token)
+        assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
+    }
+
+    @Test fun cancelledQueuedLoadCanReleaseLeaseWithoutCallingNative() {
+        val coordinator = NativeReleaseCoordinator()
+        val token = Any()
+        coordinator.acquire(token)
+        assertTrue(coordinator.releaseWithoutNativeStart(token))
+        assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
+        coordinator.acquire(Any())
+    }
 }

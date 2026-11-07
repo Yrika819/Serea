@@ -30,7 +30,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.isRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
@@ -298,7 +297,10 @@ class SereaAppShellTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         var hasWindowFocus = false
         var activitySnapshot = "MainActivity unavailable"
+        var initialActivity: MainActivity? = null
+        var recoveredActivity: MainActivity? = null
         compose.activityRule.scenario.onActivity { activity ->
+            initialActivity = activity
             hasWindowFocus = activity.window.decorView.hasWindowFocus()
             activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
                 "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
@@ -313,30 +315,54 @@ class SereaAppShellTest {
                 device.findObject(By.text("Wait")).click()
                 device.waitForIdle(10_000)
             }
-            device.pressHome()
-            val target = "$ISOLATED_PACKAGE/app.serea.android.MainActivity"
-            val launch = device.executeShellCommand("am start -W -f 0x30000000 -n $target")
+            val oldActivity = initialActivity
             Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
-                "FOREGROUND_START uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage result=$launch")
-            assertTrue("Android did not confirm foreground Chat Activity launch: $launch", launch.contains("Status: ok"))
-            assertTrue("UiAutomator could not find the foreground Chat task",
-                device.wait(Until.hasObject(By.pkg(ISOLATED_PACKAGE)), 15_000))
+                "FOREGROUND_RECOVERY_BEGIN uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage " +
+                    "activity=${oldActivity?.let { System.identityHashCode(it) }}")
+            compose.activityRule.scenario.recreate()
+            compose.activityRule.scenario.onActivity { activity -> recoveredActivity = activity }
+            assertTrue(
+                "ActivityScenario.recreate() did not replace the unfocused Chat Activity",
+                oldActivity != null && recoveredActivity !== oldActivity,
+            )
+            Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+                "FOREGROUND_RECOVERY_RECREATED uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage " +
+                    "activity=${recoveredActivity?.let { System.identityHashCode(it) }}")
         }
         val focused = runCatching {
             compose.waitUntil(20_000) {
+                var lifecycleResumed = false
                 compose.activityRule.scenario.onActivity { activity ->
                     hasWindowFocus = activity.window.decorView.hasWindowFocus()
+                    lifecycleResumed = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED
                     activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
                         "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
                         "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
                 }
-                hasWindowFocus
+                hasWindowFocus && lifecycleResumed
             }
         }.isSuccess
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "FOREGROUND_AFTER uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
                 "task=${foregroundTaskSummary()}")
         assertTrue("Chat Activity did not acquire Android window focus after foreground recovery: $activitySnapshot", focused)
+        if (recoveredActivity != null && initialActivity !== recoveredActivity) {
+            var restorePending = true
+            compose.activityRule.scenario.onActivity { activity ->
+                restorePending = activity.chatViewModel.isActivitySelectionRestorePending()
+            }
+            val restoreFinished = runCatching {
+                compose.waitUntil(10_000) {
+                    compose.activityRule.scenario.onActivity { activity ->
+                        restorePending = activity.chatViewModel.isActivitySelectionRestorePending()
+                    }
+                    !restorePending
+                }
+            }.isSuccess
+            Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+                "ACTIVITY_RESTORE stage=$stage pending=$restorePending finished=$restoreFinished")
+            assertTrue("Chat Activity selection restore did not finish after focus recovery: $activitySnapshot", restoreFinished)
+        }
     }
 
     private fun imeOperation(
@@ -408,7 +434,7 @@ class SereaAppShellTest {
                 "baselineConnection=${baselineSession.connection} " +
                 "service=$operationService session=$operationSession " +
                 "connection=$operationConnection editorPackage=$operationEditorPackage " +
-                "inputType=$operationInputType fixture=$text")
+                "inputType=$operationInputType fixtureLength=${text?.length ?: 0}")
         assertTrue("Android-managed Test IME rejected $method for active session $operationSession " +
             "after snapshot $session.", accepted)
         return accepted
@@ -421,13 +447,16 @@ class SereaAppShellTest {
         }.getOrNull()
         compose.activityRule.scenario.onActivity { activity ->
             val editorValue = activity.chatViewModel.state.value.editorValue
+            val composition = editorValue.composition?.let { "${it.start}:${it.end}" } ?: "none"
             val decor = activity.window.decorView
             val focusedView = decor.findFocus()
             val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
             Log.i(
                 COMPOSER_IME_DIAGNOSTICS_TAG,
                 "uptimeMs=${SystemClock.uptimeMillis()} api=${android.os.Build.VERSION.SDK_INT} " +
-                    "activity=${System.identityHashCode(activity)} stage=$stage editorValue=$editorValue " +
+                    "activity=${System.identityHashCode(activity)} stage=$stage " +
+                    "editorTextLength=${editorValue.text.length} " +
+                    "selection=${editorValue.selection.start}:${editorValue.selection.end} composition=$composition " +
                     "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
                     "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
                     "semanticSelection=$semanticSelection windowFocus=${decor.hasWindowFocus()} " +
@@ -445,12 +474,15 @@ class SereaAppShellTest {
         accepted: Boolean,
     ) {
         val editorValue = activity.chatViewModel.state.value.editorValue
+        val composition = editorValue.composition?.let { "${it.start}:${it.end}" } ?: "none"
         val decor = activity.window.decorView
         val focusedView = decor.findFocus()
         val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
         Log.i(
             COMPOSER_IME_DIAGNOSTICS_TAG,
-            "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage accepted=$accepted editorValue=$editorValue " +
+            "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage accepted=$accepted " +
+                "editorTextLength=${editorValue.text.length} " +
+                "selection=${editorValue.selection.start}:${editorValue.selection.end} composition=$composition " +
                 "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
                 "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
                 "windowFocus=${decor.hasWindowFocus()} " +
@@ -1314,7 +1346,7 @@ class SereaAppShellTest {
                 "TASKS_DESTINATION|state=${compose.activity.shellTaskViewModel.state.value} " +
                     "route=${compose.activity.toString()}",
             )
-            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-destination")
+            Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=chat-tasks-destination")
         }
         assertTrue("Tasks destination heading and add action must both become displayed", taskScreenDisplayed)
         compose.onNodeWithTag("task_add").assertIsDisplayed()
@@ -1339,7 +1371,7 @@ class SereaAppShellTest {
                     "chatInputLength=${compose.activity.chatViewModel.state.value.input.length} " +
                     "taskLoading=${compose.activity.shellTaskViewModel.state.value.loading}",
             )
-            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-back")
+            Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=chat-tasks-back")
         }
         assertTrue("Chat composer must become displayed after returning from Tasks", chatScreenRestored)
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
@@ -1384,7 +1416,7 @@ class SereaAppShellTest {
                 compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
             }.isSuccess
         } }.isSuccess
-        if (!firstSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-search-result-timeout")
+        if (!firstSearchLoaded) Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=gmail-search-result-timeout")
         assertTrue("Gmail IME search must load its single fictional Garden plan message and clear field focus.", firstSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.activityRule.scenario.recreate()
@@ -1404,7 +1436,7 @@ class SereaAppShellTest {
         val repeatedSearchLoaded = runCatching { compose.waitUntil(10_000) {
             runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
         } }.isSuccess
-        if (!repeatedSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-repeat-search-result-timeout")
+        if (!repeatedSearchLoaded) Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=gmail-repeat-search-timeout")
         assertTrue("Gmail search after cancellation must settle to exactly one fictional Garden plan message.", repeatedSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
@@ -1619,11 +1651,8 @@ class SereaAppShellTest {
             // by switching IMEs. The Composer already has a real input session here; another
             // injected screen tap is redundant and can fail even while that session is live.
             ensureChatWindowFocus("synchronized real IME session")
-            // Re-selecting an IME can revoke Android window focus after onStartInputView even
-            // while the resumed Activity and Compose child still report focus. Dispatch a real
-            // user-equivalent tap to re-establish the window/editor focus boundary before using
-            // the newly bound InputConnection.
-            tapComposerThroughSystemInput()
+            // Keep these assertions separate from the actual InputConnection operations below:
+            // a successful coordinate tap does not prove that the newly selected IME can edit.
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
             // Window focus can cause Android to replace the IME InputConnection after an
@@ -2151,7 +2180,7 @@ class SereaAppShellTest {
             val gmailHeadingDisplayed = runCatching { compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed() }.isSuccess
             } }.isSuccess
-            if (!gmailHeadingDisplayed) compose.onRoot(useUnmergedTree = true).printToLog("font-scale-gmail-heading")
+            if (!gmailHeadingDisplayed) Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=font-scale-gmail-heading")
             assertTrue("The Gmail heading must remain displayed after returning through Tasks and Settings at font scale 2.0.", gmailHeadingDisplayed)
             compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
             compose.onNodeWithTag("gmail_search_input").assertIsDisplayed()
@@ -2200,7 +2229,7 @@ class SereaAppShellTest {
             }
         } catch (failure: Throwable) {
             primaryFailure = failure
-            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale") }
+            Log.e(COMPOSER_IME_DIAGNOSTICS_TAG, "UI_FAILURE|stage=task-proposal-font-scale|type=${failure.javaClass.simpleName}")
         } finally {
             try {
                 runCatching {

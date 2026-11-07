@@ -16,6 +16,7 @@ on:
       - tools/verify_serea_real_ime_manifest_scope.py
       - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java
       - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java
+      - tools/run_android_instrumentation_campaign.sh
       - tools/run_serea_phase_r3_single_ime_case.sh
       - tools/serea_real_ime_avd_guards.sh
       - tools/test_serea_real_ime_avd_guards.sh
@@ -105,6 +106,7 @@ jobs:
               "tools/run_android_instrumentation_campaign.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
+              "tools/run_android_instrumentation_campaign.sh"|\
               "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt"|\
               "android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt"|\
               "docs/agent-reports/g2-google-policy-readiness-2026-10-28.md"|\

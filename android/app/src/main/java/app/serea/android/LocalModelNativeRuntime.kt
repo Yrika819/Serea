@@ -73,18 +73,13 @@ internal class LlamaCppLocalModelInferenceBackend(
         // The reviewed PoC ABI supports 128–512 context tokens, two CPU threads, and at most
         // 256 output tokens. Reject unsupported configurations before native allocation.
         capabilities.validate(limits, model.length())
-        synchronized(lifecycleLock) {
-            if (closed || loaded || loadAttempted) {
-                throw PreDispatchModelChatFailure("This native backend has already entered its single load lifecycle.")
-            }
-            loadAttempted = true
-        }
-        try { processNativeReleaseCoordinator.acquire(ownershipToken) }
-        catch (failure: IllegalStateException) { throw PreDispatchModelChatFailure("Another native model owns the process runtime.") }
-
         suspendCancellableCoroutine { continuation ->
             val queued = synchronized(lifecycleLock) {
-                if (closed) false else try {
+                if (closed || loaded || loadAttempted) false else try {
+                    // close() takes this same lock: closed check, process lease and executor
+                    // submission are atomic with respect to close-vs-load races.
+                    loadAttempted = true
+                    processNativeReleaseCoordinator.acquire(ownershipToken)
                     executor.execute {
                         if (!mayContinue(continuation)) {
                             processNativeReleaseCoordinator.releasing(ownershipToken)
@@ -128,6 +123,10 @@ internal class LlamaCppLocalModelInferenceBackend(
                     }
                     true
                 } catch (_: java.util.concurrent.RejectedExecutionException) {
+                    runCatching { processNativeReleaseCoordinator.releasing(ownershipToken) }
+                    runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
+                    false
+                } catch (_: IllegalStateException) {
                     false
                 }
             }

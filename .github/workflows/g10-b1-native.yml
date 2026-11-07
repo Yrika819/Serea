@@ -8,7 +8,7 @@ on:
       - 'android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt'
       - 'android/app/src/test/java/app/serea/android/NativeReleaseCoordinatorTest.kt'
       - 'android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeLifecycleTest.kt'
-      - 'android/app/src/androidTest/java/app/serea/android/NativeJniReleaseContractTest.kt'
+      - 'android/app/src/nativeRuntimeDiagnosticAndroidTest/java/app/serea/android/NativeJniReleaseContractTest.kt'
       - 'android/app/build.gradle.kts'
       - '.github/workflows/g10-b1-native.yml'
   workflow_dispatch:

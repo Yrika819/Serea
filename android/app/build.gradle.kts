@@ -147,6 +147,13 @@ android {
             java.srcDir("src/debug/java")
             manifest.srcFile("src/isolated/AndroidManifest.xml")
         }
+        if (isolatedNativeRuntimeOptIn) {
+            // JNI ownership smoke tests are compiled only for the explicit native
+            // diagnostic build; regular Formal instrumentation identities stay fixed.
+            getByName("androidTest") {
+                java.srcDir("src/nativeRuntimeDiagnosticAndroidTest/java")
+            }
+        }
         if (betaValidationHarness) {
             // Only the disposable-emulator verifier opts into the debug-only
             // process-death receiver. The protected signing workflow never sets this.

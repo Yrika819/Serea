@@ -37,6 +37,6 @@ class NativeJniReleaseContractTest {
         assertTrue("invalid non-GGUF file must be rejected", load.isFailure)
         assertEquals("failed JNI load must leave C++ ownership empty", 0, backend.nativeOwnershipForDiagnosticTest())
         assertEquals(NativeReleaseResult.Released, backend.awaitReleaseResult(10, TimeUnit.SECONDS))
-        modelFile.delete()
+        assertTrue(modelFile.delete())
     }
 }

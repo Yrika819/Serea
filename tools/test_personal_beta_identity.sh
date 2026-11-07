@@ -361,7 +361,13 @@ build_beta() {
   local args=(--no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleBeta "-PsereaBetaVersionCode=$version")
   if [[ "$harness" == true ]]; then args+=("-PsereaPersonalBetaValidationHarness=true"); fi
   (cd "$android_dir" && ./gradlew "${args[@]}")
-  cp "$android_dir/app/build/outputs/apk/beta/app-beta.apk" "$output"
+  local beta_apk="$android_dir/app/build/outputs/apk/beta/app-beta.apk"
+  if unzip -Z1 "$beta_apk" | grep -E '^lib/[^/]+/lib(serea_local_llama|llama|ggml)[^/]*\.so$'; then
+    echo "Native inference library unexpectedly packaged in temporary-key Beta APK: $beta_apk" >&2
+    return 1
+  fi
+  echo "PASS: temporary-key Beta APK excludes Native inference libraries (versionCode=$version)."
+  cp "$beta_apk" "$output"
   bash "$repo_root/tools/verify_personal_beta_apk.sh" "$output" "$version" \
     "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256"
 }

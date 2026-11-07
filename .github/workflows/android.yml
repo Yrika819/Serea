@@ -91,7 +91,7 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleBeta assembleIsolated assembleIsolatedAndroidTest :r25-ime-test:assembleDebug :app:compileBetaKotlin
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleBeta assembleIsolatedAndroidTest :r25-ime-test:assembleDebug :app:compileBetaKotlin
       - name: Verify default APKs exclude Native inference libraries
         shell: bash
         run: |

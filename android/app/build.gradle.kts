@@ -66,7 +66,13 @@ android {
         targetSdk = 35
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
-        testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        // The Native diagnostic runs only the no-model JNI contract on a disposable emulator.
+        // Keep the campaign-gated Formal runner for every ordinary app/test build.
+        testInstrumentationRunner = if (isolatedNativeRuntimeOptIn) {
+            "androidx.test.runner.AndroidJUnitRunner"
+        } else {
+            "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        }
         buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
         if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
             ndk { abiFilters += nativeRuntimeAbi }

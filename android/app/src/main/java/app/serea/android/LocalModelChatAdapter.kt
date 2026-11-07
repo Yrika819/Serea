@@ -92,36 +92,39 @@ internal data class NativeRuntimeCapabilities(
 }
 
 /** Process-wide barrier for native model ownership. A failed or timed-out free never permits reuse. */
-internal class NativeReleaseCoordinator {
+internal open class NativeReleaseCoordinator {
     enum class State { ACTIVE, RELEASING, RELEASED, RELEASE_FAILED }
     private var state = State.RELEASED
     private var owner: Any? = null
 
-    @Synchronized fun acquire(token: Any) {
+    @Synchronized open fun acquire(token: Any) {
         check(state == State.RELEASED) { "Native ownership is $state; reload is denied." }
         owner = token
         state = State.ACTIVE
     }
 
-    @Synchronized fun releasing(token: Any) {
-        check(owner === token && state == State.ACTIVE)
+    @Synchronized open fun releasing(token: Any): Boolean {
+        if (owner !== token || state != State.ACTIVE) return false
         state = State.RELEASING
+        return true
     }
 
-    @Synchronized fun released(token: Any) {
-        check(owner === token && state == State.RELEASING)
+    @Synchronized open fun released(token: Any): Boolean {
+        if (owner !== token || state != State.RELEASING) return false
         owner = null
         state = State.RELEASED
+        return true
     }
 
-    @Synchronized fun failed(token: Any) {
-        check(owner === token && state == State.RELEASING)
+    @Synchronized open fun failed(token: Any): Boolean {
+        if (owner !== token || state != State.RELEASING) return false
         state = State.RELEASE_FAILED
+        return true
     }
 
-    @Synchronized fun owns(token: Any): Boolean = owner === token && state != State.RELEASED
+    @Synchronized open fun owns(token: Any): Boolean = owner === token && state != State.RELEASED
 
-    @Synchronized fun releaseWithoutNativeStart(token: Any): Boolean {
+    @Synchronized open fun releaseWithoutNativeStart(token: Any): Boolean {
         if (owner !== token) return false
         if (state == State.ACTIVE) {
             owner = null
@@ -132,7 +135,7 @@ internal class NativeReleaseCoordinator {
         return state == State.RELEASED
     }
 
-    @Synchronized fun currentState(): State = state
+    @Synchronized open fun currentState(): State = state
 }
 
 internal val processNativeReleaseCoordinator = NativeReleaseCoordinator()

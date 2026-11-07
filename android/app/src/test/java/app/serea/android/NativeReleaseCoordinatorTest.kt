@@ -27,7 +27,7 @@ class NativeReleaseCoordinatorTest {
         coordinator.failed(first)
         assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, coordinator.currentState())
         assertTrue(runCatching { coordinator.acquire(second) }.isFailure)
-        assertTrue(runCatching { coordinator.released(first) }.isFailure)
+        assertFalse(coordinator.released(first))
         assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, coordinator.currentState())
     }
 
@@ -66,5 +66,20 @@ class NativeReleaseCoordinatorTest {
         assertTrue(coordinator.releaseWithoutNativeStart(token))
         assertEquals(NativeReleaseCoordinator.State.RELEASED, coordinator.currentState())
         coordinator.acquire(Any())
+    }
+
+    @Test fun staleOwnerCannotReleaseTheCurrentOwnersLease() {
+        val coordinator = NativeReleaseCoordinator()
+        val old = Any()
+        val current = Any()
+        coordinator.acquire(old)
+        assertTrue(coordinator.releasing(old))
+        assertTrue(coordinator.released(old))
+        coordinator.acquire(current)
+
+        assertFalse(coordinator.releasing(old))
+        assertFalse(coordinator.released(old))
+        assertTrue(coordinator.owns(current))
+        assertEquals(NativeReleaseCoordinator.State.ACTIVE, coordinator.currentState())
     }
 }

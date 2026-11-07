@@ -6,6 +6,9 @@ on:
     paths:
       - 'android/app/src/main/cpp/**'
       - 'android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt'
+      - 'android/app/src/test/java/app/serea/android/NativeReleaseCoordinatorTest.kt'
+      - 'android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeLifecycleTest.kt'
+      - 'android/app/src/androidTest/java/app/serea/android/NativeJniReleaseContractTest.kt'
       - 'android/app/build.gradle.kts'
       - '.github/workflows/g10-b1-native.yml'
   workflow_dispatch:
@@ -54,8 +57,57 @@ jobs:
           if grep 'lib/.*libserea_local_llama.so' "$RUNNER_TEMP/apk-files.txt" | grep -v "lib/${{ matrix.abi }}/"; then
             echo 'Unexpected Native ABI packaged' >&2; exit 1
           fi
+          llvm_readelf="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          native_so="$RUNNER_TEMP/libserea_local_llama.so"
+          unzip -p "$apk" "lib/${{ matrix.abi }}/libserea_local_llama.so" > "$native_so"
+          test -s "$native_so"
+          "$llvm_readelf" -h -d "$native_so" | tee "$RUNNER_TEMP/native-library-report.txt"
+          case '${{ matrix.abi }}' in
+            arm64-v8a) grep -q 'Machine:.*AArch64' "$RUNNER_TEMP/native-library-report.txt" ;;
+            x86_64) grep -q 'Machine:.*Advanced Micro Devices X86-64' "$RUNNER_TEMP/native-library-report.txt" ;;
+          esac
+          awk -F'[][]' '/NEEDED/ { print $2 }' "$RUNNER_TEMP/native-library-report.txt" | sort -u > "$RUNNER_TEMP/native-needed-libraries.txt"
+          while IFS= read -r dependency; do
+            case "$dependency" in
+              libc.so|libc++_shared.so|libdl.so|liblog.so|libm.so|libandroid.so|libz.so|libatomic.so) ;;
+              *) echo "Unexpected Native shared dependency: $dependency" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/native-needed-libraries.txt"
+          ! grep -Eiq 'lib(llama|ggml).*\.so' "$RUNNER_TEMP/native-needed-libraries.txt"
+          sha256sum "$native_so" | tee "$RUNNER_TEMP/native-library.sha256"
+          { git rev-parse HEAD; sha256sum android/app/src/main/cpp/llama_jni.cpp android/app/src/main/cpp/CMakeLists.txt; } > "$RUNNER_TEMP/native-source-provenance.txt"
           sha256sum "$apk" | tee "$RUNNER_TEMP/apk.sha256"
+      - name: Install API 35 emulator image for the JNI ownership smoke test
+        if: matrix.abi == 'x86_64'
+        run: |
+          sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0' emulator
+          test -e /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Run no-model JNI release contract on API 35
+        if: matrix.abi == 'x86_64'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: >-
+            ./gradlew --no-daemon :app:connectedIsolatedAndroidTest
+            -PsereaIsolatedNativeRuntime=true
+            -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp"
+            -PsereaNativeRuntimeAbi=x86_64
+            -Pandroid.testInstrumentationRunnerArguments.class=app.serea.android.NativeJniReleaseContractTest
       - name: Upload isolated APK and provenance
+        if: always() && hashFiles('android/app/build/outputs/apk/isolated/app-isolated.apk') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: g10-b1-isolated-native-${{ matrix.abi }}
@@ -63,4 +115,8 @@ jobs:
             android/app/build/outputs/apk/isolated/app-isolated.apk
             ${{ runner.temp }}/apk.sha256
             ${{ runner.temp }}/apk-files.txt
+            ${{ runner.temp }}/native-library-report.txt
+            ${{ runner.temp }}/native-needed-libraries.txt
+            ${{ runner.temp }}/native-library.sha256
+            ${{ runner.temp }}/native-source-provenance.txt
           if-no-files-found: error

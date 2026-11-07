@@ -32,10 +32,18 @@ internal class LlamaCppLocalModelInferenceBackendFactory(
  * The native library owns one process-wide llama.cpp model lease and serializes every operation.
  * `close()` only signals cancellation and queues release; it never waits on the Android caller.
  */
-internal class LlamaCppLocalModelInferenceBackend(
+internal class LlamaCppLocalModelInferenceBackend private constructor(
     /** Optional bounded diagnostic hook; values are PSS KiB and never contain model output. */
     private val diagnosticMetric: ((String, Long) -> Unit)? = null,
+    /** Internal test seam; regular construction uses the JNI methods below. */
+    private val nativeCallsOverride: NativeRuntimeCalls? = null,
+    private val coordinator: NativeReleaseCoordinator = processNativeReleaseCoordinator,
+    private val executorOverride: java.util.concurrent.ExecutorService? = null,
 ) : LocalModelInferenceBackend {
+    internal constructor(
+        diagnosticMetric: ((String, Long) -> Unit)? = null,
+    ) : this(diagnosticMetric, null, processNativeReleaseCoordinator, null)
+
     private data class Generation(
         val id: Long,
         var mayRunInNative: Boolean = false,
@@ -45,19 +53,33 @@ internal class LlamaCppLocalModelInferenceBackend(
 
     companion object {
         private val nextEngineId = AtomicLong(0)
-
-        init { System.loadLibrary("serea_local_llama") }
     }
+
+    init { if (nativeCallsOverride == null) System.loadLibrary("serea_local_llama") }
 
     private val engineId = nextEngineId.incrementAndGet()
     private val lifecycleLock = Any()
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
+    private val executor = executorOverride ?: Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "serea-local-llama").apply { isDaemon = true }
     }
     private val activeGenerations = linkedSetOf<Generation>()
-    private val releaseResult = CompletableDeferred<Result<Unit>>()
+    private val releaseResult = CompletableDeferred<NativeReleaseResult>()
     // Object identity is deliberately distinct from the JNI engine id (which is a boxed Long).
     private val ownershipToken = Any()
+    private val nativeCalls: NativeRuntimeCalls by lazy {
+        nativeCallsOverride ?: object : NativeRuntimeCalls {
+            override fun load(engineId: Long, path: String, contextTokens: Int, workerThreads: Int) =
+                nativeLoad(engineId, path, contextTokens, workerThreads)
+            override fun ownership(engineId: Long) = nativeOwnsModel(engineId)
+            override fun generate(engineId: Long, prompt: String, maxOutputTokens: Int, generationId: Long) =
+                nativeGenerate(engineId, prompt, maxOutputTokens, generationId)
+            override fun cancel(engineId: Long, generationId: Long) = nativeCancel(engineId, generationId)
+            override fun forgetCancellation(engineId: Long, generationId: Long) = nativeForgetCancellation(engineId, generationId)
+            override fun usageCounts(engineId: Long, generationId: Long) = nativeUsageCounts(engineId, generationId)
+            override fun forgetUsage(engineId: Long, generationId: Long) = nativeForgetUsage(engineId, generationId)
+            override fun free(engineId: Long) = nativeFree(engineId)
+        }
+    }
     private var nextGenerationId = 1L
     private var diagnosticInferenceIndex = 0
     private var nativeLoadEntered = false
@@ -76,31 +98,32 @@ internal class LlamaCppLocalModelInferenceBackend(
         capabilities.validate(limits, model.length())
         suspendCancellableCoroutine { continuation ->
             val queued = synchronized(lifecycleLock) {
-                if (closed || loaded || loadAttempted) false else try {
+                if (closed || loaded || loadAttempted || !continuation.isActive) false else try {
                     // close() takes this same lock: closed check, process lease and executor
                     // submission are atomic with respect to close-vs-load races.
                     loadAttempted = true
-                    processNativeReleaseCoordinator.acquire(ownershipToken)
+                    coordinator.acquire(ownershipToken)
                     executor.execute {
                         val mayStartNativeLoad = synchronized(lifecycleLock) {
                             if (closed || !continuation.isActive) false
                             else { nativeLoadEntered = true; true }
                         }
                         if (!mayStartNativeLoad) {
-                            if (processNativeReleaseCoordinator.releaseWithoutNativeStart(ownershipToken)) {
-                                releaseResult.complete(Result.success(Unit)) // JNI never acquired an engine.
+                            if (coordinator.releaseWithoutNativeStart(ownershipToken)) {
+                                completeRelease(NativeReleaseResult.Released) // JNI never acquired an engine.
                             }
                             continuation.failIfActive(LocalModelBackendStartDeniedException())
                             return@execute
                         }
                         try {
                             reportPss("load_before_kb")
-                            val success = nativeLoad(
+                            val nativeLoadSucceeded = nativeCalls.load(
                                 engineId,
                                 model.canonicalPath,
                                 limits.contextTokens,
                                 limits.workerThreads,
                             )
+                            val success = nativeLoadSucceeded && nativeCalls.ownership(engineId) == 1
                             reportPss("load_after_kb")
                             val publish = synchronized(lifecycleLock) {
                                 if (success && !closed && continuation.isActive) loaded = true
@@ -108,36 +131,38 @@ internal class LlamaCppLocalModelInferenceBackend(
                             }
                             if (!publish) {
                                 val freed = releaseNativeOwnershipIfPresent()
-                                processNativeReleaseCoordinator.releasing(ownershipToken)
-                                if (freed) processNativeReleaseCoordinator.released(ownershipToken)
-                                else processNativeReleaseCoordinator.failed(ownershipToken)
-                                releaseResult.complete(if (freed) Result.success(Unit) else Result.failure(IllegalStateException("Native rollback failed")))
+                                finishRelease(freed, IllegalStateException("Native rollback failed"))
                                 if (success) continuation.failIfActive(LocalModelBackendStartDeniedException())
                                 else continuation.failIfActive(IllegalStateException("llama.cpp could not load the verified model"))
                             } else {
                                 if (continuation.isActive) continuation.resume(Unit)
                             }
                         } catch (failure: Throwable) {
-                            runCatching { processNativeReleaseCoordinator.releasing(ownershipToken) }
+                            if (coordinator.owns(ownershipToken) && coordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
+                                runCatching { coordinator.releasing(ownershipToken) }
+                            }
                             val freed = runCatching { releaseNativeOwnershipIfPresent() }.getOrDefault(false)
-                            if (freed) runCatching { processNativeReleaseCoordinator.released(ownershipToken) }
-                            else runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
-                            releaseResult.complete(if (freed) Result.success(Unit) else Result.failure(failure))
+                            finishRelease(freed, failure)
                             continuation.failIfActive(failure)
                         }
                     }
                     true
                 } catch (_: java.util.concurrent.RejectedExecutionException) {
-                    runCatching { processNativeReleaseCoordinator.releasing(ownershipToken) }
-                    runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
+                    if (coordinator.releaseWithoutNativeStart(ownershipToken)) {
+                        completeRelease(NativeReleaseResult.NotAcquired)
+                    } else {
+                        failRelease(IllegalStateException("The native executor rejected the load with Native ownership unresolved"))
+                    }
                     false
                 } catch (_: IllegalStateException) {
+                    if (coordinator.owns(ownershipToken) && !nativeLoadEntered &&
+                        coordinator.releaseWithoutNativeStart(ownershipToken)) {
+                        completeRelease(NativeReleaseResult.NotAcquired)
+                    }
                     false
                 }
             }
             if (!queued) {
-                runCatching { processNativeReleaseCoordinator.releasing(ownershipToken) }
-                runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
                 continuation.failIfActive(IllegalStateException("The native model executor is closed"))
             }
         }
@@ -151,7 +176,7 @@ internal class LlamaCppLocalModelInferenceBackend(
                     continuation.invokeOnCancellation {
                         synchronized(lifecycleLock) {
                             request.cancelled = true
-                            if (request.mayRunInNative && !request.completed) nativeCancel(engineId, request.id)
+                            if (request.mayRunInNative && !request.completed) runCatching { nativeCalls.cancel(engineId, request.id) }
                         }
                     }
                 }
@@ -181,9 +206,9 @@ internal class LlamaCppLocalModelInferenceBackend(
                     try {
                         val measurementIndex = synchronized(lifecycleLock) { ++diagnosticInferenceIndex }
                         reportPss("inference_${measurementIndex}_before_kb")
-                        val output = nativeGenerate(engineId, prompt, maxOutputTokens, generation.id)
+                        val output = nativeCalls.generate(engineId, prompt, maxOutputTokens, generation.id)
                         reportPss("inference_${measurementIndex}_after_kb")
-                        val usage = nativeUsageCounts(engineId, generation.id)
+                        val usage = nativeCalls.usageCounts(engineId, generation.id)
                         val inputTokens = usage?.getOrNull(0)?.takeIf { it >= 0 }
                         val outputTokens = usage?.getOrNull(1)?.takeIf { it >= 0 }
                         if (continuation.isActive) {
@@ -200,8 +225,8 @@ internal class LlamaCppLocalModelInferenceBackend(
                             generation.completed = true
                             activeGenerations.remove(generation)
                         }
-                        nativeForgetCancellation(engineId, generation.id)
-                        nativeForgetUsage(engineId, generation.id)
+                        nativeCalls.forgetCancellation(engineId, generation.id)
+                        nativeCalls.forgetUsage(engineId, generation.id)
                     }
                 }
             } catch (failure: java.util.concurrent.RejectedExecutionException) {
@@ -217,7 +242,7 @@ internal class LlamaCppLocalModelInferenceBackend(
         synchronized(lifecycleLock) {
             activeGenerations.forEach { generation ->
                 generation.cancelled = true
-                if (generation.mayRunInNative && !generation.completed) nativeCancel(engineId, generation.id)
+                if (generation.mayRunInNative && !generation.completed) runCatching { nativeCalls.cancel(engineId, generation.id) }
             }
         }
     }
@@ -228,53 +253,64 @@ internal class LlamaCppLocalModelInferenceBackend(
             closed = true
             activeGenerations.forEach { generation ->
                 generation.cancelled = true
-                if (generation.mayRunInNative && !generation.completed) nativeCancel(engineId, generation.id)
+                if (generation.mayRunInNative && !generation.completed) runCatching { nativeCalls.cancel(engineId, generation.id) }
             }
             try {
-                if (processNativeReleaseCoordinator.owns(ownershipToken) &&
-                    processNativeReleaseCoordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
-                    processNativeReleaseCoordinator.releasing(ownershipToken)
+                if (coordinator.owns(ownershipToken) &&
+                    coordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
+                    if (!coordinator.releasing(ownershipToken)) {
+                        failRelease(IllegalStateException("Coordinator rejected Native close transition"))
+                        executor.shutdown()
+                        return
+                    }
                 }
                 executor.execute {
-                    if (!processNativeReleaseCoordinator.owns(ownershipToken)) {
-                        releaseResult.complete(Result.success(Unit)) // This backend never acquired native ownership.
+                    if (!coordinator.owns(ownershipToken)) {
+                        completeRelease(NativeReleaseResult.NotAcquired) // This backend never acquired native ownership.
                         executor.shutdown()
                         return@execute
                     }
                     if (!nativeLoadEntered) {
-                        processNativeReleaseCoordinator.released(ownershipToken)
-                        releaseResult.complete(Result.success(Unit))
+                        finishNeverLoadedRelease()
                         executor.shutdown()
                         return@execute
                     }
                     val result = runCatching {
-                        check(nativeFree(engineId)) { "JNI did not confirm native model release" }
+                        check(nativeCalls.free(engineId)) { "JNI did not confirm native model release" }
+                        check(nativeCalls.ownership(engineId) == 0) { "JNI still reports Native ownership after release" }
                     }
-                    if (result.isSuccess) {
-                        runCatching { processNativeReleaseCoordinator.released(ownershipToken) }
-                        releaseResult.complete(Result.success(Unit))
-                    } else {
-                        runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
-                        releaseResult.complete(Result.failure(result.exceptionOrNull()!!))
-                    }
-                    try {
-                        loaded = false
-                        executor.shutdown()
-                    } finally {
-                    }
+                    finishRelease(result.isSuccess, result.exceptionOrNull())
+                    loaded = false
+                    executor.shutdown()
                 }
                 executor.shutdown()
-            } catch (failure: java.util.concurrent.RejectedExecutionException) {
+            } catch (failure: Throwable) {
                 executor.shutdownNow()
-                runCatching { processNativeReleaseCoordinator.failed(ownershipToken) }
-                releaseResult.complete(Result.failure(failure))
+                failRelease(failure)
             }
         }
     }
 
     /** Nonblocking observation of release; failure and timeout never grant ownership. */
-    internal suspend fun awaitReleased(timeout: Long, unit: TimeUnit): Boolean =
-        kotlinx.coroutines.withTimeoutOrNull(unit.toMillis(timeout)) { releaseResult.await().isSuccess } ?: false
+    internal suspend fun awaitReleaseResult(timeout: Long, unit: TimeUnit): NativeReleaseResult =
+        kotlinx.coroutines.withTimeoutOrNull(unit.toMillis(timeout)) { releaseResult.await() }
+            ?: NativeReleaseResult.TimedOut
+
+    internal suspend fun awaitReleased(timeout: Long, unit: TimeUnit): Boolean = when (awaitReleaseResult(timeout, unit)) {
+        NativeReleaseResult.Released, NativeReleaseResult.NotAcquired -> true
+        is NativeReleaseResult.Failed, NativeReleaseResult.TimedOut -> false
+    }
+
+    /** JNI no-model probe usable only by the explicitly opted-in isolated diagnostic variant. */
+    internal fun nativeOwnershipForDiagnosticTest(): Int {
+        check(BuildConfig.LOCAL_NATIVE_RUNTIME_ENABLED) { "Native diagnostic probe is disabled in this build" }
+        return nativeCalls.ownership(engineId)
+    }
+
+    internal fun nativeFreeUnownedForDiagnosticTest(): Boolean {
+        check(BuildConfig.LOCAL_NATIVE_RUNTIME_ENABLED) { "Native diagnostic probe is disabled in this build" }
+        return nativeCalls.free(engineId)
+    }
 
     private fun <T> CancellableContinuation<T>.failIfActive(failure: Throwable) {
         if (isActive) resumeWithException(failure)
@@ -287,11 +323,53 @@ internal class LlamaCppLocalModelInferenceBackend(
 
     /** A failed nativeLoad rolls its partial allocation back before returning false. */
     private fun releaseNativeOwnershipIfPresent(): Boolean {
-        return when (nativeOwnsModel(engineId)) {
+        return when (nativeCalls.ownership(engineId)) {
             0 -> true // C++ confirms no engine lease and no model/context/sampler pointers.
-            1 -> nativeFree(engineId) && nativeOwnsModel(engineId) == 0
+            1 -> nativeCalls.free(engineId) && nativeCalls.ownership(engineId) == 0
             else -> false // Foreign owner or inconsistent native state: fail closed.
         }
+    }
+
+    private fun finishNeverLoadedRelease() {
+        val completion = runCatching {
+            if (coordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
+                check(coordinator.releasing(ownershipToken))
+            }
+            check(coordinator.released(ownershipToken)) { "Coordinator rejected release of an unloaded Native lease" }
+        }
+        if (completion.isSuccess) completeRelease(NativeReleaseResult.Released)
+        else failRelease(completion.exceptionOrNull()!!)
+    }
+
+    private fun finishRelease(nativeReleaseSucceeded: Boolean, nativeFailure: Throwable?) {
+        if (!nativeReleaseSucceeded) {
+            failRelease(nativeFailure ?: IllegalStateException("Native release was not confirmed"))
+            return
+        }
+        val completion = runCatching {
+            when (coordinator.currentState()) {
+                NativeReleaseCoordinator.State.ACTIVE -> check(coordinator.releasing(ownershipToken))
+                NativeReleaseCoordinator.State.RELEASING -> Unit
+                else -> error("Coordinator is not awaiting this Native release")
+            }
+            check(coordinator.released(ownershipToken)) { "Coordinator rejected the Native release completion" }
+        }
+        if (completion.isSuccess) completeRelease(NativeReleaseResult.Released)
+        else failRelease(completion.exceptionOrNull()!!)
+    }
+
+    private fun failRelease(failure: Throwable) {
+        runCatching {
+            if (coordinator.owns(ownershipToken) && coordinator.currentState() != NativeReleaseCoordinator.State.RELEASE_FAILED) {
+                if (coordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) coordinator.releasing(ownershipToken)
+                if (coordinator.currentState() == NativeReleaseCoordinator.State.RELEASING) coordinator.failed(ownershipToken)
+            }
+        }
+        completeRelease(NativeReleaseResult.Failed(failure))
+    }
+
+    private fun completeRelease(result: NativeReleaseResult) {
+        releaseResult.complete(result)
     }
 
     private external fun nativeLoad(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean
@@ -302,4 +380,23 @@ internal class LlamaCppLocalModelInferenceBackend(
     private external fun nativeUsageCounts(engineId: Long, generationId: Long): IntArray?
     private external fun nativeForgetUsage(engineId: Long, generationId: Long)
     private external fun nativeFree(engineId: Long): Boolean
+}
+
+internal sealed interface NativeReleaseResult {
+    data object Released : NativeReleaseResult
+    data object NotAcquired : NativeReleaseResult
+    data object TimedOut : NativeReleaseResult
+    data class Failed(val cause: Throwable) : NativeReleaseResult
+}
+
+/** Internal seam for deterministic JVM lifecycle tests; no public or UI entry point is provided. */
+internal interface NativeRuntimeCalls {
+    fun load(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean
+    fun ownership(engineId: Long): Int
+    fun generate(engineId: Long, prompt: String, maxOutputTokens: Int, generationId: Long): String
+    fun cancel(engineId: Long, generationId: Long): Boolean
+    fun forgetCancellation(engineId: Long, generationId: Long)
+    fun usageCounts(engineId: Long, generationId: Long): IntArray?
+    fun forgetUsage(engineId: Long, generationId: Long)
+    fun free(engineId: Long): Boolean
 }

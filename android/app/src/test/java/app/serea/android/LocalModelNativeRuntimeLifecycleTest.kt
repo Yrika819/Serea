@@ -33,6 +33,11 @@ class LocalModelNativeRuntimeLifecycleTest {
         assertEquals(NativeReleaseCoordinator.State.ACTIVE, coordinator.currentState())
         assertEquals(1, calls.loadCount)
 
+        val duplicateLoad = async { runCatching { backend.load(modelFile().path, nativeLimits()) } }
+        runCurrent()
+        assertTrue(duplicateLoad.await().isFailure)
+        assertEquals("same backend must not start a second Native load", 1, calls.loadCount)
+
         val generated = async { backend.generate("hello", 8) }
         runCurrent()
         executor.runNext()

@@ -67,6 +67,63 @@ data class LocalModelRuntimeLimits(
     }
 }
 
+/** Limits supported by a particular native engine, separate from device memory observations. */
+internal data class NativeRuntimeCapabilities(
+    val maxModelFileBytes: Long = 768L * 1024 * 1024,
+    val maxContextTokens: Int = 512,
+    val maxOutputTokens: Int = 256,
+    val maxWorkerThreads: Int = 2,
+) {
+    init {
+        require(maxModelFileBytes > 0)
+        require(maxContextTokens >= 128 && maxOutputTokens > 0 && maxWorkerThreads > 0)
+    }
+
+    fun validate(limits: LocalModelRuntimeLimits, modelFileBytes: Long) {
+        if (modelFileBytes !in 1..maxModelFileBytes) {
+            throw PreDispatchModelChatFailure("The model file exceeds the native runtime's file-size bound.")
+        }
+        if (limits.contextTokens !in 128..maxContextTokens ||
+            limits.maxOutputTokens !in 1..maxOutputTokens ||
+            limits.workerThreads !in 1..maxWorkerThreads) {
+            throw PreDispatchModelChatFailure("The selected native runtime limits are unsupported.")
+        }
+    }
+}
+
+/** Process-wide barrier for native model ownership. A failed or timed-out free never permits reuse. */
+internal class NativeReleaseCoordinator {
+    enum class State { ACTIVE, RELEASING, RELEASED, RELEASE_FAILED }
+    private var state = State.RELEASED
+    private var owner: Any? = null
+
+    @Synchronized fun acquire(token: Any) {
+        check(state == State.RELEASED) { "Native ownership is $state; reload is denied." }
+        owner = token
+        state = State.ACTIVE
+    }
+
+    @Synchronized fun releasing(token: Any) {
+        check(owner === token && state == State.ACTIVE)
+        state = State.RELEASING
+    }
+
+    @Synchronized fun released(token: Any) {
+        check(owner === token && state == State.RELEASING)
+        owner = null
+        state = State.RELEASED
+    }
+
+    @Synchronized fun failed(token: Any) {
+        check(owner === token && state == State.RELEASING)
+        state = State.RELEASE_FAILED
+    }
+
+    @Synchronized fun currentState(): State = state
+}
+
+internal val processNativeReleaseCoordinator = NativeReleaseCoordinator()
+
 internal data class LocalModelInferenceResult(
     val text: String,
     val inputTokens: Int?,

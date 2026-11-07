@@ -119,6 +119,8 @@ internal class NativeReleaseCoordinator {
         state = State.RELEASE_FAILED
     }
 
+    @Synchronized fun owns(token: Any): Boolean = owner === token && state != State.RELEASED
+
     @Synchronized fun currentState(): State = state
 }
 

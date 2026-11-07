@@ -56,7 +56,8 @@ internal class LlamaCppLocalModelInferenceBackend(
     }
     private val activeGenerations = linkedSetOf<Generation>()
     private val releaseResult = CompletableDeferred<Result<Unit>>()
-    private val ownershipToken = engineId
+    // Object identity is deliberately distinct from the JNI engine id (which is a boxed Long).
+    private val ownershipToken = Any()
     private var nextGenerationId = 1L
     private var diagnosticInferenceIndex = 0
     @Volatile private var closed = false
@@ -79,6 +80,9 @@ internal class LlamaCppLocalModelInferenceBackend(
                 if (closed) false else try {
                     executor.execute {
                         if (!mayContinue(continuation)) {
+                            processNativeReleaseCoordinator.releasing(ownershipToken)
+                            processNativeReleaseCoordinator.released(ownershipToken)
+                            releaseResult.complete(Result.success(Unit)) // JNI never acquired an engine.
                             continuation.failIfActive(LocalModelBackendStartDeniedException())
                             return@execute
                         }
@@ -216,10 +220,16 @@ internal class LlamaCppLocalModelInferenceBackend(
                 if (generation.mayRunInNative && !generation.completed) nativeCancel(engineId, generation.id)
             }
             try {
-                if (processNativeReleaseCoordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
+                if (processNativeReleaseCoordinator.owns(ownershipToken) &&
+                    processNativeReleaseCoordinator.currentState() == NativeReleaseCoordinator.State.ACTIVE) {
                     processNativeReleaseCoordinator.releasing(ownershipToken)
                 }
                 executor.execute {
+                    if (!processNativeReleaseCoordinator.owns(ownershipToken)) {
+                        releaseResult.complete(Result.success(Unit)) // This backend never acquired native ownership.
+                        executor.shutdown()
+                        return@execute
+                    }
                     val result = runCatching {
                         check(nativeFree(engineId)) { "JNI did not confirm native model release" }
                     }

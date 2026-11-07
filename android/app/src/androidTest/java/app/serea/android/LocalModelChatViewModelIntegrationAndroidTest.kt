@@ -125,6 +125,7 @@ class LocalModelChatViewModelIntegrationAndroidTest {
             backend.generationStarted.await()
             chat.cancelCurrent()
             backend.generationFinished.await()
+            withTimeout(15_000) { backend.cancellationObserved.await() }
             val state = chat.state.value
             assertTrue(state.conversation.messages.none { it.role == MessageRole.ASSISTANT })
             assertTrue(backend.cancelCalls.get() > 0)
@@ -273,6 +274,7 @@ private class InstrumentationFakeLocalBackend(
     val closeCalls = AtomicInteger()
     val generationStarted = CompletableDeferred<Unit>()
     val generationFinished = CompletableDeferred<Unit>()
+    val cancellationObserved = CompletableDeferred<Unit>()
     val fixturePaths = mutableListOf<String>()
     @Volatile var nativeLoaded = false
     @Volatile var networkAttempted = false
@@ -299,6 +301,7 @@ private class InstrumentationFakeLocalBackend(
     override fun cancelActive() {
         cancelCalls.incrementAndGet()
         releaseGeneration.cancel(CancellationException("test cancellation"))
+        cancellationObserved.complete(Unit)
     }
 
     override fun close() { closeCalls.incrementAndGet() }

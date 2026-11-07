@@ -91,7 +91,10 @@ class LocalModelNativeRuntimeLifecycleTest {
         runCurrent()
 
         assertTrue(loading.isCompleted)
-        assertTrue("close wins before native dispatch", loading.await().isFailure)
+        assertTrue(
+            "close wins before native dispatch",
+            loading.await().exceptionOrNull() is LocalModelBackendStartDeniedException,
+        )
         assertEquals(0, calls.loadCount)
         assertEquals(0, calls.freeCount)
         assertTrue(backend.awaitReleased(1, TimeUnit.SECONDS))

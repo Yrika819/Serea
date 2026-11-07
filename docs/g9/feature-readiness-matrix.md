@@ -19,3 +19,7 @@ Status vocabulary: NOT_IMPLEMENTED / IMPLEMENTED / VERIFIED / LIVE_VERIFIED / UN
 At main SHA `72dbd245c46fa111a22e9d85e22410278a259326`, `MainActivity.kt:115` constructs `ChatViewModel` with `DemoChatComposition.create(usage)`. `DemoChatComposition.kt:12` defaults to `MockModelChatPort`; it wraps a `LocalDemoModelChatPort`, Egress/Usage controls and Kotlin `AdaptiveModelRouter` constrained to fake provider `serea-demo`. This is the normal Chat path and produces the deterministic demo response.
 
 `LocalModelChatAdapter.kt` exists in main as a guarded adapter/lifecycle with `LocalModelInferenceBackend` interface. It is not used by `MainActivity` composition. The Kotlin `LocalModelChatFeatureRouter` and its tests from #191/#193 are absent from main. No Android JNI `external fun`/native library loader implementation was found in the Chat path. Rust `crates/serea-model-router` is a separate core router implementation; this audit did not find an Android binding connecting it to `ChatViewModel`. A present Rust router or Kotlin `AdaptiveModelRouter` does not mean native inference is active.
+
+## G9-R4 Local Model distinction
+
+The Android source currently includes the guarded `LocalModelChatAdapter` plus `LocalModelAuthorizationRegistry`; it does not include `LocalModelNativeRuntime.kt`, `llama_jni.cpp`, `LocalModelChatFeatureRouter.kt`, or `LocalModelMemoryLifecycle.kt`. The nine-prior native runtime / trim callbacks remain PR-only. This permits a fake-backend composition test without claiming a real inference backend exists.

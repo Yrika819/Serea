@@ -1,0 +1,1509 @@
+[
+  {
+    "number": 165,
+    "title": "fix(native): bound model limits and diagnostics",
+    "url": "https://github.com/Yrika819/Serea/pull/165",
+    "head": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+    "base": "025aff71effb03e0fe3bd540079530369e9beaf7",
+    "merge_base": "025aff71effb03e0fe3bd540079530369e9beaf7",
+    "base_is_ancestor": true,
+    "commits": [
+      {
+        "sha": "56b7da4a1f54d9470b6541cfff125a964a470683",
+        "patch_id": "86b81bcea8ac4be71fdcab635ea8da8fa5908e9d",
+        "parents": [
+          "025aff71effb03e0fe3bd540079530369e9beaf7"
+        ]
+      },
+      {
+        "sha": "99fe6eed1ad5775c0cba14e9d2a590a9fedee396",
+        "patch_id": "02fd4962fdb724a97ecb2a90a5225a1ac26474db",
+        "parents": [
+          "56b7da4a1f54d9470b6541cfff125a964a470683"
+        ]
+      },
+      {
+        "sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+        "patch_id": "a9842eaf6b12496fe9ab563c6dcf0051206a1786",
+        "parents": [
+          "99fe6eed1ad5775c0cba14e9d2a590a9fedee396"
+        ]
+      }
+    ],
+    "files": [
+      ".github/workflows/g8-local-native-runtime-focused.yml",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "tools/g8-local-model-native/preflight.sh",
+      "tools/g8-local-model-native/run-e2e.sh",
+      "tools/g8-local-model-native/summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-cleanup.sh",
+      "tools/g8-local-model-native/test-instrumentation-stream.py",
+      "tools/g8-local-model-native/test-preflight.sh",
+      "tools/g8-local-model-native/test-summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-upload-allowlist.py",
+      "tools/g8-local-model-native/verify-instrumentation-stream.py"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 14,
+      "failure": 5,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+    "classification": "SUPERSEDED",
+    "spike_requirement": "CAN_FOLLOW_SPIKE",
+    "disposition_evidence": "#166/#169 descendants include its runtime-limit commits"
+  },
+  {
+    "number": 166,
+    "title": "G9R Native runtime limits and bounded ARM64 guest validation",
+    "url": "https://github.com/Yrika819/Serea/pull/166",
+    "head": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+    "base": "0560e1e7bcd13f0194eab8caca89d70ea5a2f142",
+    "merge_base": "00384eb6468214362435140c9a2d848fa2e0f12e",
+    "base_is_ancestor": false,
+    "commits": [
+      {
+        "sha": "090b1e0b719b219765a9125dc93bf2afcb68781f",
+        "patch_id": "f60c06f3144c232000c9b6821c5c3035102aed8a",
+        "parents": [
+          "00384eb6468214362435140c9a2d848fa2e0f12e"
+        ]
+      },
+      {
+        "sha": "2f04e5b1953741d150456dc0780dabb91d3fbf51",
+        "patch_id": "f0c2a93b9d905db8fc739f120592587ff5885483",
+        "parents": [
+          "090b1e0b719b219765a9125dc93bf2afcb68781f"
+        ]
+      },
+      {
+        "sha": "b8d0000c3657526071dc318e901fb5c88d739fe4",
+        "patch_id": "a0777d70383e57dfc1af8fb6accbfda6e168f406",
+        "parents": [
+          "2f04e5b1953741d150456dc0780dabb91d3fbf51"
+        ]
+      },
+      {
+        "sha": "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8",
+        "patch_id": "c9f90509daa192cf14c294494758d74e01ec5981",
+        "parents": [
+          "b8d0000c3657526071dc318e901fb5c88d739fe4"
+        ]
+      },
+      {
+        "sha": "3e8644338599bee5c0b0554a7b3de8a9234c8095",
+        "patch_id": "bb09723e4075492319f1d5b01d975dc98cf26b79",
+        "parents": [
+          "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8"
+        ]
+      },
+      {
+        "sha": "ee5467f791c66912e95fdc86ccdf435f48d5aa33",
+        "patch_id": "8d06151a791847ef6d788b6ff8cc086aec93f48d",
+        "parents": [
+          "3e8644338599bee5c0b0554a7b3de8a9234c8095"
+        ]
+      },
+      {
+        "sha": "082d223d9975492b5dab3c70349f0d6e9fc504de",
+        "patch_id": "4a4be0bbe0b6eac51acbb1af447bd93550478924",
+        "parents": [
+          "ee5467f791c66912e95fdc86ccdf435f48d5aa33"
+        ]
+      },
+      {
+        "sha": "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0",
+        "patch_id": "d3f941259bdd259f1211d5bbfbeb88d71b4239e1",
+        "parents": [
+          "082d223d9975492b5dab3c70349f0d6e9fc504de"
+        ]
+      },
+      {
+        "sha": "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59",
+        "patch_id": "d0e721b519881af2b4c986de6f7457c471924d73",
+        "parents": [
+          "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0"
+        ]
+      },
+      {
+        "sha": "cf057e46f376dfdf70ce5f77219bbfa9025ee109",
+        "patch_id": "a5c5dec357b299a2917f65fe892e6959e5b5c7bd",
+        "parents": [
+          "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59"
+        ]
+      },
+      {
+        "sha": "49e14da2b5dc06579ff88d0adbc10d41f5040dd9",
+        "patch_id": "5c1ba25221d8526e7fa7504a8c34b623791ea3a8",
+        "parents": [
+          "cf057e46f376dfdf70ce5f77219bbfa9025ee109"
+        ]
+      },
+      {
+        "sha": "4cbe5beadf56488012a0d9fd18fc2db619a64385",
+        "patch_id": "aff007fef9599bea0e028a732c6c8886eaef666a",
+        "parents": [
+          "49e14da2b5dc06579ff88d0adbc10d41f5040dd9"
+        ]
+      },
+      {
+        "sha": "1945eafd0fa3be1068ac67972026dcc8b320b339",
+        "patch_id": "188f46750355b0b1ba334d7b22d9bc0c15b0eab7",
+        "parents": [
+          "4cbe5beadf56488012a0d9fd18fc2db619a64385"
+        ]
+      },
+      {
+        "sha": "36700f6c99d15db428c6d434c657ac76593df3f9",
+        "patch_id": "a45ef8b749597803fc270706ba962bf61a76449c",
+        "parents": [
+          "1945eafd0fa3be1068ac67972026dcc8b320b339"
+        ]
+      },
+      {
+        "sha": "07f0671e801236a1e110295186c5dcc01888fbae",
+        "patch_id": "1cf362874e87349b2f132380208fb5c75c380998",
+        "parents": [
+          "36700f6c99d15db428c6d434c657ac76593df3f9"
+        ]
+      },
+      {
+        "sha": "26645df4cc115ab0872c7b49349575dca761828c",
+        "patch_id": "a7647b932aa6d76f6863d648a5c82aa41f105f2e",
+        "parents": [
+          "07f0671e801236a1e110295186c5dcc01888fbae"
+        ]
+      },
+      {
+        "sha": "943fb4e0b409da3d7f342f9d18a60188d40cd262",
+        "patch_id": "f5030c771313f8aa7e99f883a152a74560a04e3c",
+        "parents": [
+          "26645df4cc115ab0872c7b49349575dca761828c"
+        ]
+      },
+      {
+        "sha": "212a6773fd7038529526b18f51c20f9043e0f86f",
+        "patch_id": "2bdb164ffaf7c4341aec69e309a500c54bdc2099",
+        "parents": [
+          "943fb4e0b409da3d7f342f9d18a60188d40cd262"
+        ]
+      },
+      {
+        "sha": "848fe67e4d8dd2de21ffb05793c4945127edcb06",
+        "patch_id": "183325e0fed22083c62c2ecc880ddc714c01d904",
+        "parents": [
+          "212a6773fd7038529526b18f51c20f9043e0f86f"
+        ]
+      },
+      {
+        "sha": "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4",
+        "patch_id": "0ec46ff26b04212db75ce02938288c25ff7f0f88",
+        "parents": [
+          "848fe67e4d8dd2de21ffb05793c4945127edcb06"
+        ]
+      },
+      {
+        "sha": "0f9926b9995b06c0651eb2dadc698064676d74bc",
+        "patch_id": "6c96336965bd2b4f4d8b87d09d00a3c35ed973bd",
+        "parents": [
+          "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4"
+        ]
+      },
+      {
+        "sha": "80e9990625b000e9d56a78743a7460ac120d4979",
+        "patch_id": "3ffa31f2bdba15240d4c8aac1dd7db9093fd0db0",
+        "parents": [
+          "0f9926b9995b06c0651eb2dadc698064676d74bc"
+        ]
+      },
+      {
+        "sha": "447e151738cb4e98c5d97cddf47b96e0d1035656",
+        "patch_id": "bf802d141e41e602c8d849e79b43a765552c9a24",
+        "parents": [
+          "80e9990625b000e9d56a78743a7460ac120d4979"
+        ]
+      },
+      {
+        "sha": "025aff71effb03e0fe3bd540079530369e9beaf7",
+        "patch_id": "cc26623a631f4b6eee5255854d1ddef9a1a80180",
+        "parents": [
+          "447e151738cb4e98c5d97cddf47b96e0d1035656"
+        ]
+      },
+      {
+        "sha": "56b7da4a1f54d9470b6541cfff125a964a470683",
+        "patch_id": "86b81bcea8ac4be71fdcab635ea8da8fa5908e9d",
+        "parents": [
+          "025aff71effb03e0fe3bd540079530369e9beaf7"
+        ]
+      },
+      {
+        "sha": "99fe6eed1ad5775c0cba14e9d2a590a9fedee396",
+        "patch_id": "02fd4962fdb724a97ecb2a90a5225a1ac26474db",
+        "parents": [
+          "56b7da4a1f54d9470b6541cfff125a964a470683"
+        ]
+      },
+      {
+        "sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+        "patch_id": "a9842eaf6b12496fe9ab563c6dcf0051206a1786",
+        "parents": [
+          "99fe6eed1ad5775c0cba14e9d2a590a9fedee396"
+        ]
+      },
+      {
+        "sha": "5f9cc22c4140d061253537e908533e6b141d901d",
+        "patch_id": "c330c0f4ef360e930783f58b36f22735b937dcbf",
+        "parents": [
+          "8dde33024b76efc3d32812e7d580f8a33db94c9f"
+        ]
+      },
+      {
+        "sha": "6122751a3e0349d8008237a553495fa402fb0e37",
+        "patch_id": "a55be1655d2b5b491520912fcf76221a6bb421aa",
+        "parents": [
+          "5f9cc22c4140d061253537e908533e6b141d901d"
+        ]
+      },
+      {
+        "sha": "9e0be352ec73aebb2a754188cde9a54592da3f7e",
+        "patch_id": "44db7ae3d63fd1515346acb9f57a0346a4822c42",
+        "parents": [
+          "6122751a3e0349d8008237a553495fa402fb0e37"
+        ]
+      },
+      {
+        "sha": "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9",
+        "patch_id": "26f20d50195550f44d82c5db05309ca974a0fbbe",
+        "parents": [
+          "9e0be352ec73aebb2a754188cde9a54592da3f7e"
+        ]
+      },
+      {
+        "sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+        "patch_id": "26dc20c74b960555355461b8e7ea27708cc03b77",
+        "parents": [
+          "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9"
+        ]
+      }
+    ],
+    "files": [
+      ".github/workflows/g8-local-native-runtime-focused.yml",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/AndroidManifest.xml",
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt",
+      "android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt",
+      "android/app/src/isolated/AndroidManifest.xml",
+      "android/app/src/main/cpp/CMakeLists.txt",
+      "android/app/src/main/cpp/llama_jni.cpp",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt",
+      "docs/agent-reports/g8-agent-b-native-runtime.md",
+      "docs/agent-reports/g8n-native-bonsai-evaluation.md",
+      "docs/agent-reports/g9-native-model-license-comparison.md",
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "docs/agent-reports/g9r-native-runtime-recovery.md",
+      "tools/g8-local-model-native/instrumentation-gate.sh",
+      "tools/g8-local-model-native/preflight.sh",
+      "tools/g8-local-model-native/run-e2e.sh",
+      "tools/g8-local-model-native/summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-cleanup.sh",
+      "tools/g8-local-model-native/test-instrumentation-gate.sh",
+      "tools/g8-local-model-native/test-instrumentation-stream.py",
+      "tools/g8-local-model-native/test-jni-contract.py",
+      "tools/g8-local-model-native/test-preflight.sh",
+      "tools/g8-local-model-native/test-summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-upload-allowlist.py",
+      "tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "tools/g8-local-model-native/verify-instrumentation-stream.py"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 26,
+      "failure": 3,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+    "classification": "SUPERSEDED",
+    "spike_requirement": "NOT_REQUIRED",
+    "disposition_evidence": "#169 descends from its native runtime/artifact stack and adds capability bounds"
+  },
+  {
+    "number": 169,
+    "title": "fix(native): enforce llama.cpp runtime capability bounds",
+    "url": "https://github.com/Yrika819/Serea/pull/169",
+    "head": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+    "base": "0560e1e7bcd13f0194eab8caca89d70ea5a2f142",
+    "merge_base": "00384eb6468214362435140c9a2d848fa2e0f12e",
+    "base_is_ancestor": false,
+    "commits": [
+      {
+        "sha": "090b1e0b719b219765a9125dc93bf2afcb68781f",
+        "patch_id": "f60c06f3144c232000c9b6821c5c3035102aed8a",
+        "parents": [
+          "00384eb6468214362435140c9a2d848fa2e0f12e"
+        ]
+      },
+      {
+        "sha": "2f04e5b1953741d150456dc0780dabb91d3fbf51",
+        "patch_id": "f0c2a93b9d905db8fc739f120592587ff5885483",
+        "parents": [
+          "090b1e0b719b219765a9125dc93bf2afcb68781f"
+        ]
+      },
+      {
+        "sha": "b8d0000c3657526071dc318e901fb5c88d739fe4",
+        "patch_id": "a0777d70383e57dfc1af8fb6accbfda6e168f406",
+        "parents": [
+          "2f04e5b1953741d150456dc0780dabb91d3fbf51"
+        ]
+      },
+      {
+        "sha": "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8",
+        "patch_id": "c9f90509daa192cf14c294494758d74e01ec5981",
+        "parents": [
+          "b8d0000c3657526071dc318e901fb5c88d739fe4"
+        ]
+      },
+      {
+        "sha": "3e8644338599bee5c0b0554a7b3de8a9234c8095",
+        "patch_id": "bb09723e4075492319f1d5b01d975dc98cf26b79",
+        "parents": [
+          "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8"
+        ]
+      },
+      {
+        "sha": "ee5467f791c66912e95fdc86ccdf435f48d5aa33",
+        "patch_id": "8d06151a791847ef6d788b6ff8cc086aec93f48d",
+        "parents": [
+          "3e8644338599bee5c0b0554a7b3de8a9234c8095"
+        ]
+      },
+      {
+        "sha": "082d223d9975492b5dab3c70349f0d6e9fc504de",
+        "patch_id": "4a4be0bbe0b6eac51acbb1af447bd93550478924",
+        "parents": [
+          "ee5467f791c66912e95fdc86ccdf435f48d5aa33"
+        ]
+      },
+      {
+        "sha": "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0",
+        "patch_id": "d3f941259bdd259f1211d5bbfbeb88d71b4239e1",
+        "parents": [
+          "082d223d9975492b5dab3c70349f0d6e9fc504de"
+        ]
+      },
+      {
+        "sha": "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59",
+        "patch_id": "d0e721b519881af2b4c986de6f7457c471924d73",
+        "parents": [
+          "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0"
+        ]
+      },
+      {
+        "sha": "cf057e46f376dfdf70ce5f77219bbfa9025ee109",
+        "patch_id": "a5c5dec357b299a2917f65fe892e6959e5b5c7bd",
+        "parents": [
+          "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59"
+        ]
+      },
+      {
+        "sha": "49e14da2b5dc06579ff88d0adbc10d41f5040dd9",
+        "patch_id": "5c1ba25221d8526e7fa7504a8c34b623791ea3a8",
+        "parents": [
+          "cf057e46f376dfdf70ce5f77219bbfa9025ee109"
+        ]
+      },
+      {
+        "sha": "4cbe5beadf56488012a0d9fd18fc2db619a64385",
+        "patch_id": "aff007fef9599bea0e028a732c6c8886eaef666a",
+        "parents": [
+          "49e14da2b5dc06579ff88d0adbc10d41f5040dd9"
+        ]
+      },
+      {
+        "sha": "1945eafd0fa3be1068ac67972026dcc8b320b339",
+        "patch_id": "188f46750355b0b1ba334d7b22d9bc0c15b0eab7",
+        "parents": [
+          "4cbe5beadf56488012a0d9fd18fc2db619a64385"
+        ]
+      },
+      {
+        "sha": "36700f6c99d15db428c6d434c657ac76593df3f9",
+        "patch_id": "a45ef8b749597803fc270706ba962bf61a76449c",
+        "parents": [
+          "1945eafd0fa3be1068ac67972026dcc8b320b339"
+        ]
+      },
+      {
+        "sha": "07f0671e801236a1e110295186c5dcc01888fbae",
+        "patch_id": "1cf362874e87349b2f132380208fb5c75c380998",
+        "parents": [
+          "36700f6c99d15db428c6d434c657ac76593df3f9"
+        ]
+      },
+      {
+        "sha": "26645df4cc115ab0872c7b49349575dca761828c",
+        "patch_id": "a7647b932aa6d76f6863d648a5c82aa41f105f2e",
+        "parents": [
+          "07f0671e801236a1e110295186c5dcc01888fbae"
+        ]
+      },
+      {
+        "sha": "943fb4e0b409da3d7f342f9d18a60188d40cd262",
+        "patch_id": "f5030c771313f8aa7e99f883a152a74560a04e3c",
+        "parents": [
+          "26645df4cc115ab0872c7b49349575dca761828c"
+        ]
+      },
+      {
+        "sha": "212a6773fd7038529526b18f51c20f9043e0f86f",
+        "patch_id": "2bdb164ffaf7c4341aec69e309a500c54bdc2099",
+        "parents": [
+          "943fb4e0b409da3d7f342f9d18a60188d40cd262"
+        ]
+      },
+      {
+        "sha": "848fe67e4d8dd2de21ffb05793c4945127edcb06",
+        "patch_id": "183325e0fed22083c62c2ecc880ddc714c01d904",
+        "parents": [
+          "212a6773fd7038529526b18f51c20f9043e0f86f"
+        ]
+      },
+      {
+        "sha": "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4",
+        "patch_id": "0ec46ff26b04212db75ce02938288c25ff7f0f88",
+        "parents": [
+          "848fe67e4d8dd2de21ffb05793c4945127edcb06"
+        ]
+      },
+      {
+        "sha": "0f9926b9995b06c0651eb2dadc698064676d74bc",
+        "patch_id": "6c96336965bd2b4f4d8b87d09d00a3c35ed973bd",
+        "parents": [
+          "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4"
+        ]
+      },
+      {
+        "sha": "80e9990625b000e9d56a78743a7460ac120d4979",
+        "patch_id": "3ffa31f2bdba15240d4c8aac1dd7db9093fd0db0",
+        "parents": [
+          "0f9926b9995b06c0651eb2dadc698064676d74bc"
+        ]
+      },
+      {
+        "sha": "447e151738cb4e98c5d97cddf47b96e0d1035656",
+        "patch_id": "bf802d141e41e602c8d849e79b43a765552c9a24",
+        "parents": [
+          "80e9990625b000e9d56a78743a7460ac120d4979"
+        ]
+      },
+      {
+        "sha": "025aff71effb03e0fe3bd540079530369e9beaf7",
+        "patch_id": "cc26623a631f4b6eee5255854d1ddef9a1a80180",
+        "parents": [
+          "447e151738cb4e98c5d97cddf47b96e0d1035656"
+        ]
+      },
+      {
+        "sha": "56b7da4a1f54d9470b6541cfff125a964a470683",
+        "patch_id": "86b81bcea8ac4be71fdcab635ea8da8fa5908e9d",
+        "parents": [
+          "025aff71effb03e0fe3bd540079530369e9beaf7"
+        ]
+      },
+      {
+        "sha": "99fe6eed1ad5775c0cba14e9d2a590a9fedee396",
+        "patch_id": "02fd4962fdb724a97ecb2a90a5225a1ac26474db",
+        "parents": [
+          "56b7da4a1f54d9470b6541cfff125a964a470683"
+        ]
+      },
+      {
+        "sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+        "patch_id": "a9842eaf6b12496fe9ab563c6dcf0051206a1786",
+        "parents": [
+          "99fe6eed1ad5775c0cba14e9d2a590a9fedee396"
+        ]
+      },
+      {
+        "sha": "5f9cc22c4140d061253537e908533e6b141d901d",
+        "patch_id": "c330c0f4ef360e930783f58b36f22735b937dcbf",
+        "parents": [
+          "8dde33024b76efc3d32812e7d580f8a33db94c9f"
+        ]
+      },
+      {
+        "sha": "6122751a3e0349d8008237a553495fa402fb0e37",
+        "patch_id": "a55be1655d2b5b491520912fcf76221a6bb421aa",
+        "parents": [
+          "5f9cc22c4140d061253537e908533e6b141d901d"
+        ]
+      },
+      {
+        "sha": "9e0be352ec73aebb2a754188cde9a54592da3f7e",
+        "patch_id": "44db7ae3d63fd1515346acb9f57a0346a4822c42",
+        "parents": [
+          "6122751a3e0349d8008237a553495fa402fb0e37"
+        ]
+      },
+      {
+        "sha": "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9",
+        "patch_id": "26f20d50195550f44d82c5db05309ca974a0fbbe",
+        "parents": [
+          "9e0be352ec73aebb2a754188cde9a54592da3f7e"
+        ]
+      },
+      {
+        "sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+        "patch_id": "26dc20c74b960555355461b8e7ea27708cc03b77",
+        "parents": [
+          "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9"
+        ]
+      },
+      {
+        "sha": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+        "patch_id": "655384b586a5fcd85f9b5e5f35f31896d11263b3",
+        "parents": [
+          "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e"
+        ]
+      }
+    ],
+    "files": [
+      ".github/workflows/g8-local-native-runtime-focused.yml",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/AndroidManifest.xml",
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt",
+      "android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt",
+      "android/app/src/isolated/AndroidManifest.xml",
+      "android/app/src/main/cpp/CMakeLists.txt",
+      "android/app/src/main/cpp/llama_jni.cpp",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt",
+      "docs/agent-reports/g8-agent-b-native-runtime.md",
+      "docs/agent-reports/g8n-native-bonsai-evaluation.md",
+      "docs/agent-reports/g9-native-model-license-comparison.md",
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "docs/agent-reports/g9r-native-runtime-recovery.md",
+      "tools/g8-local-model-native/instrumentation-gate.sh",
+      "tools/g8-local-model-native/preflight.sh",
+      "tools/g8-local-model-native/run-e2e.sh",
+      "tools/g8-local-model-native/summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-cleanup.sh",
+      "tools/g8-local-model-native/test-instrumentation-gate.sh",
+      "tools/g8-local-model-native/test-instrumentation-stream.py",
+      "tools/g8-local-model-native/test-jni-contract.py",
+      "tools/g8-local-model-native/test-preflight.sh",
+      "tools/g8-local-model-native/test-summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-upload-allowlist.py",
+      "tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "tools/g8-local-model-native/verify-instrumentation-stream.py"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 25,
+      "failure": 4,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+    "classification": "NOVEL",
+    "spike_requirement": "CAN_FOLLOW_SPIKE",
+    "disposition_evidence": "adds runtime capability bounds atop #166 native stack; absent main"
+  },
+  {
+    "number": 178,
+    "title": "fix(native): include Android SDK paths in QEMU preflight",
+    "url": "https://github.com/Yrika819/Serea/pull/178",
+    "head": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+    "base": "08335a0a21f08a3f5061e84a1fb85cea435d18ae",
+    "merge_base": "08335a0a21f08a3f5061e84a1fb85cea435d18ae",
+    "base_is_ancestor": true,
+    "commits": [
+      {
+        "sha": "957d651a654accd4c445d9c6e2c69ec3fdc1633e",
+        "patch_id": "1d9806f80c58e2816beadac09faf823ef7e69df1",
+        "parents": [
+          "08335a0a21f08a3f5061e84a1fb85cea435d18ae"
+        ]
+      },
+      {
+        "sha": "3175daa320e066fa8064864f1b6a0fe90a557a4d",
+        "patch_id": "dccb7f077c41cb506487404cc69d0a45b2fba566",
+        "parents": [
+          "957d651a654accd4c445d9c6e2c69ec3fdc1633e"
+        ]
+      },
+      {
+        "sha": "07da2596ba84c3e4caa23419696dee80418af744",
+        "patch_id": "5de623ab7eed2c9271b897ecd7e16aefdda4572f",
+        "parents": [
+          "3175daa320e066fa8064864f1b6a0fe90a557a4d"
+        ]
+      },
+      {
+        "sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+        "patch_id": "c1c255314b2e4c84bee58e01e808f01d2d240794",
+        "parents": [
+          "07da2596ba84c3e4caa23419696dee80418af744"
+        ]
+      }
+    ],
+    "files": [
+      "tools/g8-local-model-native/check-emulator-host-libraries.sh",
+      "tools/g8-local-model-native/test-emulator-host-libraries.sh"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 26,
+      "failure": 3,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+    "classification": "PATCH_EQUIVALENT",
+    "spike_requirement": "NOT_REQUIRED",
+    "disposition_evidence": "same final HEAD/tree as #179"
+  },
+  {
+    "number": 179,
+    "title": "ci(native): run ARM64 preflight on focused workflow trigger base",
+    "url": "https://github.com/Yrika819/Serea/pull/179",
+    "head": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+    "base": "0560e1e7bcd13f0194eab8caca89d70ea5a2f142",
+    "merge_base": "00384eb6468214362435140c9a2d848fa2e0f12e",
+    "base_is_ancestor": false,
+    "commits": [
+      {
+        "sha": "090b1e0b719b219765a9125dc93bf2afcb68781f",
+        "patch_id": "f60c06f3144c232000c9b6821c5c3035102aed8a",
+        "parents": [
+          "00384eb6468214362435140c9a2d848fa2e0f12e"
+        ]
+      },
+      {
+        "sha": "2f04e5b1953741d150456dc0780dabb91d3fbf51",
+        "patch_id": "f0c2a93b9d905db8fc739f120592587ff5885483",
+        "parents": [
+          "090b1e0b719b219765a9125dc93bf2afcb68781f"
+        ]
+      },
+      {
+        "sha": "b8d0000c3657526071dc318e901fb5c88d739fe4",
+        "patch_id": "a0777d70383e57dfc1af8fb6accbfda6e168f406",
+        "parents": [
+          "2f04e5b1953741d150456dc0780dabb91d3fbf51"
+        ]
+      },
+      {
+        "sha": "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8",
+        "patch_id": "c9f90509daa192cf14c294494758d74e01ec5981",
+        "parents": [
+          "b8d0000c3657526071dc318e901fb5c88d739fe4"
+        ]
+      },
+      {
+        "sha": "3e8644338599bee5c0b0554a7b3de8a9234c8095",
+        "patch_id": "bb09723e4075492319f1d5b01d975dc98cf26b79",
+        "parents": [
+          "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8"
+        ]
+      },
+      {
+        "sha": "ee5467f791c66912e95fdc86ccdf435f48d5aa33",
+        "patch_id": "8d06151a791847ef6d788b6ff8cc086aec93f48d",
+        "parents": [
+          "3e8644338599bee5c0b0554a7b3de8a9234c8095"
+        ]
+      },
+      {
+        "sha": "082d223d9975492b5dab3c70349f0d6e9fc504de",
+        "patch_id": "4a4be0bbe0b6eac51acbb1af447bd93550478924",
+        "parents": [
+          "ee5467f791c66912e95fdc86ccdf435f48d5aa33"
+        ]
+      },
+      {
+        "sha": "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0",
+        "patch_id": "d3f941259bdd259f1211d5bbfbeb88d71b4239e1",
+        "parents": [
+          "082d223d9975492b5dab3c70349f0d6e9fc504de"
+        ]
+      },
+      {
+        "sha": "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59",
+        "patch_id": "d0e721b519881af2b4c986de6f7457c471924d73",
+        "parents": [
+          "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0"
+        ]
+      },
+      {
+        "sha": "cf057e46f376dfdf70ce5f77219bbfa9025ee109",
+        "patch_id": "a5c5dec357b299a2917f65fe892e6959e5b5c7bd",
+        "parents": [
+          "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59"
+        ]
+      },
+      {
+        "sha": "49e14da2b5dc06579ff88d0adbc10d41f5040dd9",
+        "patch_id": "5c1ba25221d8526e7fa7504a8c34b623791ea3a8",
+        "parents": [
+          "cf057e46f376dfdf70ce5f77219bbfa9025ee109"
+        ]
+      },
+      {
+        "sha": "4cbe5beadf56488012a0d9fd18fc2db619a64385",
+        "patch_id": "aff007fef9599bea0e028a732c6c8886eaef666a",
+        "parents": [
+          "49e14da2b5dc06579ff88d0adbc10d41f5040dd9"
+        ]
+      },
+      {
+        "sha": "1945eafd0fa3be1068ac67972026dcc8b320b339",
+        "patch_id": "188f46750355b0b1ba334d7b22d9bc0c15b0eab7",
+        "parents": [
+          "4cbe5beadf56488012a0d9fd18fc2db619a64385"
+        ]
+      },
+      {
+        "sha": "36700f6c99d15db428c6d434c657ac76593df3f9",
+        "patch_id": "a45ef8b749597803fc270706ba962bf61a76449c",
+        "parents": [
+          "1945eafd0fa3be1068ac67972026dcc8b320b339"
+        ]
+      },
+      {
+        "sha": "07f0671e801236a1e110295186c5dcc01888fbae",
+        "patch_id": "1cf362874e87349b2f132380208fb5c75c380998",
+        "parents": [
+          "36700f6c99d15db428c6d434c657ac76593df3f9"
+        ]
+      },
+      {
+        "sha": "26645df4cc115ab0872c7b49349575dca761828c",
+        "patch_id": "a7647b932aa6d76f6863d648a5c82aa41f105f2e",
+        "parents": [
+          "07f0671e801236a1e110295186c5dcc01888fbae"
+        ]
+      },
+      {
+        "sha": "943fb4e0b409da3d7f342f9d18a60188d40cd262",
+        "patch_id": "f5030c771313f8aa7e99f883a152a74560a04e3c",
+        "parents": [
+          "26645df4cc115ab0872c7b49349575dca761828c"
+        ]
+      },
+      {
+        "sha": "212a6773fd7038529526b18f51c20f9043e0f86f",
+        "patch_id": "2bdb164ffaf7c4341aec69e309a500c54bdc2099",
+        "parents": [
+          "943fb4e0b409da3d7f342f9d18a60188d40cd262"
+        ]
+      },
+      {
+        "sha": "848fe67e4d8dd2de21ffb05793c4945127edcb06",
+        "patch_id": "183325e0fed22083c62c2ecc880ddc714c01d904",
+        "parents": [
+          "212a6773fd7038529526b18f51c20f9043e0f86f"
+        ]
+      },
+      {
+        "sha": "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4",
+        "patch_id": "0ec46ff26b04212db75ce02938288c25ff7f0f88",
+        "parents": [
+          "848fe67e4d8dd2de21ffb05793c4945127edcb06"
+        ]
+      },
+      {
+        "sha": "0f9926b9995b06c0651eb2dadc698064676d74bc",
+        "patch_id": "6c96336965bd2b4f4d8b87d09d00a3c35ed973bd",
+        "parents": [
+          "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4"
+        ]
+      },
+      {
+        "sha": "80e9990625b000e9d56a78743a7460ac120d4979",
+        "patch_id": "3ffa31f2bdba15240d4c8aac1dd7db9093fd0db0",
+        "parents": [
+          "0f9926b9995b06c0651eb2dadc698064676d74bc"
+        ]
+      },
+      {
+        "sha": "447e151738cb4e98c5d97cddf47b96e0d1035656",
+        "patch_id": "bf802d141e41e602c8d849e79b43a765552c9a24",
+        "parents": [
+          "80e9990625b000e9d56a78743a7460ac120d4979"
+        ]
+      },
+      {
+        "sha": "025aff71effb03e0fe3bd540079530369e9beaf7",
+        "patch_id": "cc26623a631f4b6eee5255854d1ddef9a1a80180",
+        "parents": [
+          "447e151738cb4e98c5d97cddf47b96e0d1035656"
+        ]
+      },
+      {
+        "sha": "56b7da4a1f54d9470b6541cfff125a964a470683",
+        "patch_id": "86b81bcea8ac4be71fdcab635ea8da8fa5908e9d",
+        "parents": [
+          "025aff71effb03e0fe3bd540079530369e9beaf7"
+        ]
+      },
+      {
+        "sha": "99fe6eed1ad5775c0cba14e9d2a590a9fedee396",
+        "patch_id": "02fd4962fdb724a97ecb2a90a5225a1ac26474db",
+        "parents": [
+          "56b7da4a1f54d9470b6541cfff125a964a470683"
+        ]
+      },
+      {
+        "sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+        "patch_id": "a9842eaf6b12496fe9ab563c6dcf0051206a1786",
+        "parents": [
+          "99fe6eed1ad5775c0cba14e9d2a590a9fedee396"
+        ]
+      },
+      {
+        "sha": "5f9cc22c4140d061253537e908533e6b141d901d",
+        "patch_id": "c330c0f4ef360e930783f58b36f22735b937dcbf",
+        "parents": [
+          "8dde33024b76efc3d32812e7d580f8a33db94c9f"
+        ]
+      },
+      {
+        "sha": "6122751a3e0349d8008237a553495fa402fb0e37",
+        "patch_id": "a55be1655d2b5b491520912fcf76221a6bb421aa",
+        "parents": [
+          "5f9cc22c4140d061253537e908533e6b141d901d"
+        ]
+      },
+      {
+        "sha": "9e0be352ec73aebb2a754188cde9a54592da3f7e",
+        "patch_id": "44db7ae3d63fd1515346acb9f57a0346a4822c42",
+        "parents": [
+          "6122751a3e0349d8008237a553495fa402fb0e37"
+        ]
+      },
+      {
+        "sha": "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9",
+        "patch_id": "26f20d50195550f44d82c5db05309ca974a0fbbe",
+        "parents": [
+          "9e0be352ec73aebb2a754188cde9a54592da3f7e"
+        ]
+      },
+      {
+        "sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+        "patch_id": "26dc20c74b960555355461b8e7ea27708cc03b77",
+        "parents": [
+          "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9"
+        ]
+      },
+      {
+        "sha": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+        "patch_id": "655384b586a5fcd85f9b5e5f35f31896d11263b3",
+        "parents": [
+          "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e"
+        ]
+      },
+      {
+        "sha": "8d4d3cdb44f44d31dc06299579f53427886c35c8",
+        "patch_id": "1b82e3dc399dfaf6a8cdf44a3c292b8da98b9e4a",
+        "parents": [
+          "87af6aab9c9db8f65e18ca18456256e03797ffb3"
+        ]
+      },
+      {
+        "sha": "84586731d29f36e86b5dd05098e382a734fb4b76",
+        "patch_id": "7a40fad824aa9c29e76958d7c81c48dcc81c6f38",
+        "parents": [
+          "8d4d3cdb44f44d31dc06299579f53427886c35c8"
+        ]
+      },
+      {
+        "sha": "e604f8fd1bd619f7996f329e5f2135630dc541aa",
+        "patch_id": "5dc8b4f6ead10a947f8d8222f105700a43d90984",
+        "parents": [
+          "84586731d29f36e86b5dd05098e382a734fb4b76"
+        ]
+      },
+      {
+        "sha": "08335a0a21f08a3f5061e84a1fb85cea435d18ae",
+        "patch_id": "ac26e9d864ea63c8c8494a62dd13e0a14a9d6653",
+        "parents": [
+          "e604f8fd1bd619f7996f329e5f2135630dc541aa"
+        ]
+      },
+      {
+        "sha": "957d651a654accd4c445d9c6e2c69ec3fdc1633e",
+        "patch_id": "1d9806f80c58e2816beadac09faf823ef7e69df1",
+        "parents": [
+          "08335a0a21f08a3f5061e84a1fb85cea435d18ae"
+        ]
+      },
+      {
+        "sha": "3175daa320e066fa8064864f1b6a0fe90a557a4d",
+        "patch_id": "dccb7f077c41cb506487404cc69d0a45b2fba566",
+        "parents": [
+          "957d651a654accd4c445d9c6e2c69ec3fdc1633e"
+        ]
+      },
+      {
+        "sha": "07da2596ba84c3e4caa23419696dee80418af744",
+        "patch_id": "5de623ab7eed2c9271b897ecd7e16aefdda4572f",
+        "parents": [
+          "3175daa320e066fa8064864f1b6a0fe90a557a4d"
+        ]
+      },
+      {
+        "sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+        "patch_id": "c1c255314b2e4c84bee58e01e808f01d2d240794",
+        "parents": [
+          "07da2596ba84c3e4caa23419696dee80418af744"
+        ]
+      }
+    ],
+    "files": [
+      ".github/workflows/g8-local-native-runtime-focused.yml",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/AndroidManifest.xml",
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt",
+      "android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt",
+      "android/app/src/isolated/AndroidManifest.xml",
+      "android/app/src/main/cpp/CMakeLists.txt",
+      "android/app/src/main/cpp/llama_jni.cpp",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt",
+      "docs/agent-reports/g8-agent-b-native-runtime.md",
+      "docs/agent-reports/g8n-native-bonsai-evaluation.md",
+      "docs/agent-reports/g9-native-model-license-comparison.md",
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "docs/agent-reports/g9r-native-runtime-recovery.md",
+      "tools/g8-local-model-native/check-emulator-host-libraries.sh",
+      "tools/g8-local-model-native/instrumentation-gate.sh",
+      "tools/g8-local-model-native/preflight.sh",
+      "tools/g8-local-model-native/run-e2e.sh",
+      "tools/g8-local-model-native/summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-cleanup.sh",
+      "tools/g8-local-model-native/test-emulator-host-libraries.sh",
+      "tools/g8-local-model-native/test-instrumentation-gate.sh",
+      "tools/g8-local-model-native/test-instrumentation-stream.py",
+      "tools/g8-local-model-native/test-jni-contract.py",
+      "tools/g8-local-model-native/test-preflight.sh",
+      "tools/g8-local-model-native/test-summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-upload-allowlist.py",
+      "tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "tools/g8-local-model-native/verify-instrumentation-stream.py"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 26,
+      "failure": 3,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+    "classification": "PATCH_EQUIVALENT",
+    "spike_requirement": "NOT_REQUIRED",
+    "disposition_evidence": "same final HEAD/tree as #178; larger diff from older base"
+  },
+  {
+    "number": 182,
+    "title": "ci(native): verify stable emulator package before ARM64 guest run",
+    "url": "https://github.com/Yrika819/Serea/pull/182",
+    "head": "3ed787d0e4bf678d92a21117e57e81c9b3d0de31",
+    "base": "0560e1e7bcd13f0194eab8caca89d70ea5a2f142",
+    "merge_base": "00384eb6468214362435140c9a2d848fa2e0f12e",
+    "base_is_ancestor": false,
+    "commits": [
+      {
+        "sha": "090b1e0b719b219765a9125dc93bf2afcb68781f",
+        "patch_id": "f60c06f3144c232000c9b6821c5c3035102aed8a",
+        "parents": [
+          "00384eb6468214362435140c9a2d848fa2e0f12e"
+        ]
+      },
+      {
+        "sha": "2f04e5b1953741d150456dc0780dabb91d3fbf51",
+        "patch_id": "f0c2a93b9d905db8fc739f120592587ff5885483",
+        "parents": [
+          "090b1e0b719b219765a9125dc93bf2afcb68781f"
+        ]
+      },
+      {
+        "sha": "b8d0000c3657526071dc318e901fb5c88d739fe4",
+        "patch_id": "a0777d70383e57dfc1af8fb6accbfda6e168f406",
+        "parents": [
+          "2f04e5b1953741d150456dc0780dabb91d3fbf51"
+        ]
+      },
+      {
+        "sha": "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8",
+        "patch_id": "c9f90509daa192cf14c294494758d74e01ec5981",
+        "parents": [
+          "b8d0000c3657526071dc318e901fb5c88d739fe4"
+        ]
+      },
+      {
+        "sha": "3e8644338599bee5c0b0554a7b3de8a9234c8095",
+        "patch_id": "bb09723e4075492319f1d5b01d975dc98cf26b79",
+        "parents": [
+          "ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8"
+        ]
+      },
+      {
+        "sha": "ee5467f791c66912e95fdc86ccdf435f48d5aa33",
+        "patch_id": "8d06151a791847ef6d788b6ff8cc086aec93f48d",
+        "parents": [
+          "3e8644338599bee5c0b0554a7b3de8a9234c8095"
+        ]
+      },
+      {
+        "sha": "082d223d9975492b5dab3c70349f0d6e9fc504de",
+        "patch_id": "4a4be0bbe0b6eac51acbb1af447bd93550478924",
+        "parents": [
+          "ee5467f791c66912e95fdc86ccdf435f48d5aa33"
+        ]
+      },
+      {
+        "sha": "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0",
+        "patch_id": "d3f941259bdd259f1211d5bbfbeb88d71b4239e1",
+        "parents": [
+          "082d223d9975492b5dab3c70349f0d6e9fc504de"
+        ]
+      },
+      {
+        "sha": "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59",
+        "patch_id": "d0e721b519881af2b4c986de6f7457c471924d73",
+        "parents": [
+          "233dbdd4fdb64eeb86b43d48b8e71e5452d9d0a0"
+        ]
+      },
+      {
+        "sha": "cf057e46f376dfdf70ce5f77219bbfa9025ee109",
+        "patch_id": "a5c5dec357b299a2917f65fe892e6959e5b5c7bd",
+        "parents": [
+          "07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59"
+        ]
+      },
+      {
+        "sha": "49e14da2b5dc06579ff88d0adbc10d41f5040dd9",
+        "patch_id": "5c1ba25221d8526e7fa7504a8c34b623791ea3a8",
+        "parents": [
+          "cf057e46f376dfdf70ce5f77219bbfa9025ee109"
+        ]
+      },
+      {
+        "sha": "4cbe5beadf56488012a0d9fd18fc2db619a64385",
+        "patch_id": "aff007fef9599bea0e028a732c6c8886eaef666a",
+        "parents": [
+          "49e14da2b5dc06579ff88d0adbc10d41f5040dd9"
+        ]
+      },
+      {
+        "sha": "1945eafd0fa3be1068ac67972026dcc8b320b339",
+        "patch_id": "188f46750355b0b1ba334d7b22d9bc0c15b0eab7",
+        "parents": [
+          "4cbe5beadf56488012a0d9fd18fc2db619a64385"
+        ]
+      },
+      {
+        "sha": "36700f6c99d15db428c6d434c657ac76593df3f9",
+        "patch_id": "a45ef8b749597803fc270706ba962bf61a76449c",
+        "parents": [
+          "1945eafd0fa3be1068ac67972026dcc8b320b339"
+        ]
+      },
+      {
+        "sha": "07f0671e801236a1e110295186c5dcc01888fbae",
+        "patch_id": "1cf362874e87349b2f132380208fb5c75c380998",
+        "parents": [
+          "36700f6c99d15db428c6d434c657ac76593df3f9"
+        ]
+      },
+      {
+        "sha": "26645df4cc115ab0872c7b49349575dca761828c",
+        "patch_id": "a7647b932aa6d76f6863d648a5c82aa41f105f2e",
+        "parents": [
+          "07f0671e801236a1e110295186c5dcc01888fbae"
+        ]
+      },
+      {
+        "sha": "943fb4e0b409da3d7f342f9d18a60188d40cd262",
+        "patch_id": "f5030c771313f8aa7e99f883a152a74560a04e3c",
+        "parents": [
+          "26645df4cc115ab0872c7b49349575dca761828c"
+        ]
+      },
+      {
+        "sha": "212a6773fd7038529526b18f51c20f9043e0f86f",
+        "patch_id": "2bdb164ffaf7c4341aec69e309a500c54bdc2099",
+        "parents": [
+          "943fb4e0b409da3d7f342f9d18a60188d40cd262"
+        ]
+      },
+      {
+        "sha": "848fe67e4d8dd2de21ffb05793c4945127edcb06",
+        "patch_id": "183325e0fed22083c62c2ecc880ddc714c01d904",
+        "parents": [
+          "212a6773fd7038529526b18f51c20f9043e0f86f"
+        ]
+      },
+      {
+        "sha": "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4",
+        "patch_id": "0ec46ff26b04212db75ce02938288c25ff7f0f88",
+        "parents": [
+          "848fe67e4d8dd2de21ffb05793c4945127edcb06"
+        ]
+      },
+      {
+        "sha": "0f9926b9995b06c0651eb2dadc698064676d74bc",
+        "patch_id": "6c96336965bd2b4f4d8b87d09d00a3c35ed973bd",
+        "parents": [
+          "73fab8b02b15ac1ff7547a3257dccf7f2d8cb6a4"
+        ]
+      },
+      {
+        "sha": "80e9990625b000e9d56a78743a7460ac120d4979",
+        "patch_id": "3ffa31f2bdba15240d4c8aac1dd7db9093fd0db0",
+        "parents": [
+          "0f9926b9995b06c0651eb2dadc698064676d74bc"
+        ]
+      },
+      {
+        "sha": "447e151738cb4e98c5d97cddf47b96e0d1035656",
+        "patch_id": "bf802d141e41e602c8d849e79b43a765552c9a24",
+        "parents": [
+          "80e9990625b000e9d56a78743a7460ac120d4979"
+        ]
+      },
+      {
+        "sha": "025aff71effb03e0fe3bd540079530369e9beaf7",
+        "patch_id": "cc26623a631f4b6eee5255854d1ddef9a1a80180",
+        "parents": [
+          "447e151738cb4e98c5d97cddf47b96e0d1035656"
+        ]
+      },
+      {
+        "sha": "56b7da4a1f54d9470b6541cfff125a964a470683",
+        "patch_id": "86b81bcea8ac4be71fdcab635ea8da8fa5908e9d",
+        "parents": [
+          "025aff71effb03e0fe3bd540079530369e9beaf7"
+        ]
+      },
+      {
+        "sha": "99fe6eed1ad5775c0cba14e9d2a590a9fedee396",
+        "patch_id": "02fd4962fdb724a97ecb2a90a5225a1ac26474db",
+        "parents": [
+          "56b7da4a1f54d9470b6541cfff125a964a470683"
+        ]
+      },
+      {
+        "sha": "8dde33024b76efc3d32812e7d580f8a33db94c9f",
+        "patch_id": "a9842eaf6b12496fe9ab563c6dcf0051206a1786",
+        "parents": [
+          "99fe6eed1ad5775c0cba14e9d2a590a9fedee396"
+        ]
+      },
+      {
+        "sha": "5f9cc22c4140d061253537e908533e6b141d901d",
+        "patch_id": "c330c0f4ef360e930783f58b36f22735b937dcbf",
+        "parents": [
+          "8dde33024b76efc3d32812e7d580f8a33db94c9f"
+        ]
+      },
+      {
+        "sha": "6122751a3e0349d8008237a553495fa402fb0e37",
+        "patch_id": "a55be1655d2b5b491520912fcf76221a6bb421aa",
+        "parents": [
+          "5f9cc22c4140d061253537e908533e6b141d901d"
+        ]
+      },
+      {
+        "sha": "9e0be352ec73aebb2a754188cde9a54592da3f7e",
+        "patch_id": "44db7ae3d63fd1515346acb9f57a0346a4822c42",
+        "parents": [
+          "6122751a3e0349d8008237a553495fa402fb0e37"
+        ]
+      },
+      {
+        "sha": "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9",
+        "patch_id": "26f20d50195550f44d82c5db05309ca974a0fbbe",
+        "parents": [
+          "9e0be352ec73aebb2a754188cde9a54592da3f7e"
+        ]
+      },
+      {
+        "sha": "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e",
+        "patch_id": "26dc20c74b960555355461b8e7ea27708cc03b77",
+        "parents": [
+          "24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9"
+        ]
+      },
+      {
+        "sha": "87af6aab9c9db8f65e18ca18456256e03797ffb3",
+        "patch_id": "655384b586a5fcd85f9b5e5f35f31896d11263b3",
+        "parents": [
+          "7c8bfb05db14e8fbab17db75f4027ae13fc3b87e"
+        ]
+      },
+      {
+        "sha": "8d4d3cdb44f44d31dc06299579f53427886c35c8",
+        "patch_id": "1b82e3dc399dfaf6a8cdf44a3c292b8da98b9e4a",
+        "parents": [
+          "87af6aab9c9db8f65e18ca18456256e03797ffb3"
+        ]
+      },
+      {
+        "sha": "84586731d29f36e86b5dd05098e382a734fb4b76",
+        "patch_id": "7a40fad824aa9c29e76958d7c81c48dcc81c6f38",
+        "parents": [
+          "8d4d3cdb44f44d31dc06299579f53427886c35c8"
+        ]
+      },
+      {
+        "sha": "e604f8fd1bd619f7996f329e5f2135630dc541aa",
+        "patch_id": "5dc8b4f6ead10a947f8d8222f105700a43d90984",
+        "parents": [
+          "84586731d29f36e86b5dd05098e382a734fb4b76"
+        ]
+      },
+      {
+        "sha": "08335a0a21f08a3f5061e84a1fb85cea435d18ae",
+        "patch_id": "ac26e9d864ea63c8c8494a62dd13e0a14a9d6653",
+        "parents": [
+          "e604f8fd1bd619f7996f329e5f2135630dc541aa"
+        ]
+      },
+      {
+        "sha": "957d651a654accd4c445d9c6e2c69ec3fdc1633e",
+        "patch_id": "1d9806f80c58e2816beadac09faf823ef7e69df1",
+        "parents": [
+          "08335a0a21f08a3f5061e84a1fb85cea435d18ae"
+        ]
+      },
+      {
+        "sha": "3175daa320e066fa8064864f1b6a0fe90a557a4d",
+        "patch_id": "dccb7f077c41cb506487404cc69d0a45b2fba566",
+        "parents": [
+          "957d651a654accd4c445d9c6e2c69ec3fdc1633e"
+        ]
+      },
+      {
+        "sha": "07da2596ba84c3e4caa23419696dee80418af744",
+        "patch_id": "5de623ab7eed2c9271b897ecd7e16aefdda4572f",
+        "parents": [
+          "3175daa320e066fa8064864f1b6a0fe90a557a4d"
+        ]
+      },
+      {
+        "sha": "a7f5b407d400b611df2c5f9260eede9b62f41b59",
+        "patch_id": "c1c255314b2e4c84bee58e01e808f01d2d240794",
+        "parents": [
+          "07da2596ba84c3e4caa23419696dee80418af744"
+        ]
+      },
+      {
+        "sha": "3ed787d0e4bf678d92a21117e57e81c9b3d0de31",
+        "patch_id": "7b2946ccc747a96fee46bcfc77ad804047b23b0e",
+        "parents": [
+          "a7f5b407d400b611df2c5f9260eede9b62f41b59"
+        ]
+      }
+    ],
+    "files": [
+      ".github/workflows/g8-local-native-runtime-focused.yml",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/AndroidManifest.xml",
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt",
+      "android/app/src/androidTest/java/app/serea/android/SereaNativeRunnerNoOpTest.kt",
+      "android/app/src/isolated/AndroidManifest.xml",
+      "android/app/src/main/cpp/CMakeLists.txt",
+      "android/app/src/main/cpp/llama_jni.cpp",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt",
+      "docs/agent-reports/g8-agent-b-native-runtime.md",
+      "docs/agent-reports/g8n-native-bonsai-evaluation.md",
+      "docs/agent-reports/g9-native-model-license-comparison.md",
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md",
+      "docs/agent-reports/g9r-native-runtime-recovery.md",
+      "tools/g8-local-model-native/check-emulator-host-libraries.sh",
+      "tools/g8-local-model-native/instrumentation-gate.sh",
+      "tools/g8-local-model-native/preflight.sh",
+      "tools/g8-local-model-native/run-e2e.sh",
+      "tools/g8-local-model-native/summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-cleanup.sh",
+      "tools/g8-local-model-native/test-emulator-host-libraries.sh",
+      "tools/g8-local-model-native/test-emulator-package-version.sh",
+      "tools/g8-local-model-native/test-instrumentation-gate.sh",
+      "tools/g8-local-model-native/test-instrumentation-stream.py",
+      "tools/g8-local-model-native/test-jni-contract.py",
+      "tools/g8-local-model-native/test-preflight.sh",
+      "tools/g8-local-model-native/test-summarize-runtime-metrics.py",
+      "tools/g8-local-model-native/test-upload-allowlist.py",
+      "tools/g8-local-model-native/verify-cmake-clean-checkout.sh",
+      "tools/g8-local-model-native/verify-emulator-package.sh",
+      "tools/g8-local-model-native/verify-instrumentation-stream.py"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 25,
+      "failure": 4,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "3ed787d0e4bf678d92a21117e57e81c9b3d0de31",
+    "classification": "SUPERSEDED",
+    "spike_requirement": "NOT_REQUIRED",
+    "disposition_evidence": "#182 is descendant of #179 with stable emulator provenance"
+  },
+  {
+    "number": 185,
+    "title": "docs: require fresh local-model consent after eviction",
+    "url": "https://github.com/Yrika819/Serea/pull/185",
+    "head": "4db504fc718d1c062c97a4418b005693aa670ad9",
+    "base": "b7e9a7a8a9c10905f0de2f2aaf1c1f41994bd985",
+    "merge_base": "b7e9a7a8a9c10905f0de2f2aaf1c1f41994bd985",
+    "base_is_ancestor": true,
+    "commits": [
+      {
+        "sha": "4db504fc718d1c062c97a4418b005693aa670ad9",
+        "patch_id": "0571ad4e906001aea4aff21a7046ff377e2ecbd4",
+        "parents": [
+          "b7e9a7a8a9c10905f0de2f2aaf1c1f41994bd985"
+        ]
+      }
+    ],
+    "files": [
+      "docs/agent-reports/g9r-native-runtime-limits-followup.md"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 22,
+      "failure": 0,
+      "skipped": 8
+    },
+    "check_total": 30,
+    "checks_target_sha": "4db504fc718d1c062c97a4418b005693aa670ad9",
+    "classification": "NOVEL",
+    "spike_requirement": "MUST_BEFORE_SPIKE",
+    "disposition_evidence": "documentation adds fresh single-use consent after eviction invariant"
+  },
+  {
+    "number": 195,
+    "title": "feat(android): add isolated local model memory trim bridge",
+    "url": "https://github.com/Yrika819/Serea/pull/195",
+    "head": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+    "base": "518b2328f8815fde042c26dc5593958052933a40",
+    "merge_base": "518b2328f8815fde042c26dc5593958052933a40",
+    "base_is_ancestor": true,
+    "commits": [
+      {
+        "sha": "16f49a0c19551df7fe40425a0b2c91281e1cf4d3",
+        "patch_id": "ab07a015eeb5013e6bf7bd6bd8941c17676bddc8",
+        "parents": [
+          "518b2328f8815fde042c26dc5593958052933a40"
+        ]
+      },
+      {
+        "sha": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+        "patch_id": "6c1086d8e90db5d32a4d9987539df5d513d8cbc4",
+        "parents": [
+          "16f49a0c19551df7fe40425a0b2c91281e1cf4d3"
+        ]
+      }
+    ],
+    "files": [
+      "android/app/src/main/java/app/serea/android/LocalModelMemoryLifecycle.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 26,
+      "failure": 2,
+      "skipped": 2
+    },
+    "check_total": 30,
+    "checks_target_sha": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+    "classification": "NOVEL",
+    "spike_requirement": "CAN_FOLLOW_SPIKE",
+    "disposition_evidence": "adds optional ticketed memory trim lifecycle bridge, base #193"
+  },
+  {
+    "number": 198,
+    "title": "test(android): verify local model trim callback lifecycle",
+    "url": "https://github.com/Yrika819/Serea/pull/198",
+    "head": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+    "base": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
+    "merge_base": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
+    "base_is_ancestor": true,
+    "commits": [
+      {
+        "sha": "ede5cca9ccda767f43647491b0dab74f369bedf9",
+        "patch_id": "79a5acbc1e56934a1854e4a484e3076cf4d9c3ab",
+        "parents": [
+          "b30cd55ae0ae991abce86c3f8addee18f0ee0b15"
+        ]
+      },
+      {
+        "sha": "b97791e4afaf6015d159a369235b62255ff5d305",
+        "patch_id": "f077bb084ac07ae9cbd4f14a14b84025dc883918",
+        "parents": [
+          "ede5cca9ccda767f43647491b0dab74f369bedf9"
+        ]
+      },
+      {
+        "sha": "bc5a533e2af627f8c6f8e3ba96dfa56ab85855b3",
+        "patch_id": "e82fcd45b35563553a1053e7b3db7fe9eb64073f",
+        "parents": [
+          "b97791e4afaf6015d159a369235b62255ff5d305"
+        ]
+      },
+      {
+        "sha": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+        "patch_id": "acd5df332c4f4c744be8869f3f8bb2dda5bd7f31",
+        "parents": [
+          "bc5a533e2af627f8c6f8e3ba96dfa56ab85855b3"
+        ]
+      }
+    ],
+    "files": [
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt",
+      "tests/android_emulator_workflow_tests.py",
+      "tests/android_instrumentation_results_tests.py",
+      "tools/run_android_fake_google_process_death.sh",
+      "tools/run_android_instrumentation_campaign.sh"
+    ],
+    "reviews": [],
+    "check_counts": {
+      "success": 29,
+      "failure": 0,
+      "skipped": 1
+    },
+    "check_total": 30,
+    "checks_target_sha": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+    "classification": "NOVEL",
+    "spike_requirement": "CAN_FOLLOW_SPIKE",
+    "disposition_evidence": "adds Android memory lifecycle instrumentation/harness, base #196"
+  }
+]

@@ -80,7 +80,7 @@ class LocalModelNativeRuntimeLifecycleTest {
         val executor = ManualExecutor()
         val backend = backend(calls, coordinator, executor)
 
-        val loading = async { backend.load(modelFile().path, nativeLimits()) }
+        val loading = async { runCatching { backend.load(modelFile().path, nativeLimits()) } }
         runCurrent()
         backend.close()
         backend.close()
@@ -91,6 +91,7 @@ class LocalModelNativeRuntimeLifecycleTest {
         runCurrent()
 
         assertTrue(loading.isCompleted)
+        assertTrue("close wins before native dispatch", loading.await().isFailure)
         assertEquals(0, calls.loadCount)
         assertEquals(0, calls.freeCount)
         assertTrue(backend.awaitReleased(1, TimeUnit.SECONDS))

@@ -712,12 +712,16 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv * en
     });
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeOwnsModel(JNIEnv * env, jobject, jlong engine_id) {
-    return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
+    return jni_boundary<jint>(env, -1, [&]() -> jint {
         std::lock_guard<std::mutex> lock(engine_mutex);
-        return active_engine_id.load(std::memory_order_acquire) == engine_id &&
-                model != nullptr && context != nullptr && sampler != nullptr ? JNI_TRUE : JNI_FALSE;
+        const jlong owner = active_engine_id.load(std::memory_order_acquire);
+        const bool all_empty = model == nullptr && context == nullptr && sampler == nullptr;
+        const bool all_owned = model != nullptr && context != nullptr && sampler != nullptr;
+        if (owner == 0 && all_empty) return 0; // RELEASED
+        if (owner == engine_id && all_owned) return 1; // OWNED
+        return -1; // UNKNOWN, including a different owner or partial state
     });
 }
 

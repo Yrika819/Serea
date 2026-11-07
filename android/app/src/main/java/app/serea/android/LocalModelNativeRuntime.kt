@@ -62,6 +62,7 @@ internal class LlamaCppLocalModelInferenceBackend(
     private var diagnosticInferenceIndex = 0
     @Volatile private var closed = false
     @Volatile private var loaded = false
+    private var loadAttempted = false
 
     override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
         val model = File(modelPath)
@@ -72,6 +73,12 @@ internal class LlamaCppLocalModelInferenceBackend(
         // The reviewed PoC ABI supports 128–512 context tokens, two CPU threads, and at most
         // 256 output tokens. Reject unsupported configurations before native allocation.
         capabilities.validate(limits, model.length())
+        synchronized(lifecycleLock) {
+            if (closed || loaded || loadAttempted) {
+                throw PreDispatchModelChatFailure("This native backend has already entered its single load lifecycle.")
+            }
+            loadAttempted = true
+        }
         try { processNativeReleaseCoordinator.acquire(ownershipToken) }
         catch (failure: IllegalStateException) { throw PreDispatchModelChatFailure("Another native model owns the process runtime.") }
 
@@ -273,12 +280,15 @@ internal class LlamaCppLocalModelInferenceBackend(
 
     /** A failed nativeLoad rolls its partial allocation back before returning false. */
     private fun releaseNativeOwnershipIfPresent(): Boolean {
-        if (!nativeOwnsModel(engineId)) return true
-        return nativeFree(engineId) && !nativeOwnsModel(engineId)
+        return when (nativeOwnsModel(engineId)) {
+            0 -> true // C++ confirms no engine lease and no model/context/sampler pointers.
+            1 -> nativeFree(engineId) && nativeOwnsModel(engineId) == 0
+            else -> false // Foreign owner or inconsistent native state: fail closed.
+        }
     }
 
     private external fun nativeLoad(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean
-    private external fun nativeOwnsModel(engineId: Long): Boolean
+    private external fun nativeOwnsModel(engineId: Long): Int
     private external fun nativeGenerate(engineId: Long, prompt: String, maxOutputTokens: Int, generationId: Long): String
     private external fun nativeCancel(engineId: Long, generationId: Long): Boolean
     private external fun nativeForgetCancellation(engineId: Long, generationId: Long)

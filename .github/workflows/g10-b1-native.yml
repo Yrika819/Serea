@@ -42,9 +42,9 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/llama.cpp" rev-parse HEAD)" = 276378515ceebee5d14bcc8536603dd5c87491a2
           test -z "$(git -C "$RUNNER_TEMP/llama.cpp" status --porcelain --untracked-files=all)"
       - name: Verify opt-in variant isolation
-        run: ./gradlew --no-daemon :app:verifyLocalNativeRuntimeVariantIsolation -PsereaIsolatedNativeRuntime=true
+        run: ./android/gradlew -p android --no-daemon :app:verifyLocalNativeRuntimeVariantIsolation -PsereaIsolatedNativeRuntime=true
       - name: Build isolated APK for one ABI
-        run: ./gradlew --no-daemon :app:assembleIsolated -PsereaIsolatedNativeRuntime=true -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp" -PsereaNativeRuntimeAbi='${{ matrix.abi }}'
+        run: ./android/gradlew -p android --no-daemon :app:assembleIsolated -PsereaIsolatedNativeRuntime=true -PsereaLlamaCppSource="$RUNNER_TEMP/llama.cpp" -PsereaNativeRuntimeAbi='${{ matrix.abi }}'
       - name: Verify APK contains only requested Native ABI
         run: |
           apk=android/app/build/outputs/apk/isolated/app-isolated.apk

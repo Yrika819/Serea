@@ -1,0 +1,1256 @@
+diff --git a/.github/workflows/g8-local-native-runtime-focused.yml b/.github/workflows/g8-local-native-runtime-focused.yml
+index 03e3a14..2808ca3 100644
+--- a/.github/workflows/g8-local-native-runtime-focused.yml
++++ b/.github/workflows/g8-local-native-runtime-focused.yml
+@@ -81,6 +81,8 @@ jobs:
+           bash tools/g8-local-model-native/test-cleanup.sh
+           bash tools/g8-local-model-native/test-instrumentation-gate.sh
+           python3 tools/g8-local-model-native/test-instrumentation-stream.py
++          python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
++          python3 tools/g8-local-model-native/test-upload-allowlist.py .github/workflows/g8-local-native-runtime-focused.yml
+ 
+       - name: Record source identity and run focused JVM contracts
+         shell: bash
+@@ -152,6 +154,34 @@ jobs:
+           sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$build_evidence_dir/source.txt"
+           sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$build_evidence_dir/source.txt"
+ 
++      - name: Assert diagnostic JNI opt-in fails closed for Beta packaging
++        shell: bash
++        run: |
++          set -euo pipefail
++          cd android
++          guard_log="$RUNNER_TEMP/serea-native-beta-guard.log"
++          if ./gradlew --no-daemon --console=plain \
++            -PsereaLocalNativeRuntime=true \
++            -PsereaNativeJniTestSeams=true \
++            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
++            :app:assembleBeta >"$guard_log" 2>&1; then
++            echo 'Unexpectedly configured a Beta package with diagnostic JNI enabled.' >&2
++            exit 1
++          fi
++          grep -F 'sereaLocalNativeRuntime is diagnostic-only' "$guard_log"
++          test ! -e app/build/outputs/apk/beta/app-beta.apk
++
++      - name: Verify only isolated Native build type is enabled
++        shell: bash
++        run: |
++          set -euo pipefail
++          cd android
++          ./gradlew --no-daemon --console=plain \
++            -PsereaLocalNativeRuntime=true \
++            -PsereaNativeJniTestSeams=true \
++            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
++            :app:verifyLocalNativeRuntimeVariantIsolation
++
+       - name: Upload bounded JNI build diagnostics
+         if: always()
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+@@ -279,7 +309,172 @@ jobs:
+           name: serea-g8-local-native-${{ github.event.pull_request.head.sha }}
+           if-no-files-found: warn
+           retention-days: 14
+-          path: ${{ steps.native_e2e.outputs.evidence_dir }}
++          path: |
++            ${{ steps.native_e2e.outputs.evidence_dir }}/preflight.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/source-and-runtime.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/model-stage.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml
++            ${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/instrumentation-command-status.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt
++            ${{ steps.native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt
++
++      - name: Remove temporary model fixture
++        if: always()
++        run: rm -f "$RUNNER_TEMP/serea-g8-smollm2.gguf"
++
++  native-runtime-arm64-guest-experiment:
++    name: Bounded API 35 ARM64 guest experiment (x86_64 host, software emulation)
++    runs-on: ubuntu-24.04
++    timeout-minutes: 30
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          persist-credentials: false
++          fetch-depth: 0
++          ref: ${{ github.event.pull_request.head.sha }}
++
++      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
++        with:
++          distribution: temurin
++          java-version: '17'
++          cache: gradle
++
++      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
++        with:
++          packages: platform-tools
++
++      - name: Install and verify pinned API 35 ARM64 guest packages
++        shell: bash
++        run: |
++          set -euo pipefail
++          sdkmanager \
++            'platforms;android-35' \
++            'build-tools;35.0.0' \
++            'ndk;28.2.13676358' \
++            'cmake;3.31.6' \
++            'emulator' \
++            'system-images;android-35;google_apis;arm64-v8a'
++          test "$(uname -m)" = x86_64
++          grep -Fx 'Pkg.Revision=9' \
++            "$ANDROID_HOME/system-images/android-35/google_apis/arm64-v8a/source.properties"
++          "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/native-arm64-emulator-version.txt"
++          grep -F '37.3.6' "$RUNNER_TEMP/native-arm64-emulator-version.txt"
++          mkdir -p evidence/native-arm64-guest
++          {
++            echo 'host_arch=x86_64'
++            echo 'guest_abi=arm64-v8a'
++            echo 'android_api=35'
++            echo 'system_image_revision=9'
++            echo 'emulator_version=37.3.6'
++            echo 'acceleration=disabled_software_emulation'
++            echo 'runtime_classification=ARM64_GUEST_SOFTWARE_EMULATED'
++            echo "source_sha=$(git rev-parse HEAD)"
++            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
++          } > evidence/native-arm64-guest/host-and-image.txt
++
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          repository: ggml-org/llama.cpp
++          ref: 276378515ceebee5d14bcc8536603dd5c87491a2
++          path: llama.cpp
++          persist-credentials: false
++          fetch-depth: 1
++
++      - name: Verify source contracts and build isolated ARM64 JNI APK
++        shell: bash
++        run: |
++          set -euo pipefail
++          bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
++          python3 tools/g8-local-model-native/test-jni-contract.py
++          python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
++          bash tools/g8-local-model-native/test-cleanup.sh
++          bash tools/g8-local-model-native/test-preflight.sh
++          cd android
++          ./gradlew --no-daemon --console=plain \
++            -PsereaLocalNativeRuntime=true \
++            -PsereaNativeJniTestSeams=true \
++            -PsereaNativeRuntimeExpectedAbi=arm64-v8a \
++            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
++            :app:assembleIsolated :app:assembleIsolatedAndroidTest
++          test -s app/build/outputs/apk/isolated/app-isolated.apk
++          test -s app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
++          unzip -Z1 app/build/outputs/apk/isolated/app-isolated.apk | grep -Fx 'lib/arm64-v8a/libserea_local_llama.so'
++
++      - name: Download and verify one pinned model fixture
++        shell: bash
++        run: |
++          set -euo pipefail
++          python3 - <<'PY'
++          import hashlib
++          import os
++          from pathlib import Path
++          from urllib.request import Request, urlopen
++
++          size_limit = 101_016_128
++          expected = 'e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5'
++          url = ('https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/'
++                 '1076b85d135017971845b19b8d07df1479155988/SmolLM2-135M-Q4_K_M.gguf')
++          destination = Path(os.environ['RUNNER_TEMP']) / 'serea-g8-smollm2.gguf'
++          digest = hashlib.sha256()
++          total = 0
++          with urlopen(Request(url, headers={'User-Agent': 'Serea-G8-ARM64-guest/1'}), timeout=30) as response:
++              with destination.open('wb') as output:
++                  while chunk := response.read(1024 * 1024):
++                      total += len(chunk)
++                      if total > size_limit:
++                          raise SystemExit('pinned model fixture exceeded its byte bound')
++                      digest.update(chunk)
++                      output.write(chunk)
++          if total != size_limit or digest.hexdigest() != expected:
++              destination.unlink(missing_ok=True)
++              raise SystemExit('pinned model size/hash mismatch')
++          print(f'model_fixture_size={total} sha256={digest.hexdigest()} weights_not_committed=true')
++          PY
++
++      - name: Run bounded API 35 ARM64 guest inference without acceleration
++        id: arm64_native_e2e
++        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
++        timeout-minutes: 25
++        env:
++          SEREA_DISPOSABLE_CI_EMULATOR: '1'
++          SEREA_EXPECTED_ANDROID_API: '35'
++          SEREA_EXPECTED_NATIVE_ABI: arm64-v8a
++        with:
++          api-level: 35
++          target: google_apis
++          arch: arm64-v8a
++          profile: pixel_7
++          force-avd-creation: true
++          emulator-boot-timeout: 900
++          disable-linux-hw-accel: true
++          disable-animations: true
++          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
++          script: bash tools/g8-local-model-native/run-e2e.sh
++
++      - name: Capture bounded ARM64 guest startup diagnostics
++        if: always()
++        shell: bash
++        run: |
++          mkdir -p evidence/native-arm64-guest
++          adb devices -l > evidence/native-arm64-guest/adb-devices.txt 2>&1 || true
++          if [ -s "$RUNNER_TEMP/emulator.log" ]; then
++            tail -c 65536 "$RUNNER_TEMP/emulator.log" > evidence/native-arm64-guest/emulator.log
++          fi
++
++      - name: Upload ARM64 experiment evidence
++        if: always()
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: serea-native-arm64-guest-${{ github.event.pull_request.head.sha }}
++          if-no-files-found: warn
++          retention-days: 14
++          path: |
++            evidence/native-arm64-guest/
++            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt
++            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/source-and-runtime.txt
++            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit-verification.txt
++            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt
+ 
+       - name: Remove temporary model fixture
+         if: always()
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index 1449f1d..f428329 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -36,10 +36,38 @@ val updateTestSigningInputsReady = listOf(
+ // library with -PsereaLocalNativeRuntime=true and -PsereaLlamaCppSource=<checkout>.
+ val sereaLocalNativeRuntime = providers.gradleProperty("sereaLocalNativeRuntime").orNull == "true"
+ val sereaNativeJniTestSeams = providers.gradleProperty("sereaNativeJniTestSeams").orNull == "true"
++val sereaNativeRuntimeExpectedAbi = if (sereaLocalNativeRuntime) {
++    providers.gradleProperty("sereaNativeRuntimeExpectedAbi").orNull ?: "x86_64"
++} else "NOT_RUN"
++if (sereaLocalNativeRuntime && sereaNativeRuntimeExpectedAbi !in setOf("x86_64", "arm64-v8a")) {
++    error("sereaNativeRuntimeExpectedAbi must be x86_64 or arm64-v8a for the isolated diagnostic.")
++}
++val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
++    gradle.startParameter.taskNames.all {
++        it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation"
++    }
++if (sereaLocalNativeRuntime) {
++    val variantTaskPrefixes = listOf(
++        "assemble", "bundle", "install", "uninstall", "package", "test", "connected",
++        "compile", "process", "merge", "externalNativeBuild",
++    )
++    val requestedVariantTasks = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
++        .filter { task -> variantTaskPrefixes.any { prefix -> task.startsWith(prefix, ignoreCase = true) } }
++    val nonIsolatedTask = requestedVariantTasks.firstOrNull { !it.contains("isolated", ignoreCase = true) }
++    val isolationVerifierRequested = gradle.startParameter.taskNames.any {
++        it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation"
++    }
++    if (nonIsolatedTask != null || (requestedVariantTasks.isEmpty() && !isolationVerifierRequested)) {
++        error(
++            "sereaLocalNativeRuntime is diagnostic-only: request explicit isolated variant tasks; " +
++                "release, beta, debug, and aggregate packaging are denied.",
++        )
++    }
++}
+ if (sereaNativeJniTestSeams && !sereaLocalNativeRuntime) {
+     error("JNI failure injection is only available with the isolated native runtime diagnostic.")
+ }
+-val sereaLlamaCppSource = if (sereaLocalNativeRuntime) {
++val sereaLlamaCppSource = if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+     providers.gradleProperty("sereaLlamaCppSource").orNull
+         ?: providers.environmentVariable("SEREA_LLAMA_CPP_SOURCE").orNull
+         ?: error("Set -PsereaLlamaCppSource or SEREA_LLAMA_CPP_SOURCE for the opt-in native runtime build.")
+@@ -52,10 +80,13 @@ if (updateCompatibilityTest && (updateTestVersionCode == null || updateTestVersi
+     error("The isolated update compatibility variant requires a positive -PsereaVersionCode.")
+ }
+ 
++val nativeEnabledBuildTypes = mutableSetOf<String>()
++val nativeDisabledBuildTypes = mutableSetOf<String>()
++
+ android {
+     namespace = "app.serea.android"
+     compileSdk = 35
+-    if (sereaLocalNativeRuntime) ndkVersion = "28.2.13676358"
++    if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) ndkVersion = "28.2.13676358"
+     testBuildType = "isolated"
+ 
+     defaultConfig {
+@@ -64,9 +95,10 @@ android {
+         targetSdk = 35
+         versionCode = updateTestVersionCode ?: 1
+         versionName = "0.1.0-demo"
+-        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", sereaLocalNativeRuntime.toString())
++        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
++        buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"NOT_RUN\"")
+         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+-        if (sereaLocalNativeRuntime) {
++        if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+             ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+             externalNativeBuild {
+                 cmake {
+@@ -97,7 +129,7 @@ android {
+ 
+     buildFeatures { buildConfig = true }
+ 
+-    if (sereaLocalNativeRuntime) {
++    if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+         externalNativeBuild {
+             cmake {
+                 path = file("src/main/cpp/CMakeLists.txt")
+@@ -134,6 +166,8 @@ android {
+         }
+         create("isolated") {
+             initWith(getByName("debug"))
++            buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", sereaLocalNativeRuntime.toString())
++            buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"$sereaNativeRuntimeExpectedAbi\"")
+             // Instrumentation's process-death harness uses `run-as` to inspect this app's
+             // private database, so the disposable isolated target must remain debuggable.
+             applicationIdSuffix = ".isolated"
+@@ -176,6 +210,35 @@ android {
+     testOptions { unitTests.isIncludeAndroidResources = true }
+ }
+ 
++androidComponents {
++    beforeVariants(selector().all()) { variant ->
++        if (sereaLocalNativeRuntime) {
++            val buildType = variant.buildType.orEmpty()
++            if (buildType == "isolated") {
++                nativeEnabledBuildTypes += buildType
++            } else {
++                nativeDisabledBuildTypes += buildType
++                // Do not even create variants that could package or expose diagnostic JNI.
++                variant.enable = false
++            }
++        }
++    }
++}
++
++tasks.register("verifyLocalNativeRuntimeVariantIsolation") {
++    group = "verification"
++    description = "Verifies diagnostic JNI opt-in enables only the isolated build type."
++    doLast {
++        check(sereaLocalNativeRuntime) { "Run this check with -PsereaLocalNativeRuntime=true." }
++        check(nativeEnabledBuildTypes == setOf("isolated")) {
++            "Expected only isolated JNI variant; enabled=$nativeEnabledBuildTypes"
++        }
++        check(nativeDisabledBuildTypes.containsAll(setOf("debug", "release", "beta"))) {
++            "Expected debug/release/beta JNI variants to be disabled; disabled=$nativeDisabledBuildTypes"
++        }
++    }
++}
++
+ // AGP omits dependency baseline profiles from debuggable APKs. The isolated target stays
+ // debuggable for its `run-as` based storage/process-death harness, so copy AGP's compiled
+ // variant profile into its asset set explicitly and fail if either artifact is missing.
+diff --git a/android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt b/android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt
+index 4648417..1fd54e8 100644
+--- a/android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt
++++ b/android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt
+@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
+ import java.io.File
+ import java.security.MessageDigest
+ import java.util.concurrent.TimeUnit
++import java.util.concurrent.ConcurrentHashMap
+ 
+ /** Non-Required diagnostic: exercises the product ModelChatPort and native backend offline. */
+ @RunWith(AndroidJUnit4::class)
+@@ -46,7 +47,9 @@ class LocalModelNativeRuntimeE2ETest {
+                 Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
+                 Build.HARDWARE.contains("goldfish", ignoreCase = true),
+         )
+-        assertEquals("diagnostic runner must execute x86_64 JNI", "x86_64", Build.SUPPORTED_ABIS.firstOrNull())
++        val runtimeAbi = Build.SUPPORTED_ABIS.firstOrNull()
++        assertTrue("runtime ABI must be one of the built native targets", runtimeAbi in setOf("x86_64", "arm64-v8a"))
++        assertEquals("emulator ABI must match this diagnostic build", BuildConfig.LOCAL_NATIVE_RUNTIME_EXPECTED_ABI, runtimeAbi)
+ 
+         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
+         val testContext = InstrumentationRegistry.getInstrumentation().context
+@@ -81,20 +84,27 @@ class LocalModelNativeRuntimeE2ETest {
+             expectedSizeBytes = MODEL_SIZE,
+             runtimeName = "llama.cpp",
+             runtimeRevision = LLAMA_REVISION,
+-            supportedAbis = setOf("x86_64"),
++            supportedAbis = setOf("x86_64", "arm64-v8a"),
+         )
+         val jniSeam = NativeJniFailureSeam()
++        val nativeMeasurements = ConcurrentHashMap<String, Long>()
+         // Keep the concrete diagnostic handle so the test can await the backend's asynchronous
+         // native release after the product adapter performs its interface-level close().
+-        val backend = LlamaCppLocalModelInferenceBackend()
++        val backend = LlamaCppLocalModelInferenceBackend { name, pssKb ->
++            // Store only whitelisted metric keys and integer PSS values, never prompt/model text.
++            if (name.matches(Regex("(?:load_(?:before|after)_kb|inference_[0-9]+_(?:before|after|terminal)_kb)")) && pssKb >= 0) {
++                nativeMeasurements[name] = pssKb
++            }
++        }
+         val adapter = LocalModelChatAdapter(
+             artifact = artifact,
+             modelFile = modelFile,
+             backendFactory = LocalModelInferenceBackendFactory { backend },
+-            deviceAbi = "x86_64",
++            deviceAbi = checkNotNull(runtimeAbi),
+             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
+         )
+         val usageDao = NativeRuntimeUsageDao()
++        var cancellationLatencyForSummaryMs = -1L
+         val now = { SystemClock.elapsedRealtime() }
+         val authorization = LocalModelAuthorizationRegistry(
+             clock = now,
+@@ -180,6 +190,7 @@ class LocalModelNativeRuntimeE2ETest {
+             adapter.close()
+             backend.close()
+             assertTrue("JNI model resources must release after repeated close", backend.awaitReleased(30, TimeUnit.SECONDS))
++            nativeMeasurements["main_release_pss_kb"] = Debug.getPss().toLong()
+             Log.i("SereaLocalNativeRuntime", "stage=backend_double_close_release_pass pss_kb=${Debug.getPss()}")
+         }
+ 
+@@ -190,7 +201,7 @@ class LocalModelNativeRuntimeE2ETest {
+             artifact = artifact,
+             modelFile = modelFile,
+             backendFactory = LocalModelInferenceBackendFactory { regeneratedBackend },
+-            deviceAbi = "x86_64",
++            deviceAbi = checkNotNull(runtimeAbi),
+             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
+         )
+         val regeneratedDao = NativeRuntimeUsageDao()
+@@ -230,7 +241,7 @@ class LocalModelNativeRuntimeE2ETest {
+             artifact = artifact,
+             modelFile = modelFile,
+             backendFactory = LocalModelInferenceBackendFactory { cancellationBackend },
+-            deviceAbi = "x86_64",
++            deviceAbi = checkNotNull(runtimeAbi),
+             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 256, workerThreads = 2),
+         )
+         val cancellationDao = NativeRuntimeUsageDao()
+@@ -344,6 +355,7 @@ class LocalModelNativeRuntimeE2ETest {
+                 cancellationBackend.awaitReleased(15, TimeUnit.SECONDS),
+             )
+             val cancellationLatencyMs = SystemClock.elapsedRealtime() - cancellationStarted
++            cancellationLatencyForSummaryMs = cancellationLatencyMs
+             assertTrue("JNI cancel must reach an active native generation", jniSeam.nativeCancelCount() > cancelCountBefore)
+             assertEquals(
+                 "nativeFree must observe the same generation's cancellation result before release",
+@@ -376,6 +388,26 @@ class LocalModelNativeRuntimeE2ETest {
+         }
+ 
+         assertTrue("app-private fixture cleanup must succeed", modelFile.delete() || !modelFile.exists())
++        nativeMeasurements["cancelled_release_pss_kb"] = Debug.getPss().toLong()
++        val metricKeys = listOf(
++            "load_before_kb", "load_after_kb",
++            "inference_1_before_kb", "inference_1_after_kb",
++            "inference_2_before_kb", "inference_2_after_kb",
++            "main_release_pss_kb", "cancelled_release_pss_kb",
++        )
++        val requiredPssKeys = setOf(
++            "load_before_kb", "load_after_kb",
++            "inference_1_before_kb", "inference_1_after_kb",
++            "inference_2_before_kb", "inference_2_after_kb",
++            "main_release_pss_kb", "cancelled_release_pss_kb",
++        )
++        val pssMeasurementStatus = if (requiredPssKeys.all(nativeMeasurements::containsKey)) "PASS" else "NOT_AVAILABLE"
++        val boundedMeasurements = metricKeys.map { key -> "$key=${nativeMeasurements[key] ?: "NOT_AVAILABLE"}" }
++        Log.i(
++            "SereaLocalNativeRuntime",
++            "metric_summary=pss_measurement_status=$pssMeasurementStatus," +
++                "${boundedMeasurements.joinToString(",")},cancel_to_release_ms=$cancellationLatencyForSummaryMs",
++        )
+         Log.i("SereaLocalNativeRuntime", "stage=all_native_checks_pass pss_after_release_kb=${Debug.getPss()}")
+     }
+ 
+diff --git a/android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt b/android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt
+index 68fb6f1..49cbcb9 100644
+--- a/android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt
++++ b/android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt
+@@ -54,15 +54,21 @@ internal fun interface LocalModelInferenceBackendFactory {
+     fun create(): LocalModelInferenceBackend
+ }
+ 
+-/** Limits passed to the native backend; its implementation must reject unsupported values. */
++/**
++ * Limits passed to the backend; its implementation must reject unsupported values.
++ * `maxModelFileBytes` bounds the immutable model file only. Runtime RSS/PSS is measured
++ * separately in diagnostic runs and is not a hard memory-allocation cap.
++ */
+ data class LocalModelRuntimeLimits(
+-    val maxResidentMemoryBytes: Long = 768L * 1024 * 1024,
+-    val contextTokens: Int = 2_048,
++    val maxModelFileBytes: Long = 768L * 1024 * 1024,
++    // Keep the default compatible with the currently implemented llama.cpp JNI profile.
++    // Backends with a larger context must declare and validate their own capability first.
++    val contextTokens: Int = 512,
+     val maxOutputTokens: Int = 256,
+     val workerThreads: Int = 2,
+ ) {
+     init {
+-        require(maxResidentMemoryBytes in (64L * 1024 * 1024)..(2L * 1024 * 1024 * 1024))
++        require(maxModelFileBytes in (64L * 1024 * 1024)..(2L * 1024 * 1024 * 1024))
+         require(contextTokens in 128..32_768 && maxOutputTokens in 1..4_096 && workerThreads in 1..8)
+     }
+ }
+@@ -240,7 +246,10 @@ internal class LocalModelChatAdapter(
+     }
+ 
+     private fun verifyModelFile() {
+-        if (!modelFile.isFile || !modelFile.canRead() || modelFile.length() != artifact.expectedSizeBytes) {
++        if (!modelFile.isFile || !modelFile.canRead() ||
++            modelFile.length() > runtimeLimits.maxModelFileBytes ||
++            modelFile.length() != artifact.expectedSizeBytes
++        ) {
+             throw PreDispatchModelChatFailure("The verified local model file is unavailable.")
+         }
+         val digest = MessageDigest.getInstance("SHA-256")
+diff --git a/android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt b/android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt
+index f889317..35130f7 100644
+--- a/android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt
++++ b/android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt
+@@ -1,6 +1,7 @@
+ package app.serea.android
+ 
+ import java.io.File
++import android.os.Debug
+ import java.util.concurrent.CountDownLatch
+ import java.util.concurrent.Executors
+ import java.util.concurrent.TimeUnit
+@@ -31,7 +32,10 @@ internal class LlamaCppLocalModelInferenceBackendFactory(
+  * The native library owns one process-wide llama.cpp model lease and serializes every operation.
+  * `close()` only signals cancellation and queues release; it never waits on the Android caller.
+  */
+-internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
++internal class LlamaCppLocalModelInferenceBackend(
++    /** Optional bounded diagnostic hook; values are PSS KiB and never contain model output. */
++    private val diagnosticMetric: ((String, Long) -> Unit)? = null,
++) : LocalModelInferenceBackend {
+     private data class Generation(
+         val id: Long,
+         var mayRunInNative: Boolean = false,
+@@ -53,13 +57,14 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+     private val activeGenerations = linkedSetOf<Generation>()
+     private val releaseComplete = CountDownLatch(1)
+     private var nextGenerationId = 1L
++    private var diagnosticInferenceIndex = 0
+     @Volatile private var closed = false
+     @Volatile private var loaded = false
+ 
+     override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
+         val model = File(modelPath)
+-        if (!model.isFile || !model.canRead() || model.length() > limits.maxResidentMemoryBytes) {
+-            throw PreDispatchModelChatFailure("The model file exceeds the native runtime's input bound.")
++        if (!model.isFile || !model.canRead() || model.length() > limits.maxModelFileBytes) {
++            throw PreDispatchModelChatFailure("The model file exceeds the native runtime's file-size bound.")
+         }
+         // The reviewed PoC ABI supports 128–512 context tokens, two CPU threads, and at most
+         // 256 output tokens. Reject unsupported configurations before native allocation.
+@@ -76,12 +81,14 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+                             return@execute
+                         }
+                         try {
++                            reportPss("load_before_kb")
+                             val success = nativeLoad(
+                                 engineId,
+                                 model.canonicalPath,
+                                 limits.contextTokens,
+                                 limits.workerThreads,
+                             )
++                            reportPss("load_after_kb")
+                             val publish = synchronized(lifecycleLock) {
+                                 if (success && !closed && continuation.isActive) loaded = true
+                                 success && !closed && continuation.isActive
+@@ -142,7 +149,10 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+                         return@execute
+                     }
+                     try {
++                        val measurementIndex = synchronized(lifecycleLock) { ++diagnosticInferenceIndex }
++                        reportPss("inference_${measurementIndex}_before_kb")
+                         val output = nativeGenerate(engineId, prompt, maxOutputTokens, generation.id)
++                        reportPss("inference_${measurementIndex}_after_kb")
+                         val usage = nativeUsageCounts(engineId, generation.id)
+                         val inputTokens = usage?.getOrNull(0)?.takeIf { it >= 0 }
+                         val outputTokens = usage?.getOrNull(1)?.takeIf { it >= 0 }
+@@ -152,6 +162,10 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+                     } catch (failure: Throwable) {
+                         continuation.failIfActive(failure)
+                     } finally {
++                        // Record a terminal sample even when generation throws or is cancelled.
++                        // The callback is optional and its failures cannot affect inference.
++                        val measurementIndex = synchronized(lifecycleLock) { diagnosticInferenceIndex }
++                        reportPss("inference_${measurementIndex}_terminal_kb")
+                         synchronized(lifecycleLock) {
+                             generation.completed = true
+                             activeGenerations.remove(generation)
+@@ -214,6 +228,11 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+         if (isActive) resumeWithException(failure)
+     }
+ 
++    private fun reportPss(name: String) {
++        val sink = diagnosticMetric ?: return
++        runCatching { sink(name, Debug.getPss().toLong()) }
++    }
++
+     private external fun nativeLoad(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean
+     private external fun nativeGenerate(engineId: Long, prompt: String, maxOutputTokens: Int, generationId: Long): String
+     private external fun nativeCancel(engineId: Long, generationId: Long): Boolean
+diff --git a/android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt b/android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
+index 975bdfb..bcd9d92 100644
+--- a/android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
++++ b/android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
+@@ -10,6 +10,7 @@ import kotlinx.coroutines.withTimeout
+ import org.junit.Assert.*
+ import org.junit.Test
+ import java.io.File
++import java.io.RandomAccessFile
+ import java.security.MessageDigest
+ import java.time.Instant
+ import java.util.concurrent.CountDownLatch
+@@ -19,6 +20,38 @@ class LocalModelChatAdapterTest {
+     private val now = 1_800_000_000_000L
+     private val modelId = "serea-local/SmolLM2-135M-Q4_K_M"
+ 
++    @Test fun defaultRuntimeLimitsMatchCurrentNativeBackendAndNameFileBoundAccurately() {
++        val defaults = LocalModelRuntimeLimits()
++        assertEquals(512, defaults.contextTokens)
++        assertEquals(768L * 1024 * 1024, defaults.maxModelFileBytes)
++        assertEquals(256, defaults.maxOutputTokens)
++        assertEquals(2, defaults.workerThreads)
++    }
++
++    @Test fun modelFileLimitRejectsOversizeBeforeHashingOrNativeLoad() = runBlocking {
++        val file = File.createTempFile("serea-model-oversize", ".gguf")
++        RandomAccessFile(file, "rw").use { it.setLength(64L * 1024 * 1024 + 1) }
++        val backend = FakeBackend()
++        val artifact = artifact(file, sha256 = "0".repeat(64))
++        val adapter = LocalModelChatAdapter(
++            artifact = artifact,
++            modelFile = file,
++            backendFactory = LocalModelInferenceBackendFactory { backend },
++            deviceAbi = "x86_64",
++            runtimeLimits = LocalModelRuntimeLimits(maxModelFileBytes = 64L * 1024 * 1024),
++        )
++        try {
++            val request = request("too large", sendId = "send-file-limit")
++            assertTrue(runCatching {
++                gated(adapter, registry { now }, request).send(request)
++            }.exceptionOrNull() is PreDispatchModelChatFailure)
++            assertEquals("Oversized model must not enter backend loading", 0, backend.loadCalls)
++        } finally {
++            adapter.close()
++            file.delete()
++        }
++    }
++
+     @Test fun adapterMatchesModelChatPortAndCarriesMeasuredUsageAcrossTurns() = runBlocking {
+         val file = tempModel(byteArrayOf(1, 2, 3, 4))
+         val backend = FakeBackend()
+@@ -30,6 +63,8 @@ class LocalModelChatAdapterTest {
+             assertEquals("local answer", response.text)
+             assertEquals(ProviderUsage(4, 2), response.usage)
+             assertTrue(backend.loaded)
++            assertEquals("default context must fit the current JNI backend", 512, backend.lastLimits?.contextTokens)
++            assertEquals(768L * 1024 * 1024, backend.lastLimits?.maxModelFileBytes)
+             assertEquals(1, backend.generateCalls)
+ 
+             val context = listOf(ContextMessage(
+@@ -769,6 +804,7 @@ class LocalModelChatAdapterTest {
+         var cancelled = false
+         var generateCalls = 0
+         var loadCalls = 0
++        var lastLimits: LocalModelRuntimeLimits? = null
+         var lastPrompt: String? = null
+         val generateEntry = CompletableDeferred<Unit>()
+         val generationStarted = CompletableDeferred<Unit>()
+@@ -781,6 +817,7 @@ class LocalModelChatAdapterTest {
+             loadStarted.complete(Unit)
+             if (blockLoad) releaseLoad.await()
+             if (cancelled) throw LocalModelBackendStartDeniedException()
++            lastLimits = limits
+             loadCalls++
+             if (failLoad) error("synthetic native load failure")
+             loaded = true
+diff --git a/docs/agent-reports/g9r-native-runtime-limits-followup.md b/docs/agent-reports/g9r-native-runtime-limits-followup.md
+new file mode 100644
+index 0000000..ad60452
+--- /dev/null
++++ b/docs/agent-reports/g9r-native-runtime-limits-followup.md
+@@ -0,0 +1,52 @@
++# G9R Native Runtime Limits Follow-up
++
++## Authority and scope
++
++- Base source: PR #160 `025aff71effb03e0fe3bd540079530369e9beaf7`.
++- Base tree: `73ff9019802aba4a7ac9437e52ff407842fbfcdc`.
++- This branch adds Native diagnostics and CI only. It does not modify the app composition root or connect ordinary Chat.
++- Current x86_64 inference evidence remains source-bound to the existing PR #160 run; this follow-up has no new emulator execution yet.
++
++## Changes
++
++- Default `LocalModelRuntimeLimits.contextTokens` is now 512, matching the current Kotlin/JNI backend bound. Unsupported explicit limits still fail closed before native allocation.
++- `maxResidentMemoryBytes` is renamed `maxModelFileBytes`. The limit checks model-file length before hashing/loading. It is not RSS/PSS enforcement.
++- Optional diagnostics sample Android process PSS in KiB around model load, each of the first two inference turns, and release. Cancellation-to-release latency is retained. `pss_measurement_status=PASS` requires every load, two-turn, and both release samples; otherwise it is `NOT_AVAILABLE`. All samples are allowlisted integers and contain no model output.
++- Raw instrumentation and logcat files are removed before cleanup can publish success. The artifact upload now lists only the sanitized XML/status summaries, source/hash metadata, metrics summary, and cleanup boundary. The XML failure detail contains exception type only, with raw messages/stacks suppressed.
++- Native opt-in is false by default and confined to the `isolated` build type. Build configuration rejects Native opt-in for debug, release, Beta, and aggregate packaging tasks, disables all non-isolated variants, and provides a focused variant-isolation task.
++- Added a single 30-minute API 35 ARM64 guest experiment on an `ubuntu-24.04` x86_64 host, using software CPU emulation, pinned API image revision, bounded model fixture, explicit ABI identity, and an arm64 JNI package assertion. Its result must be reported as `ARM64_GUEST_SOFTWARE_EMULATED`; it cannot establish ARM device performance or Pixel acceptance.
++
++## Deferred Product Chat Integration Proposal
++
++No production wiring is included in this patch. Once ARM64 runtime evidence and independent security review are accepted, a follow-up may add an explicit local-model choice to the existing `ModelChatPort`/Model Router boundary behind a separate `LOCAL_MODEL_CHAT_ENABLED` product feature flag, default false and disallowed in Beta/release builds until acceptance. This product flag is separate from `LOCAL_NATIVE_RUNTIME_ENABLED`, which remains only the isolated diagnostic build flag. Until both gates pass, normal Chat remains on its existing DEMO route and the product flag must stay off. Any future route must preserve the existing Egress and Usage wrappers, require the local-model consent contract, retain cancellation and model identity checks, surface local-runtime errors, and fail closed with no silent Cloud fallback. Google-origin data remains blocked from Cloud Egress; Google connection/Handoff consent never implies local-model or Cloud consent. The proposal requires product UI and lifecycle tests before it can be considered for integration.
++
++## ARM64 execution feasibility sources
++
++Checked 2026-10-29 UTC:
++
++- GitHub documents `ubuntu-24.04-arm` as a standard public-repository runner label with a 4-core, 16-GB ARM64 VM: <https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories>.
++- The published Android SDK repository lists Linux x64 emulator host archives (for example `emulator-linux_x64-16696583.zip`), not a Linux ARM64 host emulator archive: <https://dl.google.com/android/repository/repository2-1.xml>.
++- The Google APIs catalog lists API 35 ARM64 guest image revision 9 (`system-images;android-35;google_apis;arm64-v8a`): <https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-1.xml>.
++- The pinned Android Emulator Runner action accepts `arm64-v8a` as a guest image architecture: <https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/README.md>.
++
++Thus the experiment uses the x86_64 runner to host the published x86_64 emulator binary and an ARM64 Android guest in software mode. Until the bounded job actually boots and the native instrumentation passes, ARM64 runtime remains NOT_RUN.
++
++## Focused verification
++
++- `:app:testDebugUnitTest --tests app.serea.android.LocalModelChatAdapterTest --tests app.serea.android.LocalModelNativeRuntimeTest`: 24 tests, 0 failures/errors/skips.
++- `:app:compileIsolatedAndroidTestKotlin`: PASS.
++- `-PsereaLocalNativeRuntime=true ... :app:verifyLocalNativeRuntimeVariantIsolation`: PASS; only `isolated` remains enabled.
++- `-PsereaLocalNativeRuntime=true ... :app:assembleBeta`: rejected by the expected diagnostic-only guard.
++- Runtime-metric parser tests: 4/4 PASS.
++- Instrumentation-stream parser tests: 8/8 PASS; failure messages/stacks are not emitted into JUnit XML.
++- Upload allowlist, JNI contract, preflight, cleanup, shell syntax, YAML parse, and `git diff --check`: PASS.
++
++## Gate state
++
++- x86_64 API 35 inference: prior exact PR #160 evidence remains PASS for the pinned SmolLM2 diagnostic scenario; this follow-up's instrumentation changes still require a new exact-source CI run.
++- ARM64 APK build: prior PR #160 evidence remains PASS for APK inclusion only; follow-up workflow will assert the arm64 `.so` again.
++- ARM64 guest inference: NOT_RUN pending the bounded workflow.
++- Native RSS/PSS cap: NOT_IMPLEMENTED; PSS is observational evidence only.
++- Pixel 7a physical runtime: NOT_RUN; owner authorization remains required.
++- Ordinary Chat integration: NOT_CONNECTED pending ARM64 runtime evidence and independent review.
++- Standard model selection: UNDECIDED; no model recommendation is made here.
+diff --git a/tools/g8-local-model-native/preflight.sh b/tools/g8-local-model-native/preflight.sh
+index 9357f3a..18ac50d 100644
+--- a/tools/g8-local-model-native/preflight.sh
++++ b/tools/g8-local-model-native/preflight.sh
+@@ -5,6 +5,8 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
+ APP_ID='app.serea.android.isolated'
+ TEST_ID='app.serea.android.isolated.test'
+ DEVICE_MODEL_TEMP='/data/local/tmp/serea-g8-smollm2.gguf'
++EXPECTED_NATIVE_ABI="${SEREA_EXPECTED_NATIVE_ABI:-x86_64}"
++[[ "$EXPECTED_NATIVE_ABI" == 'x86_64' || "$EXPECTED_NATIVE_ABI" == 'arm64-v8a' ]]
+ 
+ source "$ROOT_DIR/tools/assert_disposable_android_emulator.sh"
+ DEVICE_SERIAL="$ANDROID_SERIAL"
+@@ -13,12 +15,11 @@ getprop() {
+ }
+ 
+ [[ "$(getprop sys.boot_completed)" == '1' ]]
+-[[ "$(getprop ro.product.cpu.abi)" == 'x86_64' ]]
++[[ "$(getprop ro.product.cpu.abi)" == "$EXPECTED_NATIVE_ABI" ]]
+ hardware="$(getprop ro.hardware)"
+ fingerprint="$(getprop ro.build.fingerprint | tr '[:upper:]' '[:lower:]')"
+ [[ "$hardware" == ranchu || "$hardware" == goldfish ]]
+-[[ "$fingerprint" == *generic* || "$fingerprint" == *sdk_gphone* || \
+-   "$fingerprint" == */sdk_phone64_x86_64/emu64x:* ]]
++[[ "$fingerprint" == *generic* || "$fingerprint" == *sdk_gphone* || "$fingerprint" == *sdk_phone* ]]
+ 
+ for package in "$APP_ID" "$TEST_ID"; do
+     if ! packages="$(adb -s "$DEVICE_SERIAL" shell pm list packages -u "$package")"; then
+@@ -41,5 +42,5 @@ if ! adb -s "$DEVICE_SERIAL" shell test '!' -e "$DEVICE_MODEL_TEMP" >/dev/null 2
+     exit 3
+ fi
+ 
+-printf 'device_serial=%s\napi=35\nabi=x86_64\nhardware=%s\nfingerprint=%s\npackage_ids=ABSENT\ntemp_model=ABSENT\n' \
+-    "$DEVICE_SERIAL" "$hardware" "$fingerprint"
++printf 'device_serial=%s\napi=35\nabi=%s\nhardware=%s\nfingerprint=%s\npackage_ids=ABSENT\ntemp_model=ABSENT\n' \
++    "$DEVICE_SERIAL" "$EXPECTED_NATIVE_ABI" "$hardware" "$fingerprint"
+diff --git a/tools/g8-local-model-native/run-e2e.sh b/tools/g8-local-model-native/run-e2e.sh
+index a42fe41..389c37c 100755
+--- a/tools/g8-local-model-native/run-e2e.sh
++++ b/tools/g8-local-model-native/run-e2e.sh
+@@ -18,6 +18,9 @@ TEST_METHOD='pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend'
+ NOOP_TEST_CLASS='app.serea.android.SereaNativeRunnerNoOpTest'
+ NOOP_TEST_METHOD='androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp'
+ TEST_RUNNER='app.serea.android.SereaIsolatedAndroidJUnitRunner'
++EXPECTED_NATIVE_ABI="${SEREA_EXPECTED_NATIVE_ABI:-x86_64}"
++[[ "$EXPECTED_NATIVE_ABI" == 'x86_64' || "$EXPECTED_NATIVE_ABI" == 'arm64-v8a' ]]
++export SEREA_EXPECTED_NATIVE_ABI="$EXPECTED_NATIVE_ABI"
+ EVIDENCE_DIR=''
+ CANONICAL_RUNNER_TEMP=''
+ DEVICE_SERIAL=''
+@@ -101,7 +104,7 @@ print_sanitized_instrumentation_summary() {
+     fi
+     if [[ -s "$junit_file" ]]; then
+         echo 'instrumentation_junit_summary_begin' >&2
+-        grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status)=' \
++        grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status|native_initialization_exception_types|native_initialization_stack_present|failure_exception_types)=' \
+             "$junit_file" >&2 || true
+         echo 'instrumentation_junit_summary_end' >&2
+     fi
+@@ -241,6 +244,7 @@ cleanup() {
+     local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
+     local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
+     local report_path report_tmp report_write_status=PASS cleanup_result output_write_status=NOT_ATTEMPTED
++    local raw_diagnostics_removed=true raw_diagnostic
+     local -a cleanup_report
+     CLEANUP_FAILED=0
+ 
+@@ -253,6 +257,17 @@ cleanup() {
+         PRIMARY_FAILURE_STAGE=UNCLASSIFIED_EXIT
+     fi
+     capture_device_connectivity
++    for raw_diagnostic in \
++        "$EVIDENCE_DIR/android-instrumentation.txt" \
++        "$EVIDENCE_DIR/android-logcat-diagnostic.log" \
++        "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded"; do
++        if [[ -e "$raw_diagnostic" || -L "$raw_diagnostic" ]]; then
++            if ! rm -f -- "$raw_diagnostic" || [[ -e "$raw_diagnostic" || -L "$raw_diagnostic" ]]; then
++                raw_diagnostics_removed=false
++                CLEANUP_FAILED=1
++            fi
++        fi
++    done
+ 
+     if [[ "$APP_PRIVATE_MODEL_OWNED" == 1 ]]; then
+         if [[ "$APP_PACKAGE_OWNED" != 1 ]]; then
+@@ -397,12 +412,14 @@ cleanup() {
+         "app_package_uninstall_command=$app_uninstall_command"
+         "app_package_final_state=$app_package_state"
+         "cleanup_outcome=$cleanup_result"
++        "raw_diagnostics_removed=$raw_diagnostics_removed"
+         "original_exit_status=$original_status"
+         'runner_vm_and_disposable_avd=ephemeral'
+     )
+     if ! printf '%s\n' "${cleanup_report[@]}" > "$report_tmp"; then
+         report_write_status=FAIL
+     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_tmp" || \
++        ! grep -Fxq "raw_diagnostics_removed=$raw_diagnostics_removed" "$report_tmp" || \
+         ! grep -Fxq "original_exit_status=$original_status" "$report_tmp" || \
+         ! grep -Fxq "host_model_final_state=$host_absence" "$report_tmp" || \
+         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_tmp" || \
+@@ -422,6 +439,7 @@ cleanup() {
+     elif ! mv "$report_tmp" "$report_path"; then
+         report_write_status=FAIL
+     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_path" || \
++        ! grep -Fxq "raw_diagnostics_removed=$raw_diagnostics_removed" "$report_path" || \
+         ! grep -Fxq "host_model_final_state=$host_absence" "$report_path" || \
+         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_path" || \
+         ! grep -Fxq "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code" "$report_path" || \
+@@ -553,6 +571,10 @@ if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
+             'generated_content=DO_NOT_PRINT' \
+             > "$EVIDENCE_DIR/junit-verification.txt"
+     fi
++    if [[ "${SEREA_CLEANUP_TEST_CREATE_RAW_DIAGNOSTICS:-0}" == 1 ]]; then
++        printf '%s\n' 'synthetic prompt output must not be retained' > "$EVIDENCE_DIR/android-instrumentation.txt"
++        printf '%s\n' 'synthetic raw log line must not be retained' > "$EVIDENCE_DIR/android-logcat-diagnostic.log"
++    fi
+     if [[ "${SEREA_CLEANUP_TEST_GATE_FAILURE:-0}" == 1 ]]; then
+         printf '%s\n' 'raw_generated_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-instrumentation.txt"
+         printf '%s\n' 'raw_logcat_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-logcat-diagnostic.log"
+@@ -604,6 +626,11 @@ trap 'cleanup "$?"' EXIT
+ CURRENT_STAGE=SOURCE_IDENTITY
+ printf '%s\n' "$preflight_output" > "$EVIDENCE_DIR/preflight.txt"
+ {
++    if [[ "$EXPECTED_NATIVE_ABI" == 'arm64-v8a' ]]; then
++        echo 'runtime_execution_mode=ARM64_GUEST_SOFTWARE_EMULATED'
++    else
++        echo 'runtime_execution_mode=X86_64_GUEST_KVM_ACCELERATED'
++    fi
+     echo "source_sha=$(git -C "$ROOT_DIR" rev-parse HEAD)"
+     echo "source_tree=$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
+     echo "llama_cpp_sha=$LLAMA_COMMIT"
+@@ -726,6 +753,14 @@ else
+     echo 'instrumentation_timeout=NOT_EXPIRED' >> "$EVIDENCE_DIR/instrumentation-command-status.txt"
+ fi
+ 
++rm -f -- "$instrumentation_log" "$EVIDENCE_DIR/android-logcat-diagnostic.log"
++if [[ -e "$instrumentation_log" || -L "$instrumentation_log" || \
++      -e "$EVIDENCE_DIR/android-logcat-diagnostic.log" || -L "$EVIDENCE_DIR/android-logcat-diagnostic.log" ]]; then
++    echo 'Raw Android instrumentation diagnostics could not be removed.' >&2
++    record_primary_failure 1 "$LINENO"
++    exit 1
++fi
++
+ source "$ROOT_DIR/tools/g8-local-model-native/instrumentation-gate.sh"
+ CURRENT_STAGE=INSTRUMENTATION_GATE
+ if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
+@@ -737,5 +772,8 @@ if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
+ fi
+ 
+ CURRENT_STAGE=NATIVE_METRICS_CAPTURE
+-adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"
++adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I \
++    | tail -c 262144 \
++    | python3 "$ROOT_DIR/tools/g8-local-model-native/summarize-runtime-metrics.py" \
++    > "$EVIDENCE_DIR/native-runtime-metrics-summary.txt"
+ CURRENT_STAGE=RUNTIME_EVIDENCE_COMPLETE
+diff --git a/tools/g8-local-model-native/summarize-runtime-metrics.py b/tools/g8-local-model-native/summarize-runtime-metrics.py
+new file mode 100644
+index 0000000..4fbe125
+--- /dev/null
++++ b/tools/g8-local-model-native/summarize-runtime-metrics.py
+@@ -0,0 +1,94 @@
++#!/usr/bin/env python3
++"""Emit only the bounded integer diagnostics from the Native instrumentation log."""
++
++from __future__ import annotations
++
++import re
++import sys
++
++MAX_INPUT_BYTES = 262_144
++MAX_METRIC_VALUE = 1_000_000_000
++EXPECTED = {
++    "pss_measurement_status",
++    "load_before_kb",
++    "load_after_kb",
++    "inference_1_before_kb",
++    "inference_1_after_kb",
++    "inference_2_before_kb",
++    "inference_2_after_kb",
++    "main_release_pss_kb",
++    "cancelled_release_pss_kb",
++    "cancel_to_release_ms",
++}
++PSS_METRICS = EXPECTED - {"pss_measurement_status", "cancel_to_release_ms"}
++REQUIRED_PSS_FOR_PASS = {
++    "load_before_kb",
++    "load_after_kb",
++    "inference_1_before_kb",
++    "inference_1_after_kb",
++    "inference_2_before_kb",
++    "inference_2_after_kb",
++    "main_release_pss_kb",
++    "cancelled_release_pss_kb",
++}
++
++
++def main() -> int:
++    raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
++    if len(raw) > MAX_INPUT_BYTES:
++        print("Native metric input exceeded the bounded diagnostic window.", file=sys.stderr)
++        return 2
++    text = raw.decode("utf-8", errors="replace")
++    summary_lines = [line.partition("metric_summary=")[2] for line in text.splitlines() if "metric_summary=" in line]
++    if len(summary_lines) != 1:
++        print("Expected exactly one Native metric summary.", file=sys.stderr)
++        return 1
++
++    metrics: dict[str, int | str] = {}
++    for entry in summary_lines[0].split(","):
++        key, separator, value = entry.partition("=")
++        if not separator or key not in EXPECTED:
++            print("Native metric summary was malformed.", file=sys.stderr)
++            return 1
++        if key == "pss_measurement_status":
++            if value not in {"PASS", "NOT_AVAILABLE"}:
++                print("Native PSS measurement status was invalid.", file=sys.stderr)
++                return 1
++            numeric: int | str = value
++        elif value == "NOT_AVAILABLE" and key in PSS_METRICS:
++            numeric = value
++        elif re.fullmatch(r"[0-9]{1,10}", value):
++            numeric = int(value)
++            if numeric > MAX_METRIC_VALUE:
++                print("Native metric value exceeded its bound.", file=sys.stderr)
++                return 1
++        else:
++            print("Native metric summary was malformed.", file=sys.stderr)
++            return 1
++        if key in metrics:
++            print("Native metric summary was out of bounds or duplicated.", file=sys.stderr)
++            return 1
++        metrics[key] = numeric
++
++    missing = sorted(EXPECTED - metrics.keys())
++    if missing:
++        print("Native metric summary omitted required measurements.", file=sys.stderr)
++        return 1
++    observed_pss = {key for key in PSS_METRICS if isinstance(metrics[key], int)}
++    expected_pss_status = "PASS" if REQUIRED_PSS_FOR_PASS <= observed_pss else "NOT_AVAILABLE"
++    if metrics["pss_measurement_status"] != expected_pss_status:
++        print("Native PSS measurement status did not match available samples.", file=sys.stderr)
++        return 1
++    if not isinstance(metrics["cancel_to_release_ms"], int):
++        print("Native cancellation latency was not reported as an integer.", file=sys.stderr)
++        return 1
++
++    print("evidence_kind=native-runtime-observed-metrics")
++    print("pss_semantics=observed_process_metric_not_memory_cap")
++    for key in sorted(metrics):
++        print(f"{key}={metrics[key]}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/g8-local-model-native/test-cleanup.sh b/tools/g8-local-model-native/test-cleanup.sh
+index 59e177a..3e61983 100755
+--- a/tools/g8-local-model-native/test-cleanup.sh
++++ b/tools/g8-local-model-native/test-cleanup.sh
+@@ -172,12 +172,21 @@ grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
+ grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
+ grep -Fxq 'app_package_final_state=ABSENT_VERIFIED' "$report"
+ grep -Fxq 'cleanup_outcome=PASS' "$report"
++grep -Fxq 'raw_diagnostics_removed=true' "$report"
+ grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+ [[ ! -e "$RUNNER_TEMP/serea-g8-smollm2.gguf" ]]
+ [[ ! -e "$ADB_STATE/app-private-model" && ! -e "$ADB_STATE/device-temp-model" ]]
+ [[ ! -s "$ADB_STATE/packages" ]]
+ [[ ! -s "$ADB_STATE/retained-packages" ]]
+ 
++prepare_case raw_diagnostics_removed
++status="$(run_case raw_diagnostics_removed SEREA_CLEANUP_TEST_CREATE_RAW_DIAGNOSTICS=1)"
++[[ "$status" == 0 ]]
++grep -Fxq 'raw_diagnostics_removed=true' "$EVIDENCE_DIR/cleanup-boundary.txt"
++[[ ! -e "$EVIDENCE_DIR/android-instrumentation.txt" ]]
++[[ ! -e "$EVIDENCE_DIR/android-logcat-diagnostic.log" ]]
++[[ ! -e "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded" ]]
++
+ assert_cleanup_failure() {
+     local case_name="$1"
+     local failure_assignment="$2"
+diff --git a/tools/g8-local-model-native/test-instrumentation-stream.py b/tools/g8-local-model-native/test-instrumentation-stream.py
+index 21f9494..47e3f88 100644
+--- a/tools/g8-local-model-native/test-instrumentation-stream.py
++++ b/tools/g8-local-model-native/test-instrumentation-stream.py
+@@ -78,7 +78,14 @@ class InstrumentationStreamParserTest(unittest.TestCase):
+         self.assertIn(f"terminal_status={NATIVE}#initializationError:-2\n", summary)
+         self.assertIn("native_initialization_error=PRESENT\n", summary)
+         self.assertIn("native_initialization_stack_present=true\n", summary)
+-        self.assertIn("Caused by: java.lang.NoSuchMethodException", report)
++        self.assertIn("java.lang.IllegalStateException", report)
++        self.assertIn("Raw failure message and stack were suppressed", report)
++        self.assertIn(
++            "native_initialization_exception_types=java.lang.IllegalStateException,java.lang.NoSuchMethodException\n",
++            summary,
++        )
++        self.assertNotIn("NoSuchMethodException", report)
++        self.assertNotIn("Caused by:", report)
+ 
+     def test_noop_pass_with_native_initialization_error_discriminates_test_class(self) -> None:
+         stream = (
+@@ -110,6 +117,7 @@ class InstrumentationStreamParserTest(unittest.TestCase):
+         self.assertIn("skipped=1\n", summary)
+         self.assertIn("<failure", report)
+         self.assertIn("<skipped", report)
++        self.assertNotIn("JNI load failed", report)
+ 
+     def test_runner_failure_without_testcase_is_incomplete(self) -> None:
+         stream = (
+diff --git a/tools/g8-local-model-native/test-preflight.sh b/tools/g8-local-model-native/test-preflight.sh
+index 6a40091..7d12dd5 100644
+--- a/tools/g8-local-model-native/test-preflight.sh
++++ b/tools/g8-local-model-native/test-preflight.sh
+@@ -24,9 +24,9 @@ if [[ "${1:-}" == shell && "${2:-}" == getprop ]]; then
+         ro.build.version.sdk) printf '35\n' ;;
+         ro.kernel.qemu) printf '1\n' ;;
+         sys.boot_completed) printf '1\n' ;;
+-        ro.product.cpu.abi) printf 'x86_64\n' ;;
++        ro.product.cpu.abi) printf '%s\n' "${FAKE_NATIVE_ABI:-x86_64}" ;;
+         ro.hardware) printf 'ranchu\n' ;;
+-        ro.build.fingerprint) printf 'generic/sdk_phone64_x86_64/emu64x:35\n' ;;
++        ro.build.fingerprint) printf 'generic/sdk_phone_%s/emu64x:35\n' "${FAKE_NATIVE_ABI:-x86_64}" ;;
+         *) exit 8 ;;
+     esac
+     exit 0
+@@ -59,13 +59,17 @@ chmod +x "$FAKE_BIN/adb"
+ 
+ run_preflight() {
+     local mode="$1"
+-    env PATH="$FAKE_BIN:$PATH" FAKE_ADB_MODE="$mode" CI=true GITHUB_ACTIONS=true \
+-        GITHUB_RUN_ID=123 SEREA_EXPECTED_ANDROID_API=35 SEREA_DISPOSABLE_CI_EMULATOR=1 \
++    local expected_abi=x86_64 fake_mode="$mode"
++    if [[ "$mode" == arm64-safe ]]; then expected_abi=arm64-v8a; fake_mode=safe; fi
++    env PATH="$FAKE_BIN:$PATH" FAKE_ADB_MODE="$fake_mode" FAKE_NATIVE_ABI="$expected_abi" CI=true GITHUB_ACTIONS=true \
++        GITHUB_RUN_ID=123 SEREA_EXPECTED_ANDROID_API=35 SEREA_EXPECTED_NATIVE_ABI="$expected_abi" SEREA_DISPOSABLE_CI_EMULATOR=1 \
+         bash "$ROOT_DIR/tools/g8-local-model-native/preflight.sh"
+ }
+ 
+ safe_output="$(run_preflight safe)"
+ grep -Fxq 'package_ids=ABSENT' <<< "$safe_output"
++arm64_output="$(run_preflight arm64-safe)"
++grep -Fxq 'abi=arm64-v8a' <<< "$arm64_output"
+ if run_preflight physical >"$TEST_ROOT/physical.out" 2>"$TEST_ROOT/physical.err"; then
+     echo 'physical target unexpectedly passed preflight' >&2
+     exit 1
+diff --git a/tools/g8-local-model-native/test-summarize-runtime-metrics.py b/tools/g8-local-model-native/test-summarize-runtime-metrics.py
+new file mode 100644
+index 0000000..e9d7f38
+--- /dev/null
++++ b/tools/g8-local-model-native/test-summarize-runtime-metrics.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python3
++"""Tests that metric summarization is bounded and never copies raw log text."""
++
++import subprocess
++import sys
++import unittest
++from pathlib import Path
++
++SCRIPT = Path(__file__).with_name("summarize-runtime-metrics.py")
++
++
++class RuntimeMetricSummaryTest(unittest.TestCase):
++    def run_summary(self, payload: str) -> tuple[int, str, str]:
++        result = subprocess.run(
++            [sys.executable, str(SCRIPT)],
++            input=payload,
++            check=False,
++            capture_output=True,
++            text=True,
++        )
++        return result.returncode, result.stdout, result.stderr
++
++    def test_emits_only_whitelisted_integer_metrics(self) -> None:
++        payload = (
++            "I SereaLocalNativeRuntime: prompt_private_text=must-not-appear\n"
++            "I SereaLocalNativeRuntime: metric_summary=pss_measurement_status=PASS,"
++            "load_before_kb=100,load_after_kb=200,"
++            "inference_1_before_kb=210,inference_1_after_kb=220,inference_2_before_kb=215,"
++            "inference_2_after_kb=225,main_release_pss_kb=150,cancelled_release_pss_kb=160,"
++            "cancel_to_release_ms=321\n"
++        )
++        code, output, _ = self.run_summary(payload)
++        self.assertEqual(0, code)
++        self.assertIn("load_after_kb=200\n", output)
++        self.assertIn("cancel_to_release_ms=321\n", output)
++        self.assertNotIn("prompt_private_text", output)
++        self.assertNotIn("must-not-appear", output)
++
++    def test_missing_pss_samples_are_explicitly_not_available(self) -> None:
++        payload = (
++            "metric_summary=pss_measurement_status=NOT_AVAILABLE,"
++            "load_before_kb=NOT_AVAILABLE,load_after_kb=NOT_AVAILABLE,"
++            "inference_1_before_kb=NOT_AVAILABLE,inference_1_after_kb=NOT_AVAILABLE,"
++            "inference_2_before_kb=NOT_AVAILABLE,inference_2_after_kb=NOT_AVAILABLE,"
++            "main_release_pss_kb=NOT_AVAILABLE,cancelled_release_pss_kb=NOT_AVAILABLE,"
++            "cancel_to_release_ms=321\n"
++        )
++        code, output, _ = self.run_summary(payload)
++        self.assertEqual(0, code)
++        self.assertIn("pss_measurement_status=NOT_AVAILABLE\n", output)
++        self.assertIn("load_after_kb=NOT_AVAILABLE\n", output)
++
++    def test_missing_metric_fails_closed_without_copying_input(self) -> None:
++        code, output, _ = self.run_summary("metric_summary=load_before_kb=4\nsecret=DO_NOT_PRINT\n")
++        self.assertNotEqual(0, code)
++        self.assertEqual("", output)
++
++    def test_input_bound_is_enforced(self) -> None:
++        code, output, _ = self.run_summary("x" * (262_144 + 1))
++        self.assertEqual(2, code)
++        self.assertEqual("", output)
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
+diff --git a/tools/g8-local-model-native/test-upload-allowlist.py b/tools/g8-local-model-native/test-upload-allowlist.py
+new file mode 100644
+index 0000000..4c1ad9e
+--- /dev/null
++++ b/tools/g8-local-model-native/test-upload-allowlist.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python3
++"""Protect Native CI artifacts from raw instrumentation and logcat uploads."""
++
++import sys
++from pathlib import Path
++
++
++def main() -> int:
++    if len(sys.argv) != 2:
++        print("usage: test-upload-allowlist.py WORKFLOW", file=sys.stderr)
++        return 2
++    workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
++    forbidden = (
++        "android-instrumentation.txt",
++        "android-logcat-diagnostic.log",
++        "native-runtime-metrics.log",
++    )
++    if any(name in workflow for name in forbidden):
++        print("workflow must not list raw runtime logs as upload paths", file=sys.stderr)
++        return 1
++    if "path: ${{ steps.native_e2e.outputs.evidence_dir }}\n" in workflow:
++        print("whole native evidence directory must not be uploaded", file=sys.stderr)
++        return 1
++    required_safe_files = (
++        "${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt",
++        "${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
++        "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
++    )
++    missing = [name for name in required_safe_files if name not in workflow]
++    if missing:
++        print("safe Native evidence upload allowlist is incomplete", file=sys.stderr)
++        return 1
++    print("native_artifact_allowlist=PASS raw_instrumentation_and_logcat=EXCLUDED")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/g8-local-model-native/verify-instrumentation-stream.py b/tools/g8-local-model-native/verify-instrumentation-stream.py
+index 844189f..f9310bf 100644
+--- a/tools/g8-local-model-native/verify-instrumentation-stream.py
++++ b/tools/g8-local-model-native/verify-instrumentation-stream.py
+@@ -3,6 +3,7 @@
+ 
+ from __future__ import annotations
+ 
++import re
+ import sys
+ import xml.etree.ElementTree as ET
+ from pathlib import Path
+@@ -41,6 +42,16 @@ def parse_stream(text: str) -> tuple[list[dict[str, str]], dict[str, str]]:
+     return cases, result
+ 
+ 
++def safe_exception_types(case: dict[str, str]) -> list[str]:
++    """Keep exception class names while discarding messages, paths, and raw stack text."""
++    trace = case.get("stack", "") + "\n" + case.get("Error", "")
++    matches = re.findall(
++        r"(?:Caused by:\s*)?([A-Za-z_$][A-Za-z0-9_.$]*(?:Exception|Error))(?=[:\s]|$)",
++        trace,
++    )
++    return list(dict.fromkeys(matches))[:8]
++
++
+ def main() -> int:
+     if len(sys.argv) != 6:
+         print(
+@@ -133,12 +144,13 @@ def main() -> int:
+         class_name, method = key.rsplit("#", 1)
+         testcase = ET.SubElement(suites, "testcase", {"classname": class_name, "name": method})
+         if case["status_code"] == "-2":
+-            trace = case.get("stack", case.get("Error", "AndroidJUnitRunner reported a failure."))
++            exception_types = safe_exception_types(case)
++            safe_type = exception_types[0] if exception_types else "UnknownFailure"
+             ET.SubElement(
+                 testcase,
+                 "failure",
+-                {"message": case.get("Error", "AndroidJUnitRunner failure"), "type": "InstrumentationFailure"},
+-            ).text = trace
++                {"message": f"AndroidJUnitRunner failure ({safe_type}).", "type": safe_type},
++            ).text = "Raw failure message and stack were suppressed; see sanitized identity/status summary."
+         elif case["status_code"] in {"-3", "-4"}:
+             ET.SubElement(testcase, "skipped", {"message": "AndroidJUnitRunner ignored/assumption-failed test"})
+     ET.ElementTree(suites).write(xml_path, encoding="utf-8", xml_declaration=True)
+@@ -167,8 +179,18 @@ def main() -> int:
+     )
+     if native_initialization:
+         summary.append("native_initialization_status_code=" + native_initialization["status_code"])
+-        summary.append("native_initialization_error_text=" + native_initialization.get("Error", "NOT_REPORTED"))
++        summary.append(
++            "native_initialization_exception_types="
++            + (",".join(safe_exception_types(native_initialization)) or "NOT_CLASSIFIED")
++        )
+         summary.append("native_initialization_stack_present=" + str(bool(native_initialization.get("stack"))).lower())
++    failure_types = sorted({
++        exception_type
++        for case in identities.values()
++        if case["status_code"] == "-2"
++        for exception_type in safe_exception_types(case)
++    })
++    summary.append("failure_exception_types=" + (",".join(failure_types) or "NONE"))
+     summary.extend(f"parse_error={error}" for error in invalid)
+     summary_path.write_text("\n".join(summary) + "\n", encoding="utf-8")
+ 

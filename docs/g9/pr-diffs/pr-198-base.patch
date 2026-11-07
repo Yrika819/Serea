@@ -1,0 +1,403 @@
+diff --git a/android/app/src/androidTest/assets/serea-non-required-test-identities.txt b/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
+index be91c06..ebf065e 100644
+--- a/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
++++ b/android/app/src/androidTest/assets/serea-non-required-test-identities.txt
+@@ -1,5 +1,6 @@
+ # Explicit non-required identities excluded from the formal Required Gate JUnit set.
+ # Selected UI regressions run through the separate focused API 26/35 campaign.
++app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse
+ app.serea.android.diagnostics.IndependentImeCompositionTest#A_directInputConnectionBaseline
+ app.serea.android.diagnostics.IndependentImeCompositionTest#B_realImeCompositionWithoutSynchronizationBoundaries
+ app.serea.android.diagnostics.IndependentImeCompositionTest#C_realImeCompositionWithSynchronizationBoundaries
+diff --git a/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt b/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt
+new file mode 100644
+index 0000000..eda51da
+--- /dev/null
++++ b/android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt
+@@ -0,0 +1,157 @@
++package app.serea.android
++
++import android.app.Application
++import android.os.ParcelFileDescriptor
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import androidx.test.platform.app.InstrumentationRegistry
++import kotlinx.coroutines.runBlocking
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import java.io.File
++import java.security.MessageDigest
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicBoolean
++import java.util.concurrent.atomic.AtomicInteger
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.cancel
++
++/** Focused real Application callback delivery test; excluded from the formal Required JUnit set. */
++@RunWith(AndroidJUnit4::class)
++class LocalModelMemoryLifecycleAndroidTest {
++    @Test fun registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse() = runBlocking {
++        val instrumentation = InstrumentationRegistry.getInstrumentation()
++        val context = instrumentation.targetContext
++        val application = context.applicationContext as Application
++        assertEquals("callback registration must target the app under test", context.packageName, application.packageName)
++        val modelFile = File.createTempFile("serea-memory-lifecycle-", ".gguf", context.cacheDir)
++            .apply { writeBytes(byteArrayOf(1, 4, 1, 4, 2, 1)) }
++        val modelId = "serea-local/component-callback-test"
++        val backend = ApplicationTrimFakeBackend()
++        val artifact = LocalModelArtifact(
++            modelId = modelId,
++            displayName = "Lifecycle callback fake model",
++            modelRepository = "https://huggingface.co/test/lifecycle-fake",
++            modelRevision = "1076b85d135017971845b19b8d07df1479155988",
++            licenseId = "Apache-2.0",
++            expectedSha256 = sha256(modelFile),
++            expectedSizeBytes = modelFile.length(),
++            runtimeName = "fake-runtime",
++            runtimeRevision = "2763785",
++            supportedAbis = setOf("arm64-v8a", "x86_64"),
++        )
++        val deviceAbi = android.os.Build.SUPPORTED_ABIS.first { it in artifact.supportedAbis }
++        val adapter = LocalModelChatAdapter(
++            artifact = artifact,
++            modelFile = modelFile,
++            backendFactory = LocalModelInferenceBackendFactory { backend },
++            deviceAbi = deviceAbi,
++        )
++        val now = android.os.SystemClock.elapsedRealtime()
++        val registry = LocalModelAuthorizationRegistry(
++            clock = { now },
++            currentConversation = LocalModelCurrentConversationPort {
++                LocalModelConversationBinding("trim-callback-conversation", 0L)
++            },
++        )
++        val request = ModelChatRequest(
++            conversationId = "trim-callback-conversation",
++            message = "fake backend lifecycle request",
++            sendId = "send-trim-callback",
++            classification = DataClassification.PUBLIC,
++            selectedModelId = modelId,
++            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
++        )
++        val proof = registry.approve(request, modelId)
++        val contract = EgressContract(
++            conversationId = request.conversationId,
++            currentMessageId = request.sendId,
++            origin = DataOrigin.USER_AUTHORED,
++            classification = request.classification,
++            destination = ChatEgressGate.LOCAL_MODEL_DESTINATION,
++            plannedBody = request.message,
++            context = request.context,
++            preparation = PayloadPreparation.RAW,
++            explicitSendIntentAtMillis = null,
++            expiresAtMillis = null,
++            selectedModelId = modelId,
++            target = EgressTarget.LOCAL_MODEL,
++            plannedBodySourceLineage = request.bodySourceLineage,
++            localModelConsent = proof,
++        )
++        val authorizedAdapter = EgressCheckedModelChatPort(
++            delegate = adapter,
++            clock = { now },
++            expectedTarget = EgressTarget.LOCAL_MODEL,
++            localModelAuthorizations = registry,
++            localMonotonicClock = { now },
++        )
++        val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
++        val callback = LocalModelMemoryLifecycle(adapter, lifecycleScope, Dispatchers.Default)
++        try {
++            val response = authorizedAdapter.send(request.copy(egressContract = contract))
++            assertEquals("fake local answer", response.text)
++            assertEquals(1, backend.loadCalls.get())
++            assertEquals(1, backend.generateCalls.get())
++
++            instrumentation.runOnMainSync { application.registerComponentCallbacks(callback) }
++            val targetProcess = application.applicationInfo.processName ?: context.packageName
++            val command = "am send-trim-memory $targetProcess RUNNING_LOW"
++            val shellOutput = instrumentation.uiAutomation.executeShellCommand(command)
++            val output = ParcelFileDescriptor.AutoCloseInputStream(shellOutput).bufferedReader().use { it.readText() }
++
++            assertFalse("ActivityManager rejected trim request for target process $targetProcess; output=$output",
++                output.contains("Error", ignoreCase = true))
++            assertTrue("Android should deliver RUNNING_LOW to the registered callback within 10s; output=$output",
++                backend.closed.await(10, TimeUnit.SECONDS))
++            assertEquals("trim closes the loaded backend once", 1, backend.closeCalls.get())
++            assertFalse("memory trim occurs after generation has unwound", backend.closedDuringGeneration.get())
++        } finally {
++            instrumentation.runOnMainSync { application.unregisterComponentCallbacks(callback) }
++            lifecycleScope.cancel()
++            adapter.close()
++            modelFile.delete()
++        }
++    }
++
++    private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256")
++        .digest(file.readBytes())
++        .joinToString("") { "%02x".format(it) }
++
++    private class ApplicationTrimFakeBackend : LocalModelInferenceBackend {
++        val loadCalls = AtomicInteger()
++        val generateCalls = AtomicInteger()
++        val closeCalls = AtomicInteger()
++        val closedDuringGeneration = AtomicBoolean(false)
++        val closed = CountDownLatch(1)
++        private val generating = AtomicBoolean(false)
++
++        override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
++            check(File(modelPath).isFile)
++            loadCalls.incrementAndGet()
++        }
++
++        override suspend fun generate(prompt: String, maxOutputTokens: Int): LocalModelInferenceResult {
++            generating.set(true)
++            return try {
++                generateCalls.incrementAndGet()
++                LocalModelInferenceResult("fake local answer", 5, 3)
++            } finally {
++                generating.set(false)
++            }
++        }
++
++        override fun cancelActive() = Unit
++
++        override fun close() {
++            closedDuringGeneration.set(generating.get())
++            closeCalls.incrementAndGet()
++            closed.countDown()
++        }
++    }
++}
+diff --git a/tests/android_emulator_workflow_tests.py b/tests/android_emulator_workflow_tests.py
+index 7b0a0a6..630aa9f 100644
+--- a/tests/android_emulator_workflow_tests.py
++++ b/tests/android_emulator_workflow_tests.py
+@@ -660,6 +660,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+         self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
+         self.assertIn('chat-screen-class', campaign)
+         self.assertIn('app.serea.android.ChatScreenTest 900 16', campaign)
++        self.assertIn('run_diagnostic_stage local-model-memory-lifecycle', campaign)
++        self.assertIn('app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse', campaign)
+         self.assertNotIn('runner-smoke', campaign)
+         self.assertNotIn('chat-http-e2e', campaign)
+         self.assertNotIn('activity-recreation', campaign)
+@@ -667,10 +669,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+         focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
+         class_stage = campaign.index('run_diagnostic_stage calendar-class')
+         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
++        memory_lifecycle_stage = campaign.index('run_diagnostic_stage local-model-memory-lifecycle')
+         full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+         self.assertLess(focused_stage, class_stage)
+         self.assertLess(class_stage, chat_class_stage)
+         self.assertLess(chat_class_stage, full_suite)
++        self.assertGreater(memory_lifecycle_stage, campaign.index('if [[ "$test_ime_installed" == true ]]'))
++        self.assertNotIn('local_model_memory_test', campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0])
+         self.assertIn('--require-test', campaign)
+         self.assertIn('--exact-count', campaign)
+         self.assertIn('SereaCalendarStage', campaign)
+@@ -1005,6 +1010,30 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+         self.assertIn("phase='process-death-seed'", target_helper)
+         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
+ 
++    def test_local_model_memory_lifecycle_status_report_is_separate_and_non_gating(self) -> None:
++        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
++        helper = campaign.split("record_local_model_memory_lifecycle_status() {", 1)[1].split("\n}\n", 1)[0]
++        shell_function = "record_local_model_memory_lifecycle_status() {" + helper + "\n}\n"
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            for result in ("PASS", "FAIL", "NOT_RUN"):
++                evidence = root / result
++                evidence.mkdir()
++                summary = evidence / "summary.txt"
++                status = evidence / "local-model-memory-lifecycle-status.txt"
++                env = os.environ.copy()
++                env.update({"evidence": str(evidence), "api_level": "26", "GITHUB_STEP_SUMMARY": str(summary)})
++                completed = subprocess.run(
++                    ["bash", "-c", shell_function + f'record_local_model_memory_lifecycle_status "{result}"'],
++                    env=env, capture_output=True, text=True, check=False,
++                )
++                self.assertEqual(0, completed.returncode, completed.stderr)
++                self.assertEqual(result + "\n", status.read_text(encoding="utf-8"))
++                self.assertIn(f"local-model-memory-lifecycle={result}", summary.read_text(encoding="utf-8"))
++
++        result_condition = campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0]
++        self.assertNotIn("local_model_memory_test", result_condition)
++
+     def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
+         harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")
+         activity = (ROOT / "android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt").read_text(
+@@ -1015,6 +1044,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+         self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
+         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
+         self.assertIn('package="app.serea.android.isolated"', harness)
++        self.assertIn('activity="$package/app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
++        self.assertIn("grep -Fxq 'Status: ok'", harness)
++        self.assertIn('grep -Fxq "Activity: $activity"', harness)
+         self.assertIn('android_package_path "$package"', harness)
+         self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
+         self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
+@@ -1125,12 +1157,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+                 "      exit 0\n"
+                 "    fi\n"
+                 "    [[ \"$action\" == start ]] || exit 94\n"
++                "    requested_activity=\"\"\n"
+                 "    while [[ $# -gt 0 ]]; do\n"
+                 "      if [[ \"$1\" == --es && \"${2:-}\" == phase ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_PHASE\"; printf '%s\\n' \"$3\" >> \"$ADB_PHASES\"; shift 3;\n"
+                 "      elif [[ \"$1\" == --es && \"${2:-}\" == token ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_TOKEN\"; shift 3;\n"
++                "      elif [[ \"$1\" == -n ]]; then requested_activity=\"$2\"; shift 2;\n"
+                 "      else shift; fi\n"
+                 "    done\n"
+                 "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
++                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s%s\\n' \"$requested_activity\" \"${ADB_START_ACTIVITY_SUFFIX:-}\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
+                 "    ;;\n"
+                 "  logcat)\n"
+                 "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
+@@ -1187,6 +1222,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+                 fail_after_force_stop: bool = False,
+                 pidof_test_mode: str = "absent",
+                 transport_fail: bool = False,
++                am_start_status: str = "ok",
++                am_start_activity_suffix: str = "",
+                 installed_sha_fail: bool = False,
+                 installed_sha_mismatch: bool = False,
+                 local_sha_fail: bool = False,
+@@ -1221,6 +1258,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
+                     "PIDOF_TEST_MODE": pidof_test_mode,
+                     "ADB_SHELL_TRANSPORT_FAIL": "1" if transport_fail else "",
++                    "ADB_START_STATUS": am_start_status,
++                    "ADB_START_ACTIVITY_SUFFIX": am_start_activity_suffix,
+                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
+                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
+                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
+@@ -1299,6 +1338,25 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
+             self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
+             self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
+ 
++            activity_launch_failure, activity_failure_case = run_case(
++                "activity-launch-failure", am_start_status="error",
++            )
++            self.assertNotEqual(0, activity_launch_failure.returncode)
++            self.assertEqual("FAIL\n", (activity_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
++            self.assertNotIn("logcat", (activity_failure_case / "adb-calls").read_text(encoding="utf-8"))
++            self.assertIn("Status: error", activity_launch_failure.stderr)
++            self.assertIn("Activity class does not exist", activity_launch_failure.stderr)
++            self.assertNotIn("Timed out waiting for phase seed", activity_launch_failure.stderr)
++
++            activity_component_mismatch, component_mismatch_case = run_case(
++                "activity-component-mismatch", am_start_activity_suffix=" unexpected",
++            )
++            self.assertNotEqual(0, activity_component_mismatch.returncode)
++            self.assertEqual("FAIL\n", (component_mismatch_case / "evidence/status.txt").read_text(encoding="utf-8"))
++            self.assertIn("Activity: app.serea.android.isolated/app.serea.android.FakeGoogleProcessDeathHarnessActivity unexpected",
++                          activity_component_mismatch.stderr)
++            self.assertNotIn("Timed out waiting for phase seed", activity_component_mismatch.stderr)
++
+             mismatch, mismatch_case = run_case("installed-apk-hash-mismatch", installed_sha_mismatch=True)
+             self.assertNotEqual(0, mismatch.returncode)
+             self.assertEqual("FAIL\n", (mismatch_case / "evidence/status.txt").read_text(encoding="utf-8"))
+diff --git a/tests/android_instrumentation_results_tests.py b/tests/android_instrumentation_results_tests.py
+index da66677..5d6f78e 100644
+--- a/tests/android_instrumentation_results_tests.py
++++ b/tests/android_instrumentation_results_tests.py
+@@ -141,7 +141,7 @@ class InstrumentationResultTests(unittest.TestCase):
+         self.assertEqual(2, len(additional_tests))
+         self.assertFalse(required_tests & additional_tests)
+         # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
+-        self.assertEqual(21, len(non_required_tests))
++        self.assertEqual(22, len(non_required_tests))
+         self.assertFalse(non_required_tests & (required_tests | additional_tests))
+         required: dict[str, int] = {}
+         for class_name, _ in required_tests:
+diff --git a/tools/run_android_fake_google_process_death.sh b/tools/run_android_fake_google_process_death.sh
+index bced75c..1833385 100755
+--- a/tools/run_android_fake_google_process_death.sh
++++ b/tools/run_android_fake_google_process_death.sh
+@@ -12,7 +12,10 @@ test "$SEREA_ISOLATED_INSTRUMENTATION_FINISHED" = 1
+ 
+ package="app.serea.android.isolated"
+ test_package="app.serea.android.isolated.test"
+-activity="$package/.FakeGoogleProcessDeathHarnessActivity"
++# The isolated variant changes applicationId, not the Kotlin namespace. Use the
++# class's namespace explicitly; the relative component resolves under the
++# suffixed app ID and points at a class that does not exist.
++activity="$package/app.serea.android.FakeGoogleProcessDeathHarnessActivity"
+ tag="SereaFakeGoogleDeath"
+ token="$SEREA_FAKE_GOOGLE_DEATH_TOKEN"
+ evidence="${SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/fake-google-process-death}"
+@@ -153,8 +156,19 @@ wait_target_stopped() {
+ run_phase() {
+   local phase="$1"
+   local log_file="$evidence/$phase-logcat.txt"
+-  "${adb_cmd[@]}" shell am start -W -f 0x10008000 -n "$activity" \
+-    --es phase "$phase" --es token "$token" > "$evidence/$phase-am-start.txt" 2>&1
++  if ! "${adb_cmd[@]}" shell am start -W -f 0x10008000 -n "$activity" \
++    --es phase "$phase" --es token "$token" > "$evidence/$phase-am-start.txt" 2>&1; then
++    cat "$evidence/$phase-am-start.txt" >&2
++    return 1
++  fi
++  # `am start -W` can exit zero even when ActivityManager prints Error type 3.
++  # Reject any non-success status before waiting for an app marker, so a bad
++  # component cannot masquerade as a seed/ViewModel timeout.
++  if ! grep -Fxq 'Status: ok' "$evidence/$phase-am-start.txt" ||
++    ! grep -Fxq "Activity: $activity" "$evidence/$phase-am-start.txt"; then
++    cat "$evidence/$phase-am-start.txt" >&2
++    return 1
++  fi
+   for _ in $(seq 1 30); do
+     "${adb_cmd[@]}" logcat -d -s "$tag:I" > "$log_file"
+     if grep -F "FAIL:$token:$phase:" "$log_file" >/dev/null; then
+diff --git a/tools/run_android_instrumentation_campaign.sh b/tools/run_android_instrumentation_campaign.sh
+index a793d71..ce6ec4d 100644
+--- a/tools/run_android_instrumentation_campaign.sh
++++ b/tools/run_android_instrumentation_campaign.sh
+@@ -39,6 +39,7 @@ PY
+ printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
+ printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
+ printf 'NOT_RUN\n' > "$evidence/google-demo-ui-status.txt" || exit 1
++printf 'NOT_RUN\n' > "$evidence/local-model-memory-lifecycle-status.txt" || exit 1
+ printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
+ printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
+ printf 'NOT_RUN\n' > "$evidence/data-isolation-status.txt" || exit 1
+@@ -281,6 +282,16 @@ run_diagnostic_stage() {
+   return 1
+ }
+ 
++record_local_model_memory_lifecycle_status() {
++  local result="${1:-FAIL}"
++  case "$result" in
++    PASS|FAIL|NOT_RUN) ;;
++    *) result=FAIL ;;
++  esac
++  printf '%s\n' "$result" > "$evidence/local-model-memory-lifecycle-status.txt"
++  echo "### Android API $api_level: local-model-memory-lifecycle=$result" >> "$GITHUB_STEP_SUMMARY"
++}
++
+ cleanup_failed() {
+   message="Failed to clear stale API $api_level instrumentation evidence; campaign was not run."
+   printf '%s\n' "$message" > "$evidence/device-api-error.txt" || true
+@@ -802,6 +813,20 @@ printf '%s\n' "$google_demo_ui_cleanup_result" > "$evidence/google-demo-ui-clean
+ 
+ if [[ "$test_ime_installed" == true ]]; then cleanup_test_ime; fi
+ 
++if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$google_demo_ui_result" == PASS && "$google_demo_ui_cleanup_result" -eq 0 ]]; then
++  local_model_memory_test=FAIL
++  if run_diagnostic_stage local-model-memory-lifecycle \
++    app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse \
++    900 1 app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse; then
++    local_model_memory_test=PASS
++  else
++    local_model_memory_test="$(cat "$evidence/stages/local-model-memory-lifecycle/status.txt" 2>/dev/null || printf 'FAIL')"
++  fi
++  record_local_model_memory_lifecycle_status "$local_model_memory_test"
++else
++  record_local_model_memory_lifecycle_status NOT_RUN
++fi
++
+ if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && "$google_demo_ui_result" == PASS ]]; then
+   result=PASS
+ else

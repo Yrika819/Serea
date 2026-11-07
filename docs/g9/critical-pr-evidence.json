@@ -1,0 +1,278 @@
+[
+  {
+    "number": 191,
+    "head": "31bbab289c52802ca0f2be142c8dcebd97767737",
+    "base": "68dd17e687b80bdad0134099077a886fca4de836",
+    "merge_base": "68dd17e687b80bdad0134099077a886fca4de836",
+    "base_is_ancestor": true,
+    "commit_count": 2,
+    "patch_ids": [
+      {
+        "sha": "ca8a2bbdc068b30bc7e20021194ccd649ea029c0",
+        "patch_id": "0c9cd86fb23570a6da85a1777130fc153e340926"
+      },
+      {
+        "sha": "31bbab289c52802ca0f2be142c8dcebd97767737",
+        "patch_id": "1d4be003aa574a25eda8f82c826b82398cd5ff0c"
+      }
+    ],
+    "files": [
+      "android/app/build.gradle.kts",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 26,
+      "failure": 2,
+      "skipped": 2,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 193,
+    "head": "518b2328f8815fde042c26dc5593958052933a40",
+    "base": "68dd17e687b80bdad0134099077a886fca4de836",
+    "merge_base": "68dd17e687b80bdad0134099077a886fca4de836",
+    "base_is_ancestor": true,
+    "commit_count": 1,
+    "patch_ids": [
+      {
+        "sha": "518b2328f8815fde042c26dc5593958052933a40",
+        "patch_id": "3b60a065f4e97babae9a00ba7dc7316073c1573c"
+      }
+    ],
+    "files": [
+      "android/app/build.gradle.kts",
+      "android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt",
+      "android/app/src/main/java/app/serea/android/LocalModelChatFeatureRouter.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt",
+      "android/app/src/test/java/app/serea/android/LocalModelChatFeatureRouterTest.kt"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 26,
+      "failure": 2,
+      "skipped": 2,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 196,
+    "head": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
+    "base": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+    "merge_base": "dc4f966f3653c0691584bdc188a65c5459564f1f",
+    "base_is_ancestor": true,
+    "commit_count": 1,
+    "patch_ids": [
+      {
+        "sha": "b30cd55ae0ae991abce86c3f8addee18f0ee0b15",
+        "patch_id": "cbcd1a1502f1f6dab4c4175a87b486364e06c5e7"
+      }
+    ],
+    "files": [
+      "android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 26,
+      "failure": 2,
+      "skipped": 2,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 199,
+    "head": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
+    "base": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+    "merge_base": "eb07aee0408e562f17cb472b474a79e1dca8f30f",
+    "base_is_ancestor": true,
+    "commit_count": 2,
+    "patch_ids": [
+      {
+        "sha": "c1d163b4091fbab29a2e4d2c3c42596b355e8226",
+        "patch_id": "000863a55050aae06735d738dc0b0404d85318c1"
+      },
+      {
+        "sha": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
+        "patch_id": "9a069ddcd3efd1f7c02cf9df8f4aad67b614d40a"
+      }
+    ],
+    "files": [
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt",
+      "tests/android_emulator_workflow_tests.py",
+      "tests/android_instrumentation_results_tests.py",
+      "tools/run_android_instrumentation_campaign.sh"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 29,
+      "failure": 0,
+      "skipped": 1,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 202,
+    "head": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
+    "base": "c1d163b4091fbab29a2e4d2c3c42596b355e8226",
+    "merge_base": "c1d163b4091fbab29a2e4d2c3c42596b355e8226",
+    "base_is_ancestor": true,
+    "commit_count": 3,
+    "patch_ids": [
+      {
+        "sha": "6751a9eb83accfee8e867762a83a5039c2192c4c",
+        "patch_id": "5b3b3015855087f0ea9ab799a43a5504f116ccaa"
+      },
+      {
+        "sha": "aafe21fb6e5574d44b969a893fa20b016c2f3c9a",
+        "patch_id": "e9a16e548cf9359ed04a165ea43a893b37c9afef"
+      },
+      {
+        "sha": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
+        "patch_id": "a079ebce98f8a63b73105819f2fde8dee5a8867a"
+      }
+    ],
+    "files": [
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt",
+      "tests/android_emulator_workflow_tests.py",
+      "tests/android_instrumentation_results_tests.py",
+      "tools/run_android_instrumentation_campaign.sh"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 24,
+      "failure": 2,
+      "skipped": 4,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 203,
+    "head": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
+    "base": "c1d163b4091fbab29a2e4d2c3c42596b355e8226",
+    "merge_base": "c1d163b4091fbab29a2e4d2c3c42596b355e8226",
+    "base_is_ancestor": true,
+    "commit_count": 2,
+    "patch_ids": [
+      {
+        "sha": "a7710d1c917baba7d68ed2a05a98fe855d456232",
+        "patch_id": "28f94c384db19c51187a102bce043b18d0f76ac2"
+      },
+      {
+        "sha": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
+        "patch_id": "9a069ddcd3efd1f7c02cf9df8f4aad67b614d40a"
+      }
+    ],
+    "files": [
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt",
+      "tests/android_emulator_workflow_tests.py",
+      "tests/android_instrumentation_results_tests.py",
+      "tools/run_android_instrumentation_campaign.sh"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 24,
+      "failure": 2,
+      "skipped": 4,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 204,
+    "head": "8017e7e9e8987dc66361eb9297cf87535d8ef7b1",
+    "base": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
+    "merge_base": "018d19f025e5f3232abcf2a112b8dbf954bf04e8",
+    "base_is_ancestor": true,
+    "commit_count": 8,
+    "patch_ids": [
+      {
+        "sha": "6751a9eb83accfee8e867762a83a5039c2192c4c",
+        "patch_id": "5b3b3015855087f0ea9ab799a43a5504f116ccaa"
+      },
+      {
+        "sha": "aafe21fb6e5574d44b969a893fa20b016c2f3c9a",
+        "patch_id": "e9a16e548cf9359ed04a165ea43a893b37c9afef"
+      },
+      {
+        "sha": "042114fcbd52a3e6274c398fe37e1b03626c16b1",
+        "patch_id": "a079ebce98f8a63b73105819f2fde8dee5a8867a"
+      },
+      {
+        "sha": "a7710d1c917baba7d68ed2a05a98fe855d456232",
+        "patch_id": "28f94c384db19c51187a102bce043b18d0f76ac2"
+      },
+      {
+        "sha": "b83dfeb6f94a0b2fdb9c954e3d50863c48c3d4d2",
+        "patch_id": "9a069ddcd3efd1f7c02cf9df8f4aad67b614d40a"
+      },
+      {
+        "sha": "d318da4102ae36a50d952ec107dbee4562241b9c",
+        "patch_id": null
+      },
+      {
+        "sha": "ec6c7e15c484419f1ca922dba25905b79526ccf6",
+        "patch_id": null
+      },
+      {
+        "sha": "8017e7e9e8987dc66361eb9297cf87535d8ef7b1",
+        "patch_id": "b745a3718c2dc321d2b76bfd9e9347b32ff94a2f"
+      }
+    ],
+    "files": [
+      "android/app/src/androidTest/assets/serea-non-required-test-identities.txt",
+      "android/app/src/androidTest/java/app/serea/android/LegacyHistoryV4MigrationDiagnosticTest.kt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelChatViewModelIntegrationAndroidTest.kt",
+      "android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt",
+      "tests/android_emulator_workflow_tests.py",
+      "tests/android_instrumentation_results_tests.py",
+      "tools/run_android_instrumentation_campaign.sh"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 24,
+      "failure": 2,
+      "skipped": 4,
+      "None": 0
+    },
+    "check_total": 30
+  },
+  {
+    "number": 208,
+    "head": "158720bbfea6f0daa13440f0450a76bfcfab0ac0",
+    "base": "4ca0aac8cfe6751bc138fef78469f12f1ae7e5d2",
+    "merge_base": "4ca0aac8cfe6751bc138fef78469f12f1ae7e5d2",
+    "base_is_ancestor": true,
+    "commit_count": 1,
+    "patch_ids": [
+      {
+        "sha": "158720bbfea6f0daa13440f0450a76bfcfab0ac0",
+        "patch_id": "b52ff65f99dc8aaacbd8f6383d4c8c6ff74e7254"
+      }
+    ],
+    "files": [
+      ".github/workflows/android-functional-focused.yml"
+    ],
+    "reviews": [],
+    "checks": {
+      "success": 26,
+      "failure": 3,
+      "skipped": 1,
+      "None": 0
+    },
+    "check_total": 30
+  }
+]

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -122,9 +123,21 @@ class LocalModelChatViewModelIntegrationAndroidTest {
             composition.grantExplicitTestConsent()
             chat.updateInput("cancel fake generation")
             chat.sendMessage()
-            backend.generationStarted.await()
+            val generationStarted = withTimeoutOrNull(15_000) {
+                backend.generationStarted.await()
+                true
+            } == true
+            assertTrue(
+                "Fake backend did not enter generate: calls=${backend.generateCalls.get()}, " +
+                    "loading=${chat.state.value.isLoading}, error=${chat.state.value.errorMessage}",
+                generationStarted,
+            )
             chat.cancelCurrent()
-            backend.generationFinished.await()
+            val generationFinished = withTimeoutOrNull(15_000) {
+                backend.generationFinished.await()
+                true
+            } == true
+            assertTrue("Fake backend did not unwind after cancellation.", generationFinished)
             withTimeout(15_000) { backend.cancellationObserved.await() }
             val state = chat.state.value
             assertTrue(state.conversation.messages.none { it.role == MessageRole.ASSISTANT })

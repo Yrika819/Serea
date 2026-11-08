@@ -16,6 +16,7 @@ import app.serea.android.calendar.CalendarEventPage
 import app.serea.android.calendar.EventStatus
 import app.serea.android.calendar.EventTime
 import app.serea.android.calendar.CalendarDescriptor
+import app.serea.android.calendar.CalendarId
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -109,6 +110,7 @@ internal class CalendarAgendaUiController(
     initialQuery: CalendarAgendaQuery = CalendarAgendaQuery(),
     initialCalendarId: String? = null,
     initialDetailKey: CalendarEventKey? = null,
+    private val primaryCalendarOnly: Boolean = false,
 ) {
     private val mutableState = MutableStateFlow<CalendarAgendaUiState>(
         CalendarAgendaUiState.Loading(initialQuery, initialCalendarId, detailKey = initialDetailKey),
@@ -116,7 +118,7 @@ internal class CalendarAgendaUiController(
     val state: StateFlow<CalendarAgendaUiState> = mutableState.asStateFlow()
 
     private var query = initialQuery
-    private var selectedCalendarId = initialCalendarId
+    private var selectedCalendarId = if (primaryCalendarOnly) PRIMARY_CALENDAR_ID else initialCalendarId
     private var detailKey: CalendarEventKey? = initialDetailKey
     private var requestGeneration = 0L
     private var activeJob: Job? = null
@@ -145,6 +147,7 @@ internal class CalendarAgendaUiController(
     }
 
     fun selectCalendar(calendarId: String) {
+        if (primaryCalendarOnly && calendarId != PRIMARY_CALENDAR_ID) return
         if (selectedCalendarId == calendarId && detailKey == null) return
         selectedCalendarId = calendarId
         detailKey = null
@@ -195,8 +198,8 @@ internal class CalendarAgendaUiController(
         )
         activeJob = scope.launch {
             try {
-                val authorization = requireReadAccess(requireCalendarList = true)
-                val calendars = readPort.listCalendars()
+                val authorization = requireReadAccess(requireCalendarList = !primaryCalendarOnly)
+                val calendars = availableCalendars()
                 currentCoroutineContext().ensureActive()
                 val selected = calendars.firstOrNull { it.id.value == requestedCalendarId }
                     ?: calendars.firstOrNull()
@@ -272,8 +275,8 @@ internal class CalendarAgendaUiController(
                 if (requestedCalendarId == null || key.calendarId.value != requestedCalendarId) {
                     throw UiCalendarFailure(CalendarAgendaFailure.EVENT_UNAVAILABLE)
                 }
-                val authorization = requireReadAccess(requireCalendarList = true)
-                val calendars = readPort.listCalendars()
+                val authorization = requireReadAccess(requireCalendarList = !primaryCalendarOnly)
+                val calendars = availableCalendars()
                 currentCoroutineContext().ensureActive()
                 mutableState.value = CalendarAgendaUiState.Loading(
                     requestedQuery, requestedCalendarId, calendars, detailKey = key,
@@ -326,7 +329,13 @@ internal class CalendarAgendaUiController(
     }
 
     private suspend fun requireReadAccess(requireCalendarList: Boolean): CalendarAuthorizationStatus {
-        val status = authorizationPort.status()
+        val status = authorizationPort.status(
+            if (requireCalendarList) {
+                setOf(CalendarPermissionPolicy.EVENTS_READ_ONLY, CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY)
+            } else {
+                setOf(CalendarPermissionPolicy.EVENTS_READ_ONLY)
+            },
+        )
         currentMockOnly = status.state == CalendarAuthorizationState.MOCK_ONLY
         when (status.state) {
             CalendarAuthorizationState.MOCK_ONLY -> Unit
@@ -350,6 +359,12 @@ internal class CalendarAgendaUiController(
         return status
     }
 
+    private suspend fun availableCalendars(): List<CalendarDescriptor> = if (primaryCalendarOnly) {
+        listOf(CalendarDescriptor(CalendarId(PRIMARY_CALENDAR_ID), "Primary", displayZone))
+    } else {
+        readPort.listCalendars()
+    }
+
     private fun replaceRequest(loading: CalendarAgendaUiState.Loading): Long {
         requestGeneration++
         activeJob?.cancel()
@@ -358,6 +373,10 @@ internal class CalendarAgendaUiController(
     }
 
     private class UiCalendarFailure(val reason: CalendarAgendaFailure) : RuntimeException()
+
+    private companion object {
+        const val PRIMARY_CALENDAR_ID = "primary"
+    }
 
     private fun Throwable.toAgendaFailure(isDetail: Boolean = false): CalendarAgendaFailure = when (this) {
         is UiCalendarFailure -> reason

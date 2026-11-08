@@ -68,6 +68,7 @@ class GoogleAuthorizationTest {
         }
         val adapter = GoogleCalendarAuthorizationAdapter(gateway)
         assertEquals(CalendarAuthorizationState.AUTHORIZED, adapter.status().state)
+        assertEquals(emptySet<String>(), adapter.status().missingScopes)
         val eventsToken = checkNotNull(adapter.accessToken(CalendarPermissionPolicy.EVENTS_READ_ONLY))
         val calendarListToken = checkNotNull(adapter.accessToken(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
         eventsToken.close()
@@ -77,6 +78,27 @@ class GoogleAuthorizationTest {
             requestedScopes,
         )
         assertTrue(leases.all { lease -> runCatching { lease.useToken { it } }.isFailure })
+    }
+
+    @Test fun calendarStatusRequestsOnlyEventsScopeUntilCalendarListIsUsed() = runBlocking {
+        val queriedScopes = mutableListOf<Set<GoogleScope>>()
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "primary-calendar-session"
+            override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+                queriedScopes += scopes
+                return AuthorizationStatus(
+                    GoogleServiceState.AVAILABLE,
+                    scopes.associateWith { scope ->
+                        if (scope == CALENDAR_EVENTS_READ_ONLY) ScopePermission.GRANTED else ScopePermission.NEEDS_CONSENT
+                    },
+                )
+            }
+        }
+        val status = GoogleCalendarAuthorizationAdapter(gateway).status()
+        assertEquals(CalendarAuthorizationState.AUTHORIZED, status.state)
+        assertEquals(emptySet<String>(), status.missingScopes)
+        assertEquals(listOf(setOf(CALENDAR_EVENTS_READ_ONLY)), queriedScopes)
     }
 
     @Test fun featureDisableIsVisibleAndGmailDisableLeavesCalendarGrantUsable() = runBlocking {

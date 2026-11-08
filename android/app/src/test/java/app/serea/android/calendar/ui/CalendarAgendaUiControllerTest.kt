@@ -35,6 +35,44 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarAgendaUiControllerTest {
+    @Test fun primaryOnlyAgendaUsesPrimaryWithoutCallingCalendarList() = runTest {
+        val provider = fakeProvider(
+            emptyList(),
+            listOf(timedEvent("primary", "primary-event", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")),
+        )
+        val delegate = CalendarAgendaUiFake(provider)
+        var listCalls = 0
+        val primaryOnly = object : app.serea.android.calendar.CalendarReadPort,
+            app.serea.android.calendar.CalendarAuthorizationPort by delegate {
+            override suspend fun listCalendars(): List<app.serea.android.calendar.CalendarDescriptor> {
+                listCalls++
+                error("Primary-only agenda must not call CalendarList.")
+            }
+            override suspend fun getCalendar(calendarId: CalendarId) = delegate.getCalendar(calendarId)
+            override suspend fun getEvent(key: CalendarEventKey) = delegate.getEvent(key)
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: app.serea.android.calendar.CalendarDateRange,
+                pageToken: String?,
+            ) = delegate.listEventsPage(calendarId, range, pageToken)
+        }
+        val controller = CalendarAgendaUiController(
+            primaryOnly, primaryOnly, UI_TEST_CLOCK, ZoneId.of("UTC"), this,
+            primaryCalendarOnly = true,
+        )
+        advanceUntilIdle()
+        val result = agenda(controller)
+        assertEquals("primary", result.selectedCalendarId)
+        assertEquals(listOf("primary"), result.calendars.map { it.id.value })
+        assertEquals(listOf("primary-event"), result.events.map { it.key.eventId.value })
+        assertEquals(0, listCalls)
+        controller.selectCalendar("another-calendar")
+        advanceUntilIdle()
+        assertEquals("primary", agenda(controller).selectedCalendarId)
+        assertEquals(0, listCalls)
+        controller.close()
+    }
+
     @Test fun providerCancellationEndsLoadingAndCanBeRetried() = runTest {
         val provider = fakeProvider(
             listOf(calendar("demo")),

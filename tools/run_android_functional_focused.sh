@@ -28,6 +28,7 @@ initial_default_ime=''
 test_ime_installed=false
 gradle_status=1
 verify_status=1
+test_lifecycle_logcat_pid=''
 
 {
   echo "source_sha=$(git rev-parse HEAD)"
@@ -78,6 +79,10 @@ fi
 capture() {
   local original_status=$?
   local cleanup_status=0
+  if [[ -n "$test_lifecycle_logcat_pid" ]]; then
+    kill "$test_lifecycle_logcat_pid" 2>/dev/null || true
+    wait "$test_lifecycle_logcat_pid" 2>/dev/null || true
+  fi
   if [[ "$test_ime_installed" == true ]]; then
     local ime_component='app.serea.android.r25testime/app.serea.android.diagnostics.RealImeService'
     local current_default_ime
@@ -193,6 +198,13 @@ if ! EXPECTED_API_LEVEL="$api_level" bash ../tools/prepare_isolated_instrumentat
   exit 1
 fi
 echo 'campaign_seed=PASS' >> "$evidence/environment.txt"
+
+# Preserve sanitized test lifecycle events while Gradle is running. This makes a
+# workflow timeout diagnosable even when the instrumentation runner cannot flush
+# its JUnit XML before the job is canceled.
+adb logcat -c
+adb logcat -v time -s SereaTestLifecycle:I > "$evidence/test-lifecycle.log" 2>&1 &
+test_lifecycle_logcat_pid=$!
 
 if ./gradlew --no-daemon \
   -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$campaign_token" \

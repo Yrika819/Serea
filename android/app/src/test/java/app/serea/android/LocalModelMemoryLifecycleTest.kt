@@ -14,13 +14,14 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
 
 class LocalModelMemoryLifecycleTest {
     @Test fun applicationCompositionRegistersOneLifecycleWithItsOwnedAdapterAndClosesIt() = runTest {
         val owner = FakeCallbacksOwner()
         val processOwner = FakeProcessVisibilityOwner()
         val events = mutableListOf<LocalModelMemoryLifecycle.Event>()
-        val directory = createTempDir(prefix = "serea-app-lifecycle")
+        val directory = Files.createTempDirectory("serea-app-lifecycle").toFile()
         val composition = LocalModelRuntimeApplicationComposition.create(
             modelDirectory = directory,
             callbacks = owner,
@@ -65,7 +66,7 @@ class LocalModelMemoryLifecycleTest {
     @Test fun processVisibilityRegistrationFailureCleansCallbackAndClosesAdapter() = runTest {
         val owner = FakeCallbacksOwner()
         val processOwner = FakeProcessVisibilityOwner(failAfterRegister = true)
-        val directory = createTempDir(prefix = "serea-app-lifecycle-register-failure")
+        val directory = Files.createTempDirectory("serea-app-lifecycle-register-failure").toFile()
         val composition = LocalModelRuntimeApplicationComposition.create(
             modelDirectory = directory,
             callbacks = owner,
@@ -90,7 +91,7 @@ class LocalModelMemoryLifecycleTest {
     @Test fun componentCallbackRegistrationFailureStillClosesAdapterAndKeepsOriginalCause() = runTest {
         val owner = FakeCallbacksOwner(failAfterRegister = true)
         val processOwner = FakeProcessVisibilityOwner()
-        val directory = createTempDir(prefix = "serea-app-callback-register-failure")
+        val directory = Files.createTempDirectory("serea-app-callback-register-failure").toFile()
         val composition = LocalModelRuntimeApplicationComposition.create(
             modelDirectory = directory,
             callbacks = owner,
@@ -114,7 +115,7 @@ class LocalModelMemoryLifecycleTest {
     @Test fun closeAttemptsEveryCleanupAndPreservesFirstUnregisterFailure() = runTest {
         val owner = FakeCallbacksOwner(failOnUnregister = true)
         val processOwner = FakeProcessVisibilityOwner(failOnUnregister = true)
-        val directory = createTempDir(prefix = "serea-app-lifecycle-close-failure")
+        val directory = Files.createTempDirectory("serea-app-lifecycle-close-failure").toFile()
         val composition = LocalModelRuntimeApplicationComposition.create(
             modelDirectory = directory,
             callbacks = owner,

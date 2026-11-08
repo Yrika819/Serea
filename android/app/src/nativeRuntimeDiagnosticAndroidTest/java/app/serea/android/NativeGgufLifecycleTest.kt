@@ -120,6 +120,8 @@ class NativeGgufLifecycleTest {
         assertEquals(cancelledGenerationSequence, seam.cancelledReleaseSequence())
         measurements["owner_after_cancel_and_free"] = "empty"
         measurements["coordinator_after_cancel_and_free"] = "RELEASED"
+        measurements["cancelled_generation_engine_id"] = cancelledGenerationEngineId.toString()
+        measurements["cancelled_generation_id"] = generationId.toString()
 
         val reload = LlamaCppLocalModelInferenceBackend(::recordPss)
         val reloadStarted = SystemClock.elapsedRealtimeNanos()
@@ -134,8 +136,12 @@ class NativeGgufLifecycleTest {
         assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
         val reloadedGenerationId = seam.generationId()
         val reloadedGenerationEngineId = seam.generationEngineId()
+        assertTrue("reloaded backend must use a new engine ID",
+            reloadedGenerationEngineId != cancelledGenerationEngineId)
         assertTrue("reloaded request must use a distinct engine/generation identity pair",
             reloadedGenerationEngineId != cancelledGenerationEngineId || reloadedGenerationId != generationId)
+        measurements["reloaded_generation_engine_id"] = reloadedGenerationEngineId.toString()
+        measurements["reloaded_generation_id"] = reloadedGenerationId.toString()
         assertEquals("prior cancellation must not target the new generation", 0, seam.cancelObservedGenerationId())
         assertEquals(oldCancelCount + 1, seam.nativeCancelCount())
         val finalFreeStarted = SystemClock.elapsedRealtimeNanos()

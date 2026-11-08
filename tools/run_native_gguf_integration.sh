@@ -34,9 +34,15 @@ gradle_status=$?
 set -e
 
 metrics_file="$diagnostics_root/native-gguf-metrics.properties"
-if adb shell run-as "$package_name" cat files/native-gguf-metrics.properties \
-  > "$metrics_file" 2>/dev/null && [[ -s "$metrics_file" ]]; then
-  # Metrics contain timings, PSS, token counts and provenance only; model output is never recorded.
+metric_log="$diagnostics_root/native-gguf-metrics.log"
+adb logcat -d -v brief -s SereaNativeGGUF:I > "$metric_log" 2>/dev/null || true
+sed -n 's/^.*R7_METRIC //p' "$metric_log" > "$metrics_file"
+if [[ ! -s "$metrics_file" ]]; then
+  adb shell run-as "$package_name" cat files/native-gguf-metrics.properties \
+    > "$metrics_file" 2>/dev/null || true
+fi
+if [[ -s "$metrics_file" ]]; then
+  # This file contains timings, PSS, token counts and provenance only; no generated text.
   cat "$metrics_file"
 elif [[ "$gradle_status" -eq 0 ]]; then
   echo 'Native GGUF test passed without writing its required measurement record.' >&2

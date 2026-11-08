@@ -230,9 +230,14 @@ class NativeGgufLifecycleTest {
     private fun recordPss(name: String, value: Long) { pss[name] = value }
 
     private fun appendMeasurements() {
+        val safeMeasurements = measurements.map { (key, value) -> "$key=$value" }
         targetContext.openFileOutput(METRICS_FILE_NAME, android.content.Context.MODE_APPEND).bufferedWriter().use { writer ->
-            measurements.forEach { (key, value) -> writer.append(key).append('=').append(value).append('\n') }
+            safeMeasurements.forEach { writer.append(it).append('\n') }
         }
+        // Gradle may uninstall the isolated target after connected tests. Mirror only the
+        // allowlisted numeric/boolean/provenance metrics to logcat so the host can collect them
+        // before cleanup without relying on app-data persistence. Generated text is never logged.
+        safeMeasurements.forEach { android.util.Log.i(METRICS_LOG_TAG, "R7_METRIC $it") }
     }
 
     private fun limits() = LocalModelRuntimeLimits(
@@ -247,6 +252,7 @@ class NativeGgufLifecycleTest {
     companion object {
         const val MODEL_FILE_NAME = "serea-r7-smollm2-135m-q4_k_m.gguf"
         const val METRICS_FILE_NAME = "native-gguf-metrics.properties"
+        const val METRICS_LOG_TAG = "SereaNativeGGUF"
         const val EXPECTED_SIZE = 101_016_128L
         const val EXPECTED_SHA256 = "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5"
         const val LLAMA_CPP_REVISION = "276378515ceebee5d14bcc8536603dd5c87491a2"

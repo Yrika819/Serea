@@ -47,7 +47,8 @@ if [[ -s "$metrics_file" ]]; then
   required_metrics=(
     api_level abi runner_profile model_sha256 model_size_bytes llama_cpp_revision
     pss_before_load_kb load_ms first_generation_ms first_input_tokens first_output_tokens
-    second_generation_ms second_input_tokens second_output_tokens cancel_completion_ms cancelled_generation_id
+    second_generation_ms second_input_tokens second_output_tokens cancel_completion_ms
+    cancelled_generation_engine_id cancelled_generation_id
     first_free_ms reload_ms reloaded_generation_ms reloaded_generation_engine_id
     reloaded_generation_id reloaded_input_tokens reloaded_output_tokens final_free_ms
     pss_after_release_kb pss_after_free_failure_kb

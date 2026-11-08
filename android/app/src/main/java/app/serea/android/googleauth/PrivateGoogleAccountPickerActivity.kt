@@ -15,6 +15,23 @@ internal data class GoogleAccountPickerResult(
     val account: Account?,
 )
 
+internal fun parseGoogleAccountPickerResult(
+    resultCode: Int,
+    requestId: Long?,
+    generation: Long?,
+    accountName: String?,
+    accountType: String?,
+): GoogleAccountPickerResult {
+    val matchedRequestId = requestId?.takeUnless { it == INVALID_ID }
+    val matchedGeneration = generation?.takeUnless { it == INVALID_ID }
+    val account = if (resultCode == Activity.RESULT_OK && !accountName.isNullOrBlank() &&
+        accountType == PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE
+    ) Account(accountName, accountType) else null
+    return GoogleAccountPickerResult(matchedRequestId, matchedGeneration, account)
+}
+
+private const val INVALID_ID = Long.MIN_VALUE
+
 internal class PrivateGoogleAccountPickerContract :
     ActivityResultContract<PendingGoogleAccountSelection, GoogleAccountPickerResult>() {
     override fun createIntent(context: Context, input: PendingGoogleAccountSelection): Intent =
@@ -24,19 +41,10 @@ internal class PrivateGoogleAccountPickerContract :
 
     override fun parseResult(resultCode: Int, intent: Intent?): GoogleAccountPickerResult {
         val requestId = intent?.getLongExtra(PrivateGoogleAccountPickerActivity.EXTRA_REQUEST_ID, INVALID_ID)
-            ?.takeUnless { it == INVALID_ID }
         val generation = intent?.getLongExtra(PrivateGoogleAccountPickerActivity.EXTRA_GENERATION, INVALID_ID)
-            ?.takeUnless { it == INVALID_ID }
         val name = intent?.getStringExtra(PrivateGoogleAccountPickerActivity.EXTRA_ACCOUNT_NAME)
         val type = intent?.getStringExtra(PrivateGoogleAccountPickerActivity.EXTRA_ACCOUNT_TYPE)
-        val account = if (resultCode == Activity.RESULT_OK && !name.isNullOrBlank() &&
-            type == PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE
-        ) Account(name, type) else null
-        return GoogleAccountPickerResult(requestId, generation, account)
-    }
-
-    private companion object {
-        const val INVALID_ID = Long.MIN_VALUE
+        return parseGoogleAccountPickerResult(resultCode, requestId, generation, name, type)
     }
 }
 

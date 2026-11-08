@@ -2,7 +2,6 @@ package app.serea.android.googleauth
 
 import android.accounts.Account
 import android.app.Activity
-import android.content.Intent
 import app.serea.android.calendar.CalendarAuthorizationState
 import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.googleauth.TokenSupplyResult.Unavailable
@@ -198,18 +197,47 @@ class PrivateGoogleAuthorizationViewModelTest {
     fun accountPickerActivityResultPreservesItsOriginalRequestIdentity() {
         val requestId = 17L
         val generation = 4L
-        val response = Intent()
-            .putExtra(PrivateGoogleAccountPickerActivity.EXTRA_REQUEST_ID, requestId)
-            .putExtra(PrivateGoogleAccountPickerActivity.EXTRA_GENERATION, generation)
-            .putExtra(PrivateGoogleAccountPickerActivity.EXTRA_ACCOUNT_NAME, "synthetic-account")
-            .putExtra(PrivateGoogleAccountPickerActivity.EXTRA_ACCOUNT_TYPE, "com.google")
-
-        val result = PrivateGoogleAccountPickerContract().parseResult(Activity.RESULT_OK, response)
+        val result = parseGoogleAccountPickerResult(
+            resultCode = Activity.RESULT_OK,
+            requestId = requestId,
+            generation = generation,
+            accountName = "synthetic-account",
+            accountType = "com.google",
+        )
 
         assertEquals(requestId, result.requestId)
         assertEquals(generation, result.generation)
         assertEquals(PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE, result.account?.type)
         assertEquals("synthetic-account", result.account?.name)
+    }
+
+    @Test
+    fun accountPickerResultFailsClosedOnCancellationOrMismatchedIdentity() {
+        val cancelled = parseGoogleAccountPickerResult(
+            resultCode = Activity.RESULT_CANCELED,
+            requestId = 17L,
+            generation = 4L,
+            accountName = "synthetic-account",
+            accountType = "com.google",
+        )
+        val missingIdentity = parseGoogleAccountPickerResult(
+            resultCode = Activity.RESULT_OK,
+            requestId = null,
+            generation = 4L,
+            accountName = "synthetic-account",
+            accountType = "com.google",
+        )
+        val wrongType = parseGoogleAccountPickerResult(
+            resultCode = Activity.RESULT_OK,
+            requestId = 17L,
+            generation = 4L,
+            accountName = "synthetic-account",
+            accountType = "other",
+        )
+
+        assertNull(cancelled.account)
+        assertNull(missingIdentity.requestId)
+        assertNull(wrongType.account)
     }
 
     @Test

@@ -305,4 +305,9 @@ private class InstrumentationFakeLocalBackend(
     }
 
     override fun close() { closeCalls.incrementAndGet() }
+
+    override suspend fun closeAndAwaitRelease(): Boolean {
+        close()
+        return true // This injected backend owns no Native resources and confirms its release.
+    }
 }

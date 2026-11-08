@@ -33,8 +33,15 @@ set +e
 gradle_status=$?
 set -e
 
-adb shell run-as "$package_name" cat files/native-gguf-metrics.properties \
-  > "$diagnostics_root/native-gguf-metrics.properties" 2>/dev/null || true
+metrics_file="$diagnostics_root/native-gguf-metrics.properties"
+if adb shell run-as "$package_name" cat files/native-gguf-metrics.properties \
+  > "$metrics_file" 2>/dev/null && [[ -s "$metrics_file" ]]; then
+  # Metrics contain timings, PSS, token counts and provenance only; model output is never recorded.
+  cat "$metrics_file"
+elif [[ "$gradle_status" -eq 0 ]]; then
+  echo 'Native GGUF test passed without writing its required measurement record.' >&2
+  gradle_status=1
+fi
 adb shell run-as "$package_name" rm -f "files/$model_name" >/dev/null 2>&1 || true
 adb shell am force-stop "$package_name" >/dev/null 2>&1 || true
 if find "$diagnostics_root" -type f -iname '*.gguf' -print -quit | grep -q .; then

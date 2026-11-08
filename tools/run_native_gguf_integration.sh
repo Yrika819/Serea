@@ -21,7 +21,7 @@ cleanup_device_model() {
 trap cleanup_device_model EXIT
 
 adb shell run-as "$package_name" mkdir -p files
-adb exec-in run-as "$package_name" sh -c "cat > files/$model_name" < "$model_path"
+adb exec-in "run-as $package_name sh -c 'cat > files/$model_name'" < "$model_path"
 adb shell run-as "$package_name" test -s "files/$model_name"
 
 set +e

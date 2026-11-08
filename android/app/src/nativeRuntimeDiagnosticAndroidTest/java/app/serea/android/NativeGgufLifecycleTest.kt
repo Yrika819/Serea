@@ -43,10 +43,10 @@ class NativeGgufLifecycleTest {
         File(targetContext.filesDir, METRICS_FILE_NAME).delete()
         measurements["pss_before_load_kb"] = Debug.getPss().toString()
 
+        val injected = LlamaCppLocalModelInferenceBackend(::recordPss) // Loads the explicitly opted-in diagnostic library.
         val allocationsBefore = seam.modelAllocationCount()
         val failuresBefore = seam.failureAfterModelCount()
         val rollbacksBefore = seam.partialRollbackCount()
-        val injected = LlamaCppLocalModelInferenceBackend(::recordPss)
         seam.failNextLoadAfterModel()
         val injectedFailure = runCatching { injected.load(modelFile.absolutePath, limits()) }
         assertTrue("injected post-model-allocation load must fail", injectedFailure.isFailure)
@@ -75,14 +75,14 @@ class NativeGgufLifecycleTest {
         val firstTurn = first.generate("Say a short greeting.", 48)
         measurements["first_generation_ms"] = elapsedMs(firstGenerationStarted).toString()
         assertTrue("first native generation must return text", firstTurn.text.isNotBlank())
-        assertTokenUsage(firstTurn.inputTokens, firstTurn.outputTokens)
+        assertTokenUsage(firstTurn.inputTokens, firstTurn.outputTokens, 48)
         measurements["first_output_tokens"] = firstTurn.outputTokens.toString()
 
         val secondGenerationStarted = SystemClock.elapsedRealtimeNanos()
         val secondTurn = first.generate("Continue with one brief sentence.", 48)
         measurements["second_generation_ms"] = elapsedMs(secondGenerationStarted).toString()
         assertTrue("second native generation must return text", secondTurn.text.isNotBlank())
-        assertTokenUsage(secondTurn.inputTokens, secondTurn.outputTokens)
+        assertTokenUsage(secondTurn.inputTokens, secondTurn.outputTokens, 48)
         measurements["second_output_tokens"] = secondTurn.outputTokens.toString()
 
         val oldGenerationSequence = seam.generationSequence()
@@ -129,7 +129,7 @@ class NativeGgufLifecycleTest {
         val reloadedResult = reload.generate("Confirm the reloaded engine responds.", 32)
         measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
         assertTrue("reloaded native model must generate", reloadedResult.text.isNotBlank())
-        assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens)
+        assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
         assertEquals("new generation must not be retargeted by the prior cancel", generationId, seam.cancelObservedGenerationId())
         assertEquals(oldCancelCount + 1, seam.nativeCancelCount())
         val finalFreeStarted = SystemClock.elapsedRealtimeNanos()
@@ -198,12 +198,12 @@ class NativeGgufLifecycleTest {
         error("unreachable")
     }
 
-    private fun assertTokenUsage(input: Int?, output: Int?) {
+    private fun assertTokenUsage(input: Int?, output: Int?, requestBound: Int) {
         assertNotNull("JNI must return an input token count", input)
         assertNotNull("JNI must return an output token count", output)
         assertTrue("input token count must be positive", input!! > 0)
         assertTrue("output token count must be positive", output!! > 0)
-        assertTrue("output tokens must not exceed the request bound", output <= 256)
+        assertTrue("output tokens must not exceed the request bound", output <= requestBound)
     }
 
     private fun recordPss(name: String, value: Long) { pss[name] = value }

@@ -196,7 +196,10 @@ class NativeGgufLifecycleTest {
                 backendCreations++
                 LlamaCppLocalModelInferenceBackend(::recordPss).also { lastBackend = it }
             },
-            deviceAbi = "x86_64", runtimeLimits = limits(),
+            // Keep adapter lifecycle probes short on the CPU emulator. The direct JNI
+            // generations above still exercise 48-token output and a 256-token cancelled
+            // generation; these checks need only establish that eviction/reload can generate.
+            deviceAbi = "x86_64", runtimeLimits = limits(maxOutputTokens = 16),
             memoryFitCheck = LocalModelMemoryFitCheck { true },
         )
         val egress = EgressCheckedModelChatPort(
@@ -353,10 +356,10 @@ class NativeGgufLifecycleTest {
         safeMeasurements.forEach { android.util.Log.i(METRICS_LOG_TAG, "R7_METRIC $it") }
     }
 
-    private fun limits() = LocalModelRuntimeLimits(
+    private fun limits(maxOutputTokens: Int = 256) = LocalModelRuntimeLimits(
         maxResidentMemoryBytes = 768L * 1024 * 1024,
         contextTokens = 512,
-        maxOutputTokens = 256,
+        maxOutputTokens = maxOutputTokens,
         workerThreads = 2,
     )
 

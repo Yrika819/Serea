@@ -47,7 +47,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon :app:testDebugUnitTest
           --tests 'app.serea.android.calendar.CalendarOAuthMockE2ETest'
-      - name: Require the one expected JUnit test and no skipped or failed cases
+      - name: Require exactly two expected JUnit tests and no skipped or failed cases
         run: |
           python3 - <<'PY'
           import glob

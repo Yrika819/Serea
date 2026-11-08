@@ -37,7 +37,7 @@ import org.junit.Test
 class CalendarAgendaUiControllerTest {
     @Test fun primaryOnlyAgendaUsesPrimaryWithoutCallingCalendarList() = runTest {
         val provider = fakeProvider(
-            emptyList(),
+            listOf(calendar("primary")),
             listOf(timedEvent("primary", "primary-event", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")),
         )
         val delegate = CalendarAgendaUiFake(provider)

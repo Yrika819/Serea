@@ -231,7 +231,10 @@ jobs:
       - name: Android unit JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_unit_junit_results_tests.py
       - name: Verify full Android unit JUnit evidence
-        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest --source-root android/app/src/test/java
+        run: >-
+          python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
+          --source-root android/app/src/test/java
+          --source-root android/app/src/testDebug/java
       - name: Upload unit JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

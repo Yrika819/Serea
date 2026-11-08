@@ -90,6 +90,38 @@ class AndroidUnitJunitResultTests(unittest.TestCase):
             self.assertEqual({"app.sample.FeatureTest": 2, "app.sample.JavaFeatureTest": 1}, collect_source_class_counts(root / "src"))
             verify_source_discovery(results, root / "src", ("app.sample.FeatureTest", "app.sample.JavaFeatureTest"))
 
+    def test_source_discovery_combines_common_and_variant_roots_without_relaxing_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            common = root / "src" / "test"
+            debug = root / "src" / "testDebug"
+            results = root / "results"
+            common.mkdir(parents=True)
+            debug.mkdir(parents=True)
+            results.mkdir()
+            (common / "CommonTest.kt").write_text(
+                "package app.sample\nclass CommonTest { @Test fun commonCase() {} }\n",
+                encoding="utf-8",
+            )
+            (debug / "DebugOnlyTest.kt").write_text(
+                "package app.sample\nclass DebugOnlyTest { @Test fun debugCase() {} }\n",
+                encoding="utf-8",
+            )
+            self.write_xml(results, "TEST-app.sample.CommonTest.xml",
+                '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                '<testcase classname="app.sample.CommonTest" name="commonCase"/></testsuite>')
+            self.write_xml(results, "TEST-app.sample.DebugOnlyTest.xml",
+                '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                '<testcase classname="app.sample.DebugOnlyTest" name="debugCase"/></testsuite>')
+
+            with self.assertRaisesRegex(ValueError, "unexpected JUnit classes: app.sample.DebugOnlyTest"):
+                verify_source_discovery(results, common, ("app.sample.CommonTest",))
+            verify_source_discovery(
+                results,
+                (common, debug),
+                ("app.sample.CommonTest", "app.sample.DebugOnlyTest"),
+            )
+
     def test_source_junit_mismatch_and_missing_critical_class_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

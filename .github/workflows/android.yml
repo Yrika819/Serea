@@ -195,6 +195,35 @@ jobs:
       - name: Android unit tests
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Verify Private Beta fail-closed variant without packaging
+        working-directory: android
+        env:
+          SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -PsereaBetaVersionCode=2 :app:testPrivateBetaUnitTest \
+            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest'
+          junit='app/build/test-results/testPrivateBetaUnitTest/TEST-app.serea.android.googleauth.PrivateBuildOAuthGateTest.xml'
+          test -s "$junit"
+          python3 - "$junit" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          cases = root.findall("./testcase")
+          assert len(cases) == 1, f"expected exactly one private-gate test, got {len(cases)}"
+          assert root.get("tests") == "1", f"unexpected test count: {root.attrib}"
+          assert all(root.get(name, "0") == "0" for name in ("failures", "errors", "skipped")), root.attrib
+          assert cases[0].get("classname") == "app.serea.android.googleauth.PrivateBuildOAuthGateTest"
+          assert cases[0].get("name") == "oauthGateRequiresBothPrivateVariantAndCallsiteOptIn"
+          PY
+          test ! -e app/build/outputs/apk/privateBeta
+          test ! -e app/build/outputs/bundle/privateBeta
+          if find app/build/outputs -type f \\
+            \( -ipath '*/privatebeta/*' -o -iname '*privatebeta*.apk' -o -iname '*privatebeta*.aab' \) \\
+            -print -quit | grep -q .; then
+            echo 'Private Beta package output is forbidden in public CI.' >&2
+            exit 1
+          fi
       - name: Instrumentation JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
       - name: Android emulator campaign script regression tests
@@ -209,7 +238,9 @@ jobs:
         with:
           name: serea-android-unit-junit
           if-no-files-found: error
-          path: android/app/build/test-results/testDebugUnitTest/*.xml
+          path: |
+            android/app/build/test-results/testDebugUnitTest/*.xml
+            android/app/build/test-results/testPrivateBetaUnitTest/*.xml
 
   android-integration:
     name: Android Integration

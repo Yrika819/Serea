@@ -1,5 +1,6 @@
 package app.serea.android
 
+import android.content.ComponentCallbacks2
 import android.os.Debug
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
@@ -9,7 +10,10 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -188,26 +192,42 @@ class NativeGgufLifecycleTest {
                 LocalModelConversationBinding("native-eviction-conversation", 0)
             },
         )
+        val callbackOwner = DiagnosticCallbacksOwner()
+        val visibilityOwner = DiagnosticProcessVisibilityOwner()
+        val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val lifecycleEvents = mutableListOf<LocalModelMemoryLifecycle.Event>()
         var backendCreations = 0
         var lastBackend: LlamaCppLocalModelInferenceBackend? = null
-        val adapter = LocalModelChatAdapter(
-            artifact, modelFile,
-            LocalModelInferenceBackendFactory {
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = targetContext.noBackupFilesDir,
+            callbacks = callbackOwner,
+            processVisibility = visibilityOwner,
+            scope = lifecycleScope,
+            artifact = artifact,
+            modelFile = modelFile,
+            backendFactory = LocalModelInferenceBackendFactory {
                 backendCreations++
                 LlamaCppLocalModelInferenceBackend(::recordPss).also { lastBackend = it }
             },
             // Keep adapter lifecycle probes short on the CPU emulator. The direct JNI
             // generations above still exercise 48-token output and a 256-token cancelled
             // generation; these checks need only establish that eviction/reload can generate.
-            deviceAbi = "x86_64", runtimeLimits = limits(maxOutputTokens = 16),
+            deviceAbi = "x86_64",
+            runtimeLimits = limits(maxOutputTokens = 16),
             memoryFitCheck = LocalModelMemoryFitCheck { true },
+            authorizations = registry,
+            eventObserver = { synchronized(lifecycleEvents) { lifecycleEvents += it } },
         )
+        val adapter = composition.adapter
+        assertTrue("registered lifecycle owns this same adapter", composition.lifecycle.adapter === adapter)
         val egress = EgressCheckedModelChatPort(
             adapter, expectedTarget = EgressTarget.LOCAL_MODEL,
             localModelAuthorizations = registry,
             localMonotonicClock = { SystemClock.elapsedRealtime() },
         )
         try {
+            composition.register()
+            assertEquals("one Application callback is registered", 1, callbackOwner.registered.size)
             val first = localRequest("adapter generation before eviction", "adapter-evict-first", modelId)
             val firstProof = registry.approve(first, modelId)
             val firstResult = egress.send(first.copy(
@@ -221,14 +241,22 @@ class NativeGgufLifecycleTest {
             val stale = localRequest("proof held across eviction", "adapter-evict-stale", modelId)
             val staleProof = registry.approve(stale, modelId)
             val evictionStarted = SystemClock.elapsedRealtimeNanos()
-            assertTrue("JNI release must be confirmed before eviction returns", adapter.evictModel {
-                registry.invalidateForEviction()
-            })
-            measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
+            val backgroundCallback = callbackOwner.registered.single() as LocalModelMemoryLifecycle
+            // Synthetic-test dispatch uses the registered ComponentCallbacks2 object and preserves
+            // SYNTHETIC_TEST attribution; it is not evidence that Android delivered an OS event.
+            backgroundCallback.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
+            awaitLifecycleGeneration(registry, expected = 1L)
+            assertEquals(NativeReleaseResult.Released, checkNotNull(lastBackend).awaitReleaseResult(30, TimeUnit.SECONDS))
             assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
+            assertEquals(1L, registry.lifecycle.currentGeneration())
+            assertEquals(LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST,
+                synchronized(lifecycleEvents) { lifecycleEvents.last().source })
+            measurements["adapter_eviction_callback_level"] = ComponentCallbacks2.TRIM_MEMORY_BACKGROUND.toString()
+            measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
             measurements["adapter_eviction_released"] = "true"
             measurements["adapter_first_eviction_release_confirmed"] = "true"
-            assertTrue(runCatching {
+            measurements["adapter_synthetic_callback_source"] = LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST.name
+            assertTrue("eviction invalidates prior local consent", runCatching {
                 egress.send(stale.copy(
                     selectedModelId = modelId,
                     egressContract = localContract(stale, modelId, staleProof),
@@ -255,9 +283,11 @@ class NativeGgufLifecycleTest {
             val allocationsWithRetainedModel = seam.modelAllocationCount()
             seam.failNextFree()
             val failedEvictionStarted = SystemClock.elapsedRealtimeNanos()
-            assertFalse("JNI free refusal must make adapter eviction fail", adapter.evictModel {
-                registry.invalidateForEviction()
-            })
+            backgroundCallback.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
+            awaitLifecycleGeneration(registry, expected = 2L)
+            awaitCoordinatorState(NativeReleaseCoordinator.State.RELEASE_FAILED)
+            assertTrue("all diagnostic callback stimuli are explicitly synthetic",
+                synchronized(lifecycleEvents) { lifecycleEvents.all { it.source == LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST } })
             measurements["adapter_failed_eviction_ms"] = elapsedMs(failedEvictionStarted).toString()
             assertTrue(checkNotNull(lastBackend).awaitReleaseResult(30, TimeUnit.SECONDS) is NativeReleaseResult.Failed)
             assertEquals(1, checkNotNull(lastBackend).nativeOwnershipForDiagnosticTest())
@@ -286,8 +316,35 @@ class NativeGgufLifecycleTest {
             assertEquals(NativeReleaseResult.NotAcquired, denied.awaitReleaseResult(30, TimeUnit.SECONDS))
             measurements["pss_after_free_failure_kb"] = Debug.getPss().toString()
         } finally {
-            adapter.close()
+            composition.close()
+            lifecycleScope.cancel()
         }
+    }
+
+    private class DiagnosticCallbacksOwner : ComponentCallbacks2Owner {
+        val registered = mutableListOf<android.content.ComponentCallbacks2>()
+        override fun registerComponentCallbacks(callback: android.content.ComponentCallbacks2) {
+            if (callback !in registered) registered += callback
+        }
+        override fun unregisterComponentCallbacks(callback: android.content.ComponentCallbacks2) {
+            registered.remove(callback)
+        }
+    }
+
+    private class DiagnosticProcessVisibilityOwner : ProcessVisibilityOwner {
+        private val registered = mutableListOf<ProcessVisibilityObserver>()
+        override fun register(observer: ProcessVisibilityObserver) {
+            if (observer !in registered) registered += observer
+        }
+        override fun unregister(observer: ProcessVisibilityObserver) { registered.remove(observer) }
+    }
+
+    private suspend fun awaitLifecycleGeneration(registry: LocalModelAuthorizationRegistry, expected: Long) = withTimeout(30_000) {
+        while (registry.lifecycle.currentGeneration() < expected) delay(5)
+    }
+
+    private suspend fun awaitCoordinatorState(expected: NativeReleaseCoordinator.State) = withTimeout(30_000) {
+        while (processNativeReleaseCoordinator.currentState() != expected) delay(5)
     }
 
     private fun localRequest(message: String, sendId: String, modelId: String) = ModelChatRequest(

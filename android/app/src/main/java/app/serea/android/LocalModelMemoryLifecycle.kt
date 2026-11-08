@@ -31,7 +31,7 @@ internal class LocalModelEvictionCoalescer {
  */
 internal class LocalModelMemoryLifecycle(
     private val callbacks: ComponentCallbacks2Owner,
-    private val adapter: LocalModelChatAdapter,
+    internal val adapter: LocalModelChatAdapter,
     private val authorizations: LocalModelAuthorizationRegistry,
     private val scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -50,8 +50,14 @@ internal class LocalModelMemoryLifecycle(
 
     @Synchronized fun register() {
         if (!registered) {
-            callbacks.registerComponentCallbacks(this)
-            registered = true
+            try {
+                callbacks.registerComponentCallbacks(this)
+                registered = true
+            } catch (failure: Throwable) {
+                runCatching { callbacks.unregisterComponentCallbacks(this) }
+                    .exceptionOrNull()?.let { if (it !== failure) failure.addSuppressed(it) }
+                throw failure
+            }
         }
     }
 
@@ -131,8 +137,8 @@ internal class LocalModelMemoryLifecycle(
 
     @Synchronized override fun close() {
         if (registered) {
-            callbacks.unregisterComponentCallbacks(this)
             registered = false
+            callbacks.unregisterComponentCallbacks(this)
         }
     }
 }

@@ -16,6 +16,126 @@ import org.junit.Test
 import java.io.File
 
 class LocalModelMemoryLifecycleTest {
+    @Test fun applicationCompositionRegistersOneLifecycleWithItsOwnedAdapterAndClosesIt() = runTest {
+        val owner = FakeCallbacksOwner()
+        val processOwner = FakeProcessVisibilityOwner()
+        val events = mutableListOf<LocalModelMemoryLifecycle.Event>()
+        val directory = createTempDir(prefix = "serea-app-lifecycle")
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = directory,
+            callbacks = owner,
+            processVisibility = processOwner,
+            scope = this,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            eventObserver = { events += it },
+        )
+        try {
+            assertTrue("lifecycle and runtime owner share one adapter object", composition.lifecycle.adapter === composition.adapter)
+            composition.register()
+            composition.register()
+            assertEquals("Application owner registers the callback once", 1, owner.registered.size)
+            assertEquals("process owner registers one visibility observer", 1, processOwner.registered.size)
+            assertTrue("registered callback is the lifecycle instance", owner.registered.single() === composition.lifecycle)
+
+            // Invoke the registered callback API directly. This checks registration and dispatch
+            // identity only; it does not claim that Android itself delivered an OS notification.
+            owner.registered.single().onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+            assertEquals(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN, events.single().level)
+
+            assertEquals("UI-hidden callback alone does not evict local consent", 0L,
+                composition.authorizations.lifecycle.currentGeneration())
+
+            processOwner.registered.single().onProcessVisibilityChanged(false)
+            advanceUntilIdle()
+            assertEquals("process background reaches this lifecycle and evicts local consent", 1L,
+                composition.authorizations.lifecycle.currentGeneration())
+            processOwner.registered.single().onProcessVisibilityChanged(true)
+            advanceUntilIdle()
+            assertEquals("foreground resumes without a second eviction", 1L,
+                composition.authorizations.lifecycle.currentGeneration())
+        } finally {
+            composition.close()
+            assertTrue("close unregisters Application callback", owner.registered.isEmpty())
+            assertTrue("close unregisters process visibility observer", processOwner.registered.isEmpty())
+            assertEquals(1, owner.unregistered.size)
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun processVisibilityRegistrationFailureCleansCallbackAndClosesAdapter() = runTest {
+        val owner = FakeCallbacksOwner()
+        val processOwner = FakeProcessVisibilityOwner(failAfterRegister = true)
+        val directory = createTempDir(prefix = "serea-app-lifecycle-register-failure")
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = directory,
+            callbacks = owner,
+            processVisibility = processOwner,
+            scope = this,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        try {
+            val failure = runCatching { composition.register() }.exceptionOrNull()
+            assertEquals("process visibility registration failure", failure?.message)
+            assertTrue("Application callback is cleaned after process observer failure", owner.registered.isEmpty())
+            assertTrue("partially registered process observer is cleaned", processOwner.registered.isEmpty())
+            val sendFailure = runCatching { composition.adapter.send(ModelChatRequest("c", "m")) }.exceptionOrNull()
+            assertTrue("adapter is closed after failed registration", sendFailure is PreDispatchModelChatFailure)
+            assertEquals("Local model is closed.", sendFailure?.message)
+        } finally {
+            runCatching { composition.close() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun componentCallbackRegistrationFailureStillClosesAdapterAndKeepsOriginalCause() = runTest {
+        val owner = FakeCallbacksOwner(failAfterRegister = true)
+        val processOwner = FakeProcessVisibilityOwner()
+        val directory = createTempDir(prefix = "serea-app-callback-register-failure")
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = directory,
+            callbacks = owner,
+            processVisibility = processOwner,
+            scope = this,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        try {
+            val failure = runCatching { composition.register() }.exceptionOrNull()
+            assertEquals("component callback registration failure", failure?.message)
+            assertTrue("partially registered Application callback is cleaned", owner.registered.isEmpty())
+            assertTrue("process observer was never registered", processOwner.registered.isEmpty())
+            val sendFailure = runCatching { composition.adapter.send(ModelChatRequest("c", "m")) }.exceptionOrNull()
+            assertEquals("Local model is closed.", sendFailure?.message)
+        } finally {
+            runCatching { composition.close() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test fun closeAttemptsEveryCleanupAndPreservesFirstUnregisterFailure() = runTest {
+        val owner = FakeCallbacksOwner(failOnUnregister = true)
+        val processOwner = FakeProcessVisibilityOwner(failOnUnregister = true)
+        val directory = createTempDir(prefix = "serea-app-lifecycle-close-failure")
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = directory,
+            callbacks = owner,
+            processVisibility = processOwner,
+            scope = this,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        try {
+            composition.register()
+            val failure = runCatching { composition.close() }.exceptionOrNull()
+            assertEquals("process visibility unregister failure", failure?.message)
+            assertEquals("process observer cleanup was attempted", 1, processOwner.unregisterCalls)
+            assertEquals("Application callback cleanup was still attempted", 1, owner.unregisterCalls)
+            val sendFailure = runCatching { composition.adapter.send(ModelChatRequest("c", "m")) }.exceptionOrNull()
+            assertEquals("Local model is closed.", sendFailure?.message)
+        } finally {
+            runCatching { composition.close() }
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun staleCoalescerCompletionCannotClearNewerEvictionTicket() {
         val coalescer = LocalModelEvictionCoalescer()
         val first = coalescer.begin()!!
@@ -179,13 +299,39 @@ class LocalModelMemoryLifecycleTest {
         plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED), localModelConsent = proof,
     )
 
-    private class FakeCallbacksOwner : ComponentCallbacks2Owner {
+    private class FakeCallbacksOwner(
+        private val failAfterRegister: Boolean = false,
+        private val failOnUnregister: Boolean = false,
+    ) : ComponentCallbacks2Owner {
         val registered = mutableListOf<ComponentCallbacks2>()
         val unregistered = mutableListOf<ComponentCallbacks2>()
-        override fun registerComponentCallbacks(callback: ComponentCallbacks2) { registered += callback }
+        var unregisterCalls = 0
+        override fun registerComponentCallbacks(callback: ComponentCallbacks2) {
+            registered += callback
+            if (failAfterRegister) throw IllegalStateException("component callback registration failure")
+        }
         override fun unregisterComponentCallbacks(callback: ComponentCallbacks2) {
+            unregisterCalls++
+            if (failOnUnregister) throw IllegalStateException("component callback unregister failure")
             registered.remove(callback)
             unregistered += callback
+        }
+    }
+
+    private class FakeProcessVisibilityOwner(
+        private val failAfterRegister: Boolean = false,
+        private val failOnUnregister: Boolean = false,
+    ) : ProcessVisibilityOwner {
+        val registered = mutableListOf<ProcessVisibilityObserver>()
+        var unregisterCalls = 0
+        override fun register(observer: ProcessVisibilityObserver) {
+            if (observer !in registered) registered += observer
+            if (failAfterRegister) throw IllegalStateException("process visibility registration failure")
+        }
+        override fun unregister(observer: ProcessVisibilityObserver) {
+            unregisterCalls++
+            if (failOnUnregister) throw IllegalStateException("process visibility unregister failure")
+            registered.remove(observer)
         }
     }
 }

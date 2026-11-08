@@ -79,7 +79,6 @@ internal class PrivateGoogleAuthorizationViewModel(
     private var generation = 0L
     private var nextPreviewId = 0L
     private var nextAccountSelectionId = 0L
-    private var pendingRealConsentRequestId: String? = null
     private val mutableCalendarSession = MutableStateFlow<CalendarProviderSession?>(null)
     val calendarSession: StateFlow<CalendarProviderSession?> = mutableCalendarSession.asStateFlow()
     private val consentLaunches = Channel<PendingGoogleConsentActivityResult>(Channel.BUFFERED)
@@ -335,14 +334,13 @@ internal class PrivateGoogleAuthorizationViewModel(
     fun completeRealConsentResult(requestId: String, requestGeneration: Long, resultCode: Int, data: Intent?) {
         val gateway = realGateway ?: return
         if (!enabledInThisVariant || !realOAuthEnabled || requestGeneration != generation ||
-            pendingRealConsentRequestId != requestId ||
+            mutableState.value.pendingRealConsentRequestId != requestId ||
             mutableState.value.pendingRealConsentGeneration != requestGeneration ||
             mutableState.value.status != PrivateGoogleAuthStatus.CONSENT_PENDING
         ) {
             gateway.cancelConsentRequest(requestId)
             return
         }
-        pendingRealConsentRequestId = null
         mutableState.value = mutableState.value.copy(
             pendingRealConsentRequestId = null,
             pendingRealConsentGeneration = null,
@@ -427,8 +425,7 @@ internal class PrivateGoogleAuthorizationViewModel(
             mutableState.value.pendingMockConsent == preview && preview.generation == generation
 
     private fun cancelPendingRealConsent() {
-        pendingRealConsentRequestId?.let { realGateway?.cancelConsentRequest(it) }
-        pendingRealConsentRequestId = null
+        mutableState.value.pendingRealConsentRequestId?.let { realGateway?.cancelConsentRequest(it) }
         mutableState.value = mutableState.value.copy(
             pendingMockConsent = null,
             pendingRealConsentRequestId = null,

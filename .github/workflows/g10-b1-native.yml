@@ -9,6 +9,7 @@ on:
       - 'android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt'
       - 'android/app/src/main/java/app/serea/android/LocalModelSecurity.kt'
       - 'android/app/src/main/java/app/serea/android/LocalModelMemoryLifecycle.kt'
+      - 'android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt'
       - 'android/app/src/nativeRuntimeDiagnosticAndroidTest/java/app/serea/android/NativeGgufLifecycleTest.kt'
       - 'android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt'
       - 'android/app/src/test/java/app/serea/android/LocalModelMemoryLifecycleTest.kt'

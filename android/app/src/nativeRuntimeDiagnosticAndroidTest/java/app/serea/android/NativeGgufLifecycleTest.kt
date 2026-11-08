@@ -77,6 +77,7 @@ class NativeGgufLifecycleTest {
         measurements["first_generation_ms"] = elapsedMs(firstGenerationStarted).toString()
         assertTrue("first native generation must return text", firstTurn.text.isNotBlank())
         assertTokenUsage(firstTurn.inputTokens, firstTurn.outputTokens, 48)
+        measurements["first_input_tokens"] = firstTurn.inputTokens.toString()
         measurements["first_output_tokens"] = firstTurn.outputTokens.toString()
 
         val secondGenerationStarted = SystemClock.elapsedRealtimeNanos()
@@ -84,6 +85,7 @@ class NativeGgufLifecycleTest {
         measurements["second_generation_ms"] = elapsedMs(secondGenerationStarted).toString()
         assertTrue("second native generation must return text", secondTurn.text.isNotBlank())
         assertTokenUsage(secondTurn.inputTokens, secondTurn.outputTokens, 48)
+        measurements["second_input_tokens"] = secondTurn.inputTokens.toString()
         measurements["second_output_tokens"] = secondTurn.outputTokens.toString()
 
         val oldGenerationSequence = seam.generationSequence()
@@ -151,6 +153,8 @@ class NativeGgufLifecycleTest {
         assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
         measurements["reloaded_generation_engine_id"] = reloadedGenerationEngineId.toString()
         measurements["reloaded_generation_id"] = reloadedGenerationId.toString()
+        measurements["reloaded_input_tokens"] = reloadedResult.inputTokens.toString()
+        measurements["reloaded_output_tokens"] = reloadedResult.outputTokens.toString()
         assertEquals("prior cancellation must not target the new generation", 0, seam.cancelObservedGenerationId())
         assertEquals(oldCancelCount + 1, seam.nativeCancelCount())
         val finalFreeStarted = SystemClock.elapsedRealtimeNanos()

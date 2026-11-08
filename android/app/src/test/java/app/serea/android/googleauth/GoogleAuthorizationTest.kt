@@ -85,6 +85,11 @@ class GoogleAuthorizationTest {
         val gateway = object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
             override val authorizationSessionId = "primary-calendar-session"
+            override suspend fun acquire(
+                feature: GoogleFeature,
+                scopes: Set<GoogleScope>,
+            ): TokenSupplyResult = TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
+
             override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
                 queriedScopes += scopes
                 return AuthorizationStatus(

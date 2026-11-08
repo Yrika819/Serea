@@ -202,7 +202,6 @@ echo 'campaign_seed=PASS' >> "$evidence/environment.txt"
 # Preserve sanitized test lifecycle events while Gradle is running. This makes a
 # workflow timeout diagnosable even when the instrumentation runner cannot flush
 # its JUnit XML before the job is canceled.
-adb logcat -c
 adb logcat -v time -s SereaTestLifecycle:I > "$evidence/test-lifecycle.log" 2>&1 &
 test_lifecycle_logcat_pid=$!
 

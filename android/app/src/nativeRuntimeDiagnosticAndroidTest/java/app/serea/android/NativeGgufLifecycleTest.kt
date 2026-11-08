@@ -169,29 +169,6 @@ class NativeGgufLifecycleTest {
 
         runAdapterEvictionAndReload()
         pss.toSortedMap().forEach { (name, value) -> measurements[name] = value.toString() }
-
-        // Inject a JNI free refusal last: the existing C++ owner must remain intact and the
-        // process coordinator must permanently deny reload until this disposable process exits.
-        val retained = LlamaCppLocalModelInferenceBackend(::recordPss)
-        retained.load(modelFile.absolutePath, limits())
-        val allocationsWithRetainedModel = seam.modelAllocationCount()
-        seam.failNextFree()
-        retained.close()
-        val failedRelease = retained.awaitReleaseResult(30, TimeUnit.SECONDS)
-        assertTrue("JNI free refusal must not be reported as success", failedRelease is NativeReleaseResult.Failed)
-        assertEquals(1, retained.nativeOwnershipForDiagnosticTest())
-        assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, processNativeReleaseCoordinator.currentState())
-        val denied = LlamaCppLocalModelInferenceBackend()
-        assertTrue("reload must fail closed after unknown/unreleased Native ownership", runCatching {
-            denied.load(modelFile.absolutePath, limits())
-        }.isFailure)
-        assertEquals(allocationsWithRetainedModel, seam.modelAllocationCount())
-        denied.close()
-        assertEquals(NativeReleaseResult.NotAcquired, denied.awaitReleaseResult(30, TimeUnit.SECONDS))
-        measurements["jni_free_failure_preserved_native_owner"] = "true"
-        measurements["reload_after_free_failure_denied"] = "true"
-        measurements["pss_after_free_failure_kb"] = Debug.getPss().toString()
-        pss.toSortedMap().forEach { (name, value) -> measurements[name] = value.toString() }
         appendMeasurements()
         assertTrue("test GGUF must be deleted from app-private storage", modelFile.delete())
     }
@@ -211,9 +188,14 @@ class NativeGgufLifecycleTest {
                 LocalModelConversationBinding("native-eviction-conversation", 0)
             },
         )
+        var backendCreations = 0
+        var lastBackend: LlamaCppLocalModelInferenceBackend? = null
         val adapter = LocalModelChatAdapter(
             artifact, modelFile,
-            LocalModelInferenceBackendFactory { LlamaCppLocalModelInferenceBackend(::recordPss) },
+            LocalModelInferenceBackendFactory {
+                backendCreations++
+                LlamaCppLocalModelInferenceBackend(::recordPss).also { lastBackend = it }
+            },
             deviceAbi = "x86_64", runtimeLimits = limits(),
             memoryFitCheck = LocalModelMemoryFitCheck { true },
         )
@@ -242,6 +224,7 @@ class NativeGgufLifecycleTest {
             measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
             assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
             measurements["adapter_eviction_released"] = "true"
+            measurements["adapter_first_eviction_release_confirmed"] = "true"
             assertTrue(runCatching {
                 egress.send(stale.copy(
                     selectedModelId = modelId,
@@ -263,9 +246,42 @@ class NativeGgufLifecycleTest {
             assertTrue("eviction reload uses a fresh engine identity", freshEngine > 0 && freshEngine != firstEngine)
             measurements["adapter_first_engine_id"] = firstEngine.toString()
             measurements["adapter_reloaded_engine_id"] = freshEngine.toString()
-            assertTrue(adapter.evictModel { registry.invalidateForEviction() })
-            assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
-            measurements["adapter_final_release_confirmed"] = "true"
+
+            // Inject the JNI failure through adapter eviction itself. It must retain Native
+            // ownership and deny both adapter reload and a second backend acquisition.
+            val allocationsWithRetainedModel = seam.modelAllocationCount()
+            seam.failNextFree()
+            val failedEvictionStarted = SystemClock.elapsedRealtimeNanos()
+            assertFalse("JNI free refusal must make adapter eviction fail", adapter.evictModel {
+                registry.invalidateForEviction()
+            })
+            measurements["adapter_failed_eviction_ms"] = elapsedMs(failedEvictionStarted).toString()
+            assertTrue(checkNotNull(lastBackend).awaitReleaseResult(30, TimeUnit.SECONDS) is NativeReleaseResult.Failed)
+            assertEquals(1, checkNotNull(lastBackend).nativeOwnershipForDiagnosticTest())
+            assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, processNativeReleaseCoordinator.currentState())
+            measurements["adapter_eviction_free_failure_fail_closed"] = "true"
+            measurements["adapter_native_owner_after_free_failure"] = "retained"
+
+            val deniedRequest = localRequest("reload denied after JNI free refusal", "adapter-evict-free-fail", modelId)
+            val deniedProof = registry.approve(deniedRequest, modelId)
+            assertTrue(runCatching {
+                egress.send(deniedRequest.copy(
+                    selectedModelId = modelId,
+                    egressContract = localContract(deniedRequest, modelId, deniedProof),
+                ))
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("failed release must not create another backend", 2, backendCreations)
+            assertEquals(allocationsWithRetainedModel, seam.modelAllocationCount())
+            measurements["jni_free_failure_preserved_native_owner"] = "true"
+            measurements["reload_after_free_failure_denied"] = "true"
+
+            val denied = LlamaCppLocalModelInferenceBackend()
+            assertTrue("Native coordinator denies a backend after eviction free failure", runCatching {
+                denied.load(modelFile.absolutePath, limits())
+            }.isFailure)
+            denied.close()
+            assertEquals(NativeReleaseResult.NotAcquired, denied.awaitReleaseResult(30, TimeUnit.SECONDS))
+            measurements["pss_after_free_failure_kb"] = Debug.getPss().toString()
         } finally {
             adapter.close()
         }

@@ -28,8 +28,14 @@ val ciBuild = providers.environmentVariable("CI").orNull.equals("true", ignoreCa
 val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("PrivateBeta", ignoreCase = true) }
 // CI may compile and run this exact no-secret JVM unit-test variant. Every other
 // CI invocation leaves the Private Beta variant disabled, and packaging tasks are rejected.
+val privateBetaUnitTestFilterArgs = setOf(
+    "--tests",
+    "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
+)
+val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
 val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&
-    gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
+    requestedTaskNames.isNotEmpty() &&
+    requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
 if (privateBetaRequested && ciBuild && !privateBetaUnitTestOnlyInvocation) {
     error("CI may only run the isolated Private Beta unit-test task; packaging is local-only.")
 }

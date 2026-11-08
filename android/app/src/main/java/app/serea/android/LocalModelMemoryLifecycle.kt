@@ -17,6 +17,7 @@ internal class LocalModelEvictionCoalescer {
     fun begin(): Long? {
         if (activeTicket.get() != 0L) return null
         val ticket = nextTicket.incrementAndGet()
+        if (ticket <= 0L) return null
         return if (activeTicket.compareAndSet(0, ticket)) ticket else null
     }
 

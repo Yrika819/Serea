@@ -16,6 +16,18 @@ import org.junit.Test
 import java.io.File
 
 class LocalModelMemoryLifecycleTest {
+    @Test fun staleCoalescerCompletionCannotClearNewerEvictionTicket() {
+        val coalescer = LocalModelEvictionCoalescer()
+        val first = coalescer.begin()!!
+        coalescer.complete(first)
+        val second = coalescer.begin()!!
+        assertFalse(first == second)
+        coalescer.complete(first)
+        assertEquals("stale completion cannot free the newer ticket", null, coalescer.begin())
+        coalescer.complete(second)
+        assertTrue(coalescer.begin() != null)
+    }
+
     @Test fun localEvictionConsentGenerationDoesNotAffectCloudEgress() = runTest {
         val now = 1_800_000_000_000L
         val registry = LocalModelAuthorizationRegistry(clock = { now })

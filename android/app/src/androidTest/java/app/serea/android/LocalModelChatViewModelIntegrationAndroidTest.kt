@@ -273,7 +273,10 @@ class LocalModelChatViewModelIntegrationAndroidTest {
         artifact, file, LocalModelInferenceBackendFactory { backend },
         // The injected backend is ABI agnostic and never loads native code. The adapter still
         // verifies its declared ABI boundary; real device ABI compatibility is a later G10 gate.
-        deviceAbi = "x86_64",
+        // These integration cases exercise consent, Usage, and cancellation with a tiny inert
+        // fixture. Isolate them from emulator memory pressure accumulated by preceding UI tests;
+        // adapter headroom enforcement remains covered by the dedicated adapter unit tests.
+        deviceAbi = "x86_64", memoryFitCheck = LocalModelMemoryFitCheck { true },
     )
 
 }

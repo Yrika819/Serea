@@ -44,6 +44,24 @@ fi
 if [[ -s "$metrics_file" ]]; then
   # This file contains timings, PSS, token counts and provenance only; no generated text.
   cat "$metrics_file"
+  required_metrics=(
+    api_level abi runner_profile model_sha256 model_size_bytes llama_cpp_revision
+    pss_before_load_kb load_ms first_generation_ms first_output_tokens
+    second_generation_ms second_output_tokens cancel_completion_ms cancelled_generation_id
+    first_free_ms reload_ms reloaded_generation_ms reloaded_generation_engine_id
+    reloaded_generation_id final_free_ms pss_after_release_kb pss_after_free_failure_kb
+    owner_after_partial_rollback coordinator_after_partial_rollback
+    partial_allocation_failure_injected partial_allocation_rollback_confirmed
+    owner_after_first_load coordinator_after_first_load owner_after_cancel_and_free
+    coordinator_after_cancel_and_free owner_after_reload_free coordinator_after_reload_free
+    jni_free_failure_preserved_native_owner reload_after_free_failure_denied
+  )
+  for metric in "${required_metrics[@]}"; do
+    if ! grep -q "^${metric}=" "$metrics_file"; then
+      echo "Native GGUF test measurement is missing: $metric" >&2
+      gradle_status=1
+    fi
+  done
 elif [[ "$gradle_status" -eq 0 ]]; then
   echo 'Native GGUF test passed without writing its required measurement record.' >&2
   gradle_status=1

@@ -137,7 +137,6 @@ class NativeGgufLifecycleTest {
         }
         val reloadedGenerationId = awaitNativeGeneration(reloadedSequence)
         val reloadedGenerationEngineId = seam.generationEngineId()
-        measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
         assertTrue("reloaded generation ID must be positive", reloadedGenerationId > 0L)
         assertTrue("reloaded engine ID must be positive", reloadedGenerationEngineId > 0L)
         assertTrue("reloaded backend must use a new engine ID",
@@ -147,6 +146,7 @@ class NativeGgufLifecycleTest {
         assertFalse("stale cancellation for the released engine must be rejected",
             seam.cancelGenerationForDiagnostic(cancelledGenerationEngineId, generationId))
         val reloadedResult = withTimeout(30_000) { reloadedRequest.await() }
+        measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
         assertTrue("reloaded native model must generate", reloadedResult.text.isNotBlank())
         assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
         measurements["reloaded_generation_engine_id"] = reloadedGenerationEngineId.toString()

@@ -47,10 +47,12 @@ internal fun PrivateGoogleAuthorizationPanel(
     val activeRequestId by rememberUpdatedState(state.pendingRealConsentRequestId)
     val activeRequestGeneration by rememberUpdatedState(state.pendingRealConsentGeneration)
     val consentResult = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (activeRequestId != null && activeRequestGeneration != null) {
+        val requestId = activeRequestId
+        val requestGeneration = activeRequestGeneration
+        if (requestId != null && requestGeneration != null) {
             viewModel.completeRealConsentResult(
-                requestId = activeRequestId,
-                requestGeneration = activeRequestGeneration,
+                requestId = requestId,
+                requestGeneration = requestGeneration,
                 resultCode = result.resultCode,
                 data = result.data,
             )

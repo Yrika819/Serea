@@ -6,6 +6,12 @@ on:
     paths:
       - 'android/app/src/main/cpp/**'
       - 'android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt'
+      - 'android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt'
+      - 'android/app/src/main/java/app/serea/android/LocalModelSecurity.kt'
+      - 'android/app/src/main/java/app/serea/android/LocalModelMemoryLifecycle.kt'
+      - 'android/app/src/nativeRuntimeDiagnosticAndroidTest/java/app/serea/android/NativeGgufLifecycleTest.kt'
+      - 'android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt'
+      - 'android/app/src/test/java/app/serea/android/LocalModelMemoryLifecycleTest.kt'
       - 'android/app/src/test/java/app/serea/android/NativeReleaseCoordinatorTest.kt'
       - 'android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeLifecycleTest.kt'
       - 'android/app/src/nativeRuntimeDiagnosticAndroidTest/**'

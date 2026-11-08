@@ -291,6 +291,11 @@ internal class LlamaCppLocalModelInferenceBackend private constructor(
         }
     }
 
+    override suspend fun closeAndAwaitRelease(): Boolean {
+        close()
+        return awaitReleased(30, TimeUnit.SECONDS)
+    }
+
     /** Nonblocking observation of release; failure and timeout never grant ownership. */
     internal suspend fun awaitReleaseResult(timeout: Long, unit: TimeUnit): NativeReleaseResult =
         kotlinx.coroutines.withTimeoutOrNull(unit.toMillis(timeout)) { releaseResult.await() }

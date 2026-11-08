@@ -166,6 +166,8 @@ class NativeGgufLifecycleTest {
         measurements["owner_after_reload_free"] = "empty"
         measurements["coordinator_after_reload_free"] = "RELEASED"
         measurements["pss_after_release_kb"] = Debug.getPss().toString()
+
+        runAdapterEvictionAndReload()
         pss.toSortedMap().forEach { (name, value) -> measurements[name] = value.toString() }
 
         // Inject a JNI free refusal last: the existing C++ owner must remain intact and the
@@ -193,6 +195,95 @@ class NativeGgufLifecycleTest {
         appendMeasurements()
         assertTrue("test GGUF must be deleted from app-private storage", modelFile.delete())
     }
+
+    private suspend fun runAdapterEvictionAndReload() {
+        val modelId = "serea-local/native-eviction-test"
+        val artifact = LocalModelArtifact(
+            modelId = modelId, displayName = "Verified isolated GGUF fixture",
+            modelRepository = "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF",
+            modelRevision = "1076b85d135017971845b19b8d07df1479155988",
+            licenseId = "Apache-2.0", expectedSha256 = EXPECTED_SHA256,
+            expectedSizeBytes = EXPECTED_SIZE, runtimeName = "llama.cpp",
+            runtimeRevision = LLAMA_CPP_REVISION, supportedAbis = setOf("x86_64"),
+        )
+        val registry = LocalModelAuthorizationRegistry(
+            currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding("native-eviction-conversation", 0)
+            },
+        )
+        val adapter = LocalModelChatAdapter(
+            artifact, modelFile,
+            LocalModelInferenceBackendFactory { LlamaCppLocalModelInferenceBackend(::recordPss) },
+            deviceAbi = "x86_64", runtimeLimits = limits(), consentLifecycle = registry.lifecycle,
+            memoryFitCheck = LocalModelMemoryFitCheck { true },
+        )
+        val egress = EgressCheckedModelChatPort(
+            adapter, expectedTarget = EgressTarget.LOCAL_MODEL,
+            localModelAuthorizations = registry,
+            localMonotonicClock = { SystemClock.elapsedRealtime() },
+        )
+        try {
+            val first = localRequest("adapter generation before eviction", "adapter-evict-first", modelId)
+            val firstProof = registry.approve(first, modelId)
+            val firstResult = egress.send(first.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(first, modelId, firstProof),
+            ))
+            assertTrue(firstResult.text.isNotBlank())
+            val firstEngine = seam.generationEngineId()
+            assertTrue(firstEngine > 0L)
+
+            val stale = localRequest("proof held across eviction", "adapter-evict-stale", modelId)
+            val staleProof = registry.approve(stale, modelId)
+            val evictionStarted = SystemClock.elapsedRealtimeNanos()
+            assertTrue("JNI release must be confirmed before eviction returns", adapter.evictModel())
+            measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
+            assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
+            measurements["adapter_eviction_released"] = "true"
+            assertTrue(runCatching {
+                egress.send(stale.copy(
+                    selectedModelId = modelId,
+                    egressContract = localContract(stale, modelId, staleProof),
+                ))
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            measurements["adapter_stale_consent_rejected"] = "true"
+
+            val fresh = localRequest("reload after adapter eviction", "adapter-evict-reload", modelId)
+            val freshProof = registry.approve(fresh, modelId)
+            val reloadStarted = SystemClock.elapsedRealtimeNanos()
+            val freshResult = egress.send(fresh.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(fresh, modelId, freshProof),
+            ))
+            measurements["adapter_reload_and_generation_ms"] = elapsedMs(reloadStarted).toString()
+            assertTrue("new adapter backend must generate after eviction", freshResult.text.isNotBlank())
+            val freshEngine = seam.generationEngineId()
+            assertTrue("eviction reload uses a fresh engine identity", freshEngine > 0 && freshEngine != firstEngine)
+            measurements["adapter_first_engine_id"] = firstEngine.toString()
+            measurements["adapter_reloaded_engine_id"] = freshEngine.toString()
+            assertTrue(adapter.evictModel())
+            assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
+            measurements["adapter_final_release_confirmed"] = "true"
+        } finally {
+            adapter.close()
+        }
+    }
+
+    private fun localRequest(message: String, sendId: String, modelId: String) = ModelChatRequest(
+        conversationId = "native-eviction-conversation", message = message, sendId = sendId,
+        timeoutMillis = 60_000, classification = DataClassification.PUBLIC,
+        bodySourceLineage = setOf(DataOrigin.USER_AUTHORED), selectedModelId = modelId,
+    )
+
+    private fun localContract(request: ModelChatRequest, modelId: String, proof: LocalModelConsentProof) = EgressContract(
+        conversationId = request.conversationId, currentMessageId = request.sendId,
+        origin = DataOrigin.USER_AUTHORED, classification = request.classification,
+        destination = ChatEgressGate.LOCAL_MODEL_DESTINATION, plannedBody = request.message,
+        context = request.context, preparation = PayloadPreparation.RAW,
+        explicitSendIntentAtMillis = null, expiresAtMillis = null,
+        selectedModelId = modelId, target = EgressTarget.LOCAL_MODEL,
+        plannedBodySourceLineage = request.bodySourceLineage, localModelConsent = proof,
+    )
 
     private fun validateFixture() {
         assertTrue("verified GGUF fixture must be installed in app-private storage", modelFile.isFile)

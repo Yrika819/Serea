@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
@@ -619,6 +620,149 @@ class LocalModelChatAdapterTest {
         } finally { adapter.close(); file.delete() }
     }
 
+    @Test fun evictionWaitsForInferenceInvalidatesOldProofAndReloadsVerifiedFreshBackend() = runBlocking {
+        val file = tempModel(byteArrayOf(31, 32, 33))
+        val registry = registry { now }
+        val firstBackend = FakeBackend(blockGeneration = true)
+        val secondBackend = FakeBackend()
+        val backends = ArrayDeque(listOf(firstBackend, secondBackend))
+        var factoryCalls = 0
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file,
+            LocalModelInferenceBackendFactory { factoryCalls++; backends.removeFirst() },
+            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+        )
+        val dao = CountingUsageDao()
+        val egress = composed(adapter, registry, dao) { now }
+        try {
+            val active = request("finish current inference", "evict-active")
+            val activeProof = registry.approve(active, modelId)
+            val activeSend = async {
+                egress.send(active.copy(
+                    selectedModelId = modelId,
+                    egressContract = localContract(active, activeProof),
+                ))
+            }
+            firstBackend.generationStarted.await()
+
+            val staleRequest = request("approved before eviction", "evict-stale-proof")
+            val staleProof = registry.approve(staleRequest, modelId)
+            val eviction = async { adapter.evictModel() }
+            yield()
+            assertFalse("eviction must not interrupt an in-flight native generation", firstBackend.closed)
+            firstBackend.finishGeneration()
+            assertEquals("local answer", activeSend.await().text)
+            assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(active.sendId))
+            assertTrue(eviction.await())
+            assertTrue(firstBackend.closed)
+
+            val stale = staleRequest.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(staleRequest, staleProof),
+            )
+            assertTrue(runCatching { egress.send(stale) }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertNull("stale consent is rejected before Usage reservation", dao.reservationState(staleRequest.sendId))
+
+            val fresh = request("approve after eviction", "evict-reload")
+            val freshProof = registry.approve(fresh, modelId)
+            val freshRequest = fresh.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(fresh, freshProof),
+            )
+            assertEquals("local answer", egress.send(freshRequest).text)
+            assertEquals(2, factoryCalls)
+            assertEquals(1, secondBackend.loadCalls)
+            assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(fresh.sendId))
+
+            assertTrue(adapter.evictModel())
+            file.writeBytes(byteArrayOf(99, 98, 97))
+            val tampered = request("must not load changed model", "evict-tampered")
+            val tamperedProof = registry.approve(tampered, modelId)
+            val tamperedRequest = tampered.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(tampered, tamperedProof),
+            )
+            assertTrue(runCatching { egress.send(tamperedRequest) }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("hash mismatch does not construct another backend", 2, factoryCalls)
+            assertNull(dao.reservationState(tampered.sendId))
+        } finally {
+            adapter.close()
+            file.delete()
+        }
+    }
+
+    @Test fun failedEvictionReleasePermanentlyDeniesReload() = runBlocking {
+        val file = tempModel(byteArrayOf(41, 42, 43))
+        val registry = registry { now }
+        val backend = FakeBackend(failRelease = true)
+        var factoryCalls = 0
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file,
+            LocalModelInferenceBackendFactory { factoryCalls++; backend },
+            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+        )
+        val egress = composed(adapter, registry, CountingUsageDao()) { now }
+        try {
+            val first = request("load for failed eviction", "evict-release-fail")
+            val firstProof = registry.approve(first, modelId)
+            egress.send(first.copy(selectedModelId = modelId, egressContract = localContract(first, firstProof)))
+            assertFalse(adapter.evictModel())
+            val next = request("reload denied", "evict-reload-denied")
+            val nextProof = registry.approve(next, modelId)
+            val nextRequest = next.copy(selectedModelId = modelId, egressContract = localContract(next, nextProof))
+            assertTrue(runCatching { egress.send(nextRequest) }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("failed JNI release never authorizes a new backend", 1, factoryCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun insufficientPreloadHeadroomRejectsBeforeBackendCreationAndReleasesUsage() = runBlocking {
+        val file = tempModel(byteArrayOf(51, 52, 53))
+        val registry = registry { now }
+        var factoryCalls = 0
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file,
+            LocalModelInferenceBackendFactory { factoryCalls++; FakeBackend() },
+            deviceAbi = "x86_64", memoryFitCheck = LocalModelMemoryFitCheck { false },
+        )
+        val dao = CountingUsageDao()
+        val egress = composed(adapter, registry, dao) { now }
+        try {
+            val request = request("low memory", "preload-low-memory")
+            val proof = registry.approve(request, modelId)
+            val approved = request.copy(selectedModelId = modelId, egressContract = localContract(request, proof))
+            assertTrue(runCatching { egress.send(approved) }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals(0, factoryCalls)
+            assertNull("pre-native memory rejection releases reservation", dao.reservationState(request.sendId))
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun evictionWinsConsentToNativeDispatchRaceAndSettlesUsageAsPreDispatch() = runBlocking {
+        val file = tempModel(byteArrayOf(61, 62, 63))
+        val registry = registry { now }
+        val backend = FakeBackend(blockLoad = true)
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file, LocalModelInferenceBackendFactory { backend },
+            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+        )
+        val dao = CountingUsageDao()
+        val egress = composed(adapter, registry, dao) { now }
+        try {
+            val request = request("eviction wins before dispatch", "evict-dispatch-race")
+            val proof = registry.approve(request, modelId)
+            val approved = request.copy(selectedModelId = modelId, egressContract = localContract(request, proof))
+            val send = async { runCatching { egress.send(approved) } }
+            backend.loadStarted.await()
+
+            val eviction = async { adapter.evictModel() }
+            yield()
+            backend.finishLoad()
+            assertTrue("admitted load must be released before eviction completes", eviction.await())
+            assertTrue(send.await().exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("Native generation never started", 0, backend.generateCalls)
+            assertNull("pre-dispatch eviction releases Usage reservation", dao.reservationState(request.sendId))
+        } finally { adapter.close(); file.delete() }
+    }
+
     private fun gated(adapter: ModelChatPort, registry: LocalModelAuthorizationRegistry, request: ModelChatRequest) =
         egressWith(registry, adapter, { now }).let { egress ->
             val proof = registry.approve(request, modelId)
@@ -763,6 +907,7 @@ class LocalModelChatAdapterTest {
         private val failLoad: Boolean = false,
         private val blockLoad: Boolean = false,
         private val blockGenerationStart: Boolean = false,
+        private val failRelease: Boolean = false,
     ) : LocalModelInferenceBackend {
         var loaded = false
         var closed = false
@@ -796,6 +941,8 @@ class LocalModelChatAdapterTest {
             if (failGeneration) error("synthetic native inference failure")
             return LocalModelInferenceResult("local answer", 4, 2)
         }
+        fun finishGeneration() { releaseGeneration.complete(Unit) }
+        fun finishLoad() { releaseLoad.complete(Unit) }
         override fun cancelActive() {
             cancelled = true
             releaseGeneration.complete(Unit)
@@ -803,6 +950,7 @@ class LocalModelChatAdapterTest {
             releaseGenerationStart.complete(Unit)
         }
         override fun close() { closed = true }
+        override suspend fun closeAndAwaitRelease(): Boolean { close(); return !failRelease }
     }
 
     private class CountingUsageDao : UsageDao {

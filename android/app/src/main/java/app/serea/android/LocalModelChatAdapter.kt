@@ -6,6 +6,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.security.MessageDigest
+import java.io.BufferedReader
+import java.io.FileReader
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Immutable model/runtime provenance required before a native backend can load weights. */
@@ -45,6 +47,8 @@ internal interface LocalModelInferenceBackend : AutoCloseable {
     fun cancelActive()
     /** Called after active load/generation has unwound under the adapter mutex. */
     override fun close()
+    /** Eviction requires affirmative JNI/coordinator completion before another backend may load. */
+    suspend fun closeAndAwaitRelease(): Boolean { close(); return false }
 }
 
 /** Backend confirmation that cancellation won before a native operation began. */
@@ -52,6 +56,28 @@ internal class LocalModelBackendStartDeniedException : Exception("Local model op
 
 internal fun interface LocalModelInferenceBackendFactory {
     fun create(): LocalModelInferenceBackend
+}
+
+/** Coarse OS headroom probe. It is a pre-load safety gate, never a hard memory-limit promise. */
+internal fun interface LocalModelMemoryFitCheck {
+    fun hasHeadroom(maxResidentMemoryBytes: Long): Boolean
+}
+
+internal object ProcMemAvailableFitCheck : LocalModelMemoryFitCheck {
+    override fun hasHeadroom(maxResidentMemoryBytes: Long): Boolean {
+        val available = runCatching {
+            BufferedReader(FileReader("/proc/meminfo")).useLines { lines ->
+                lines.firstOrNull { it.startsWith("MemAvailable:") }
+                    ?.substringAfter(':')?.trim()?.substringBefore(' ')
+                    ?.toLongOrNull()?.times(1024L)
+            }
+        }.getOrNull() ?: return false
+        val headroom = runCatching { Math.addExact(maxResidentMemoryBytes, MIN_OS_RESERVE_BYTES) }.getOrNull()
+            ?: return false
+        return available >= headroom
+    }
+
+    private const val MIN_OS_RESERVE_BYTES = 128L * 1024 * 1024
 }
 
 /** Limits passed to the native backend; its implementation must reject unsupported values. */
@@ -167,12 +193,16 @@ internal class LocalModelChatAdapter(
     private val deviceAbi: String,
     private val runtimeLimits: LocalModelRuntimeLimits = LocalModelRuntimeLimits(),
     private val maxPromptChars: Int = 16_384,
+    private val consentLifecycle: LocalModelConsentLifecycle? = null,
+    private val memoryFitCheck: LocalModelMemoryFitCheck = ProcMemAvailableFitCheck,
 ) : ModelChatPort, AutoCloseable {
     private val mutex = Mutex()
     private val lifecycleLock = Any()
     private val closed = AtomicBoolean(false)
     @Volatile private var backend: LocalModelInferenceBackend? = null
     private var loaded = false
+    @Volatile private var evictionPending = false
+    @Volatile private var releaseFailed = false
 
     init {
         require(deviceAbi in artifact.supportedAbis) { "Local model does not include this device ABI." }
@@ -203,8 +233,17 @@ internal class LocalModelChatAdapter(
                 try {
                     withTimeout(request.timeoutMillis) {
                         if (closed.get()) throw PreDispatchModelChatFailure("Local model is closed.")
+                        if (evictionPending || releaseFailed) {
+                            throw PreDispatchModelChatFailure("Local model lifecycle is not available for dispatch.")
+                        }
+                        if (contract.localModelConsent?.isLifecycleCurrent() != true) {
+                            throw PreDispatchModelChatFailure("Local model consent expired with the previous lifecycle.")
+                        }
                         if (!loaded) {
                             verifyModelFile()
+                            if (!memoryFitCheck.hasHeadroom(runtimeLimits.maxResidentMemoryBytes)) {
+                                throw PreDispatchModelChatFailure("Available memory is below the local-model load budget.")
+                            }
                             activeBackend = backend
                             if (activeBackend == null) {
                                 val created = backendFactory.create()
@@ -229,7 +268,8 @@ internal class LocalModelChatAdapter(
                         activeBackend = backend
                             ?: throw PreDispatchModelChatFailure("Local model backend is unavailable.")
                         val generationMayStart = synchronized(lifecycleLock) {
-                            if (closed.get()) false else {
+                            val proofMayStart = contract.localModelConsent?.beginNativeDispatch() == true
+                            if (closed.get() || evictionPending || releaseFailed || !proofMayStart) false else {
                                 // This is the lifecycle linearization point: close() takes the same
                                 // lock, so whichever wins determines whether native dispatch began.
                                 generationStarted = true
@@ -252,7 +292,7 @@ internal class LocalModelChatAdapter(
                     }
                 } catch (cancelled: CancellationException) {
                     runCatching { activeBackend?.cancelActive() }
-                    releaseBackendLocked()
+                    releaseBackendLockedAwait()
                     if (!generationStarted) {
                         throw PreDispatchModelChatCancellation("Local model work was cancelled before inference started.")
                     }
@@ -260,28 +300,28 @@ internal class LocalModelChatAdapter(
                 } catch (_: LocalModelBackendStartDeniedException) {
                     // The backend start gate confirms that close/cancellation won before JNI.
                     // Although the adapter granted the dispatch slot, no inference was sent.
-                    releaseBackendLocked()
+                    releaseBackendLockedAwait()
                     throw PreDispatchModelChatFailure("Local model operation was cancelled before native start.")
                 } catch (failure: ModelChatFailure) {
-                    releaseBackendLocked()
+                    releaseBackendLockedAwait()
                     if (!generationStarted && failure !is PreDispatchModelChatFailure) {
                         throw PreDispatchModelChatFailure("Local model setup failed before inference started.")
                     }
                     throw failure
                 } catch (failure: Exception) {
-                    releaseBackendLocked()
+                    releaseBackendLockedAwait()
                     if (!generationStarted) {
                         throw PreDispatchModelChatFailure("Local model setup failed before inference started.")
                     }
                     throw ModelChatFailure("Local model inference failed: ${failure::class.simpleName ?: "native error"}.")
                 } catch (failure: LinkageError) {
-                    releaseBackendLocked()
+                    releaseBackendLockedAwait()
                     if (!generationStarted) {
                         throw PreDispatchModelChatFailure("Local model runtime is unavailable before inference.")
                     }
                     throw ModelChatFailure("Local model runtime is unavailable for this device ABI.")
                 } finally {
-                    if (closed.get()) releaseBackendLocked()
+                    if (closed.get()) releaseBackendLockedAwait()
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -305,11 +345,57 @@ internal class LocalModelChatAdapter(
         }
     }
 
+    /**
+     * Temporarily releases JNI ownership. An active inference is allowed to unwind; its result is
+     * settled normally before the mutex lets this method free the backend. Failed confirmation
+     * leaves the adapter fail-closed and prevents a fresh backend from being created.
+     */
+    suspend fun evictModel(invalidateConsent: (() -> Unit)? = null): Boolean {
+        if (closed.get() || !synchronized(lifecycleLock) {
+                if (closed.get() || evictionPending || releaseFailed) false
+                else { evictionPending = true; true }
+            }) return false
+        try {
+            (invalidateConsent ?: { consentLifecycle?.evict() })()
+            return mutex.withLock {
+                if (closed.get()) return@withLock false
+                val current = backend ?: run { loaded = false; return@withLock true }
+                val released = try { current.closeAndAwaitRelease() } catch (_: Throwable) { false }
+                if (released) {
+                    if (backend === current) backend = null
+                    loaded = false
+                    true
+                } else {
+                    releaseFailed = true
+                    false
+                }
+            }
+        } finally {
+            synchronized(lifecycleLock) { evictionPending = false }
+        }
+    }
+
     private fun releaseBackendLocked() {
+        // During eviction, the eviction coroutine owns close and must await its JNI result before
+        // clearing the backend reference or allowing a later load.
+        if (evictionPending && !closed.get()) return
         val toRelease = backend
         backend = null
         loaded = false
         runCatching { toRelease?.close() }
+    }
+
+    private suspend fun releaseBackendLockedAwait(): Boolean {
+        if (evictionPending && !closed.get()) return false
+        val toRelease = backend ?: run { loaded = false; return true }
+        val released = try { toRelease.closeAndAwaitRelease() } catch (_: Throwable) { false }
+        if (!released) {
+            releaseFailed = true
+            return false
+        }
+        if (backend === toRelease) backend = null
+        loaded = false
+        return true
     }
 
     private fun verifyModelFile() {

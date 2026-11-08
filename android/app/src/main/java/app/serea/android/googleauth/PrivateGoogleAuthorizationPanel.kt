@@ -1,5 +1,6 @@
 package app.serea.android.googleauth
 
+import android.accounts.Account
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,7 +40,8 @@ internal fun PrivateGoogleAuthorizationPanel(
         val requestId = result.requestId
         val requestGeneration = result.generation
         if (requestId != null && requestGeneration != null) {
-            viewModel.onRealAccountSelected(requestId, requestGeneration, result.account)
+            val account = result.accountName?.let { Account(it, checkNotNull(result.accountType)) }
+            viewModel.onRealAccountSelected(requestId, requestGeneration, account)
         } else {
             viewModel.cancelCurrentRealAccountSelection()
         }

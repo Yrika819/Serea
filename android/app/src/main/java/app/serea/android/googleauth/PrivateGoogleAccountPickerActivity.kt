@@ -1,6 +1,5 @@
 package app.serea.android.googleauth
 
-import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity
 import android.content.Context
@@ -12,7 +11,8 @@ import androidx.activity.result.contract.ActivityResultContract
 internal data class GoogleAccountPickerResult(
     val requestId: Long?,
     val generation: Long?,
-    val account: Account?,
+    val accountName: String?,
+    val accountType: String?,
 )
 
 internal fun parseGoogleAccountPickerResult(
@@ -24,10 +24,11 @@ internal fun parseGoogleAccountPickerResult(
 ): GoogleAccountPickerResult {
     val matchedRequestId = requestId?.takeUnless { it == INVALID_ID }
     val matchedGeneration = generation?.takeUnless { it == INVALID_ID }
-    val account = if (resultCode == Activity.RESULT_OK && !accountName.isNullOrBlank() &&
+    val selectedAccountName = if (resultCode == Activity.RESULT_OK && !accountName.isNullOrBlank() &&
         accountType == PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE
-    ) Account(accountName, accountType) else null
-    return GoogleAccountPickerResult(matchedRequestId, matchedGeneration, account)
+    ) accountName else null
+    val selectedAccountType = selectedAccountName?.let { accountType }
+    return GoogleAccountPickerResult(matchedRequestId, matchedGeneration, selectedAccountName, selectedAccountType)
 }
 
 private const val INVALID_ID = Long.MIN_VALUE

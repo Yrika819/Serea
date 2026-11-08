@@ -207,8 +207,8 @@ class PrivateGoogleAuthorizationViewModelTest {
 
         assertEquals(requestId, result.requestId)
         assertEquals(generation, result.generation)
-        assertEquals(PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE, result.account?.type)
-        assertEquals("synthetic-account", result.account?.name)
+        assertEquals(PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE, result.accountType)
+        assertEquals("synthetic-account", result.accountName)
     }
 
     @Test
@@ -235,9 +235,9 @@ class PrivateGoogleAuthorizationViewModelTest {
             accountType = "other",
         )
 
-        assertNull(cancelled.account)
+        assertNull(cancelled.accountName)
         assertNull(missingIdentity.requestId)
-        assertNull(wrongType.account)
+        assertNull(wrongType.accountName)
     }
 
     @Test

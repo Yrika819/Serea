@@ -214,7 +214,7 @@ class NativeGgufLifecycleTest {
         val adapter = LocalModelChatAdapter(
             artifact, modelFile,
             LocalModelInferenceBackendFactory { LlamaCppLocalModelInferenceBackend(::recordPss) },
-            deviceAbi = "x86_64", runtimeLimits = limits(), consentLifecycle = registry.lifecycle,
+            deviceAbi = "x86_64", runtimeLimits = limits(),
             memoryFitCheck = LocalModelMemoryFitCheck { true },
         )
         val egress = EgressCheckedModelChatPort(
@@ -236,7 +236,9 @@ class NativeGgufLifecycleTest {
             val stale = localRequest("proof held across eviction", "adapter-evict-stale", modelId)
             val staleProof = registry.approve(stale, modelId)
             val evictionStarted = SystemClock.elapsedRealtimeNanos()
-            assertTrue("JNI release must be confirmed before eviction returns", adapter.evictModel())
+            assertTrue("JNI release must be confirmed before eviction returns", adapter.evictModel {
+                registry.invalidateForEviction()
+            })
             measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
             assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
             measurements["adapter_eviction_released"] = "true"
@@ -261,7 +263,7 @@ class NativeGgufLifecycleTest {
             assertTrue("eviction reload uses a fresh engine identity", freshEngine > 0 && freshEngine != firstEngine)
             measurements["adapter_first_engine_id"] = firstEngine.toString()
             measurements["adapter_reloaded_engine_id"] = freshEngine.toString()
-            assertTrue(adapter.evictModel())
+            assertTrue(adapter.evictModel { registry.invalidateForEviction() })
             assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
             measurements["adapter_final_release_confirmed"] = "true"
         } finally {

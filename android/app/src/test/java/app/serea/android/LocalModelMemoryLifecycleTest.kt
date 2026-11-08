@@ -98,7 +98,7 @@ class LocalModelMemoryLifecycleTest {
         )
         val adapter = LocalModelChatAdapter(
             artifact, file, LocalModelInferenceBackendFactory { error("unloaded adapter must not create a backend") },
-            "x86_64", consentLifecycle = registry.lifecycle,
+            "x86_64",
         )
         val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         val events = mutableListOf<LocalModelMemoryLifecycle.Event>()
@@ -139,6 +139,14 @@ class LocalModelMemoryLifecycleTest {
             assertEquals(LocalModelMemoryLifecycle.Source.ANDROID, events.first().source)
             assertEquals(LocalModelMemoryLifecycle.Source.ANDROID, events[1].source)
             assertTrue(events.drop(2).all { it.source == LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST })
+
+            val forceRequested = proof(registry, "force-after-foreground")
+            lifecycle.setForeground(false) // queues an automatic ticket
+            lifecycle.setForeground(true) // that ticket will skip when it runs
+            lifecycle.requestEviction() // must be preserved behind the active ticket
+            advanceUntilIdle()
+            assertEquals("explicit eviction survives a skipped background ticket", 3L, registry.lifecycle.currentGeneration())
+            assertFalse(registry.consumeOnce(forceRequested, contract(forceRequested, "force-after-foreground")))
 
             lifecycle.close()
             assertTrue(owner.registered.isEmpty())

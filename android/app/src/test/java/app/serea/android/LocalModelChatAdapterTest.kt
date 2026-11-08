@@ -630,7 +630,7 @@ class LocalModelChatAdapterTest {
         val adapter = LocalModelChatAdapter(
             artifact(file), file,
             LocalModelInferenceBackendFactory { factoryCalls++; backends.removeFirst() },
-            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+            deviceAbi = "x86_64",
         )
         val dao = CountingUsageDao()
         val egress = composed(adapter, registry, dao) { now }
@@ -647,7 +647,7 @@ class LocalModelChatAdapterTest {
 
             val staleRequest = request("approved before eviction", "evict-stale-proof")
             val staleProof = registry.approve(staleRequest, modelId)
-            val eviction = async { adapter.evictModel() }
+            val eviction = async { adapter.evictModel { registry.invalidateForEviction() } }
             yield()
             assertFalse("eviction must not interrupt an in-flight native generation", firstBackend.closed)
             firstBackend.finishGeneration()
@@ -674,7 +674,7 @@ class LocalModelChatAdapterTest {
             assertEquals(1, secondBackend.loadCalls)
             assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(fresh.sendId))
 
-            assertTrue(adapter.evictModel())
+            assertTrue(adapter.evictModel { registry.invalidateForEviction() })
             file.writeBytes(byteArrayOf(99, 98, 97))
             val tampered = request("must not load changed model", "evict-tampered")
             val tamperedProof = registry.approve(tampered, modelId)
@@ -699,14 +699,14 @@ class LocalModelChatAdapterTest {
         val adapter = LocalModelChatAdapter(
             artifact(file), file,
             LocalModelInferenceBackendFactory { factoryCalls++; backend },
-            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+            deviceAbi = "x86_64",
         )
         val egress = composed(adapter, registry, CountingUsageDao()) { now }
         try {
             val first = request("load for failed eviction", "evict-release-fail")
             val firstProof = registry.approve(first, modelId)
             egress.send(first.copy(selectedModelId = modelId, egressContract = localContract(first, firstProof)))
-            assertFalse(adapter.evictModel())
+            assertFalse(adapter.evictModel { registry.invalidateForEviction() })
             val next = request("reload denied", "evict-reload-denied")
             val nextProof = registry.approve(next, modelId)
             val nextRequest = next.copy(selectedModelId = modelId, egressContract = localContract(next, nextProof))
@@ -742,7 +742,7 @@ class LocalModelChatAdapterTest {
         val backend = FakeBackend(blockLoad = true)
         val adapter = LocalModelChatAdapter(
             artifact(file), file, LocalModelInferenceBackendFactory { backend },
-            deviceAbi = "x86_64", consentLifecycle = registry.lifecycle,
+            deviceAbi = "x86_64",
         )
         val dao = CountingUsageDao()
         val egress = composed(adapter, registry, dao) { now }
@@ -753,7 +753,7 @@ class LocalModelChatAdapterTest {
             val send = async { runCatching { egress.send(approved) } }
             backend.loadStarted.await()
 
-            val eviction = async { adapter.evictModel() }
+            val eviction = async { adapter.evictModel { registry.invalidateForEviction() } }
             yield()
             backend.finishLoad()
             assertTrue("admitted load must be released before eviction completes", eviction.await())

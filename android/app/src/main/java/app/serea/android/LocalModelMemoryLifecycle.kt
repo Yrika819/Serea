@@ -45,6 +45,8 @@ internal class LocalModelMemoryLifecycle(
     @Volatile private var background = false
     @Volatile private var allowBackgroundWork = false
     @Volatile private var registered = false
+    private val schedulingLock = Any()
+    private var forcedRequestPending = false
 
     @Synchronized fun register() {
         if (!registered) {
@@ -90,7 +92,17 @@ internal class LocalModelMemoryLifecycle(
     fun requestEviction() = enqueueEviction(force = true)
 
     private fun enqueueEviction(force: Boolean = false) {
+        synchronized(schedulingLock) {
+            if (force) forcedRequestPending = true
+            startNextEvictionLocked()
+        }
+    }
+
+    /** Caller holds schedulingLock. A forced request upgrades a queued/background ticket. */
+    private fun startNextEvictionLocked() {
         val ticket = coalescer.begin() ?: return
+        val force = forcedRequestPending
+        forcedRequestPending = false
         try {
             val job = scope.launch(dispatcher) {
                 try {
@@ -98,12 +110,19 @@ internal class LocalModelMemoryLifecycle(
                         adapter.evictModel { authorizations.invalidateForEviction() }
                     }
                 } finally {
-                    coalescer.complete(ticket)
+                    finishTicket(ticket)
                 }
             }
-            job.invokeOnCompletion { coalescer.complete(ticket) }
+            job.invokeOnCompletion { finishTicket(ticket) }
         } catch (_: Throwable) {
+            finishTicket(ticket)
+        }
+    }
+
+    private fun finishTicket(ticket: Long) {
+        synchronized(schedulingLock) {
             coalescer.complete(ticket)
+            if (forcedRequestPending) startNextEvictionLocked()
         }
     }
 

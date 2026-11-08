@@ -193,7 +193,6 @@ internal class LocalModelChatAdapter(
     private val deviceAbi: String,
     private val runtimeLimits: LocalModelRuntimeLimits = LocalModelRuntimeLimits(),
     private val maxPromptChars: Int = 16_384,
-    private val consentLifecycle: LocalModelConsentLifecycle? = null,
     private val memoryFitCheck: LocalModelMemoryFitCheck = ProcMemAvailableFitCheck,
 ) : ModelChatPort, AutoCloseable {
     private val mutex = Mutex()
@@ -350,13 +349,13 @@ internal class LocalModelChatAdapter(
      * settled normally before the mutex lets this method free the backend. Failed confirmation
      * leaves the adapter fail-closed and prevents a fresh backend from being created.
      */
-    suspend fun evictModel(invalidateConsent: (() -> Unit)? = null): Boolean {
+    suspend fun evictModel(invalidateConsent: () -> Unit): Boolean {
         if (closed.get() || !synchronized(lifecycleLock) {
                 if (closed.get() || evictionPending || releaseFailed) false
                 else { evictionPending = true; true }
             }) return false
         try {
-            (invalidateConsent ?: { consentLifecycle?.evict() })()
+            invalidateConsent()
             return mutex.withLock {
                 if (closed.get()) return@withLock false
                 val current = backend ?: run { loaded = false; return@withLock true }

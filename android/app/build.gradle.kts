@@ -93,6 +93,7 @@ android {
         }
         buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
         buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
+        buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
         if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
             ndk { abiFilters += nativeRuntimeAbi }
             externalNativeBuild {
@@ -154,6 +155,7 @@ android {
             applicationIdSuffix = ".beta"
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
+            buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
             if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
         }
         create("privateBeta") {
@@ -165,6 +167,7 @@ android {
                 "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED",
                 ownerPrivateBetaGoogleEnabled.toString(),
             )
+            buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "true")
             if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
         }
     }

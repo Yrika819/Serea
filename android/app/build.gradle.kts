@@ -79,6 +79,9 @@ android {
             externalNativeBuild {
                 cmake {
                     arguments += "-DLLAMA_SRC=$llamaCppSource"
+                    // JNI progress and failure injection are compiled only when the explicit
+                    // isolated Native diagnostic opt-in is active. Product variants stay off.
+                    arguments += "-DSEREA_NATIVE_JNI_TEST_SEAMS=ON"
                 }
             }
         }

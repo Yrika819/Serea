@@ -41,6 +41,7 @@ std::unordered_map<RequestIdentity, std::pair<jint, jint>, RequestIdentityHash> 
 std::once_flag backend_once;
 #if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
 std::atomic<bool> fail_next_load_after_model{false};
+std::atomic<bool> fail_next_free{false};
 std::atomic<jint> test_generation_progress{-1};
 std::atomic<jint> test_generation_sequence{0};
 std::atomic<jint> test_native_cancel_count{0};
@@ -50,6 +51,9 @@ std::atomic<jlong> test_cancel_observed_generation_id{0};
 std::atomic<jlong> test_cancelled_release_generation_id{0};
 std::atomic<jint> test_cancelled_release_sequence{0};
 std::atomic<jint> test_generation_outcome{0};
+std::atomic<jint> test_model_allocation_count{0};
+std::atomic<jint> test_failure_after_model_count{0};
+std::atomic<jint> test_partial_rollback_count{0};
 
 constexpr jint TEST_GENERATION_ACTIVE = 1;
 constexpr jint TEST_GENERATION_COMPLETED = 2;
@@ -360,6 +364,11 @@ public:
     explicit load_rollback(jlong engine_id) noexcept : engine_id_(engine_id) {}
     ~load_rollback() noexcept {
         if (!committed_) {
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+            if (model != nullptr || context != nullptr || sampler != nullptr) {
+                test_partial_rollback_count.fetch_add(1, std::memory_order_acq_rel);
+            }
+#endif
             free_locked();
             clear_engine_owner_noexcept(engine_id_);
         }
@@ -466,7 +475,9 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeLoad(JNIEnv * en
         model = llama_model_load_from_file(model_path->c_str(), model_params);
         if (model == nullptr) return JNI_FALSE;
 #if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+        test_model_allocation_count.fetch_add(1, std::memory_order_acq_rel);
         if (fail_next_load_after_model.exchange(false, std::memory_order_acq_rel)) {
+            test_failure_after_model_count.fetch_add(1, std::memory_order_acq_rel);
             throw std::runtime_error("Injected JNI load failure after model allocation");
         }
 #endif
@@ -693,6 +704,7 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv * en
         std::lock_guard<std::mutex> lock(engine_mutex);
         if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
 #if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+        if (fail_next_free.exchange(false, std::memory_order_acq_rel)) return JNI_FALSE;
         const jlong generation_id = test_generation_id.load(std::memory_order_acquire);
         if (test_generation_engine_id.load(std::memory_order_acquire) == engine_id &&
                 generation_id != 0 &&
@@ -729,6 +741,11 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeOwnsModel(JNIEnv
 extern "C" JNIEXPORT void JNICALL
 Java_app_serea_android_NativeJniFailureSeam_failNextLoadAfterModel(JNIEnv * env, jobject) {
     jni_boundary_void(env, [&] { fail_next_load_after_model.store(true, std::memory_order_release); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_app_serea_android_NativeJniFailureSeam_failNextFree(JNIEnv * env, jobject) {
+    jni_boundary_void(env, [&] { fail_next_free.store(true, std::memory_order_release); });
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -784,6 +801,27 @@ extern "C" JNIEXPORT jint JNICALL
 Java_app_serea_android_NativeJniFailureSeam_cancelledReleaseSequence(JNIEnv * env, jobject) {
     return jni_boundary<jint>(env, 0, [&] {
         return test_cancelled_release_sequence.load(std::memory_order_acquire);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_modelAllocationCount(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, 0, [&] {
+        return test_model_allocation_count.load(std::memory_order_acquire);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_failureAfterModelCount(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, 0, [&] {
+        return test_failure_after_model_count.load(std::memory_order_acquire);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_partialRollbackCount(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, 0, [&] {
+        return test_partial_rollback_count.load(std::memory_order_acquire);
     });
 }
 #endif

@@ -125,11 +125,15 @@ class LocalModelMemoryLifecycleTest {
 
             val stale = proof(registry, "stale")
             lifecycle.setForeground(false)
+            advanceUntilIdle()
+            assertEquals("background transition requests eviction without a trim callback", 1L, registry.lifecycle.currentGeneration())
+            assertFalse(registry.consumeOnce(stale, contract(stale, "stale")))
+
             lifecycle.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
             lifecycle.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
             lifecycle.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
             advanceUntilIdle()
-            assertEquals("duplicate callback events coalesce into one eviction", 1L, registry.lifecycle.currentGeneration())
+            assertEquals("duplicate callback events add only one eviction generation", 2L, registry.lifecycle.currentGeneration())
             assertFalse(registry.consumeOnce(stale, contract(stale, "stale")))
             assertEquals(5, events.size)
             assertEquals(LocalModelMemoryLifecycle.Source.ANDROID, events.first().source)

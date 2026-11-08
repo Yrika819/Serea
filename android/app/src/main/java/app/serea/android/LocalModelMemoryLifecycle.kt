@@ -46,14 +46,17 @@ internal class LocalModelMemoryLifecycle(
     @Volatile private var allowBackgroundWork = false
     @Volatile private var registered = false
 
-    fun register() {
+    @Synchronized fun register() {
         if (!registered) {
             callbacks.registerComponentCallbacks(this)
             registered = true
         }
     }
 
-    fun setUserAllowedBackgroundWork(allowed: Boolean) { allowBackgroundWork = allowed }
+    fun setUserAllowedBackgroundWork(allowed: Boolean) {
+        allowBackgroundWork = allowed
+        if (!allowed && background && !foreground) enqueueEviction()
+    }
 
     override fun onTrimMemory(level: Int) = handleTrim(level, Source.ANDROID)
 
@@ -79,8 +82,8 @@ internal class LocalModelMemoryLifecycle(
     /** Called by ProcessLifecycleOwner/activity composition; visible foreground resumes work. */
     internal fun setForeground(isForeground: Boolean) {
         foreground = isForeground
-        if (isForeground) background = false
-        else if (!allowBackgroundWork) enqueueEviction()
+        background = !isForeground
+        if (!isForeground && !allowBackgroundWork) enqueueEviction()
     }
 
     /** Explicit owner request, independent of Android trim callbacks. */
@@ -107,7 +110,7 @@ internal class LocalModelMemoryLifecycle(
     override fun onLowMemory() = Unit
     override fun onConfigurationChanged(newConfig: Configuration) = Unit
 
-    override fun close() {
+    @Synchronized override fun close() {
         if (registered) {
             callbacks.unregisterComponentCallbacks(this)
             registered = false

@@ -748,6 +748,13 @@ Java_app_serea_android_NativeJniFailureSeam_failNextFree(JNIEnv * env, jobject) 
     jni_boundary_void(env, [&] { fail_next_free.store(true, std::memory_order_release); });
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_serea_android_NativeJniFailureSeam_cancelGenerationForDiagnostic(
+        JNIEnv * env, jobject, jlong engine_id, jlong generation_id) {
+    return Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeCancel(
+            env, nullptr, engine_id, generation_id);
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_app_serea_android_NativeJniFailureSeam_generationProgress(JNIEnv * env, jobject) {
     return jni_boundary<jint>(env, -1, [&] {

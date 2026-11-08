@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,18 +129,26 @@ class NativeGgufLifecycleTest {
         reload.load(modelFile.absolutePath, limits())
         measurements["reload_ms"] = elapsedMs(reloadStarted).toString()
         assertEquals(1, reload.nativeOwnershipForDiagnosticTest())
-        // A new backend and Generation ID remain usable after the prior native cancellation.
+        // A new backend must keep running even when the old engine/generation pair is cancelled.
         val reloadedGenerationStarted = SystemClock.elapsedRealtimeNanos()
-        val reloadedResult = reload.generate("Confirm the reloaded engine responds.", 32)
-        measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
-        assertTrue("reloaded native model must generate", reloadedResult.text.isNotBlank())
-        assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
-        val reloadedGenerationId = seam.generationId()
+        val reloadedSequence = seam.generationSequence()
+        val reloadedRequest = async(Dispatchers.IO) {
+            reload.generate("Confirm the reloaded engine responds.", 32)
+        }
+        val reloadedGenerationId = awaitNativeGeneration(reloadedSequence)
         val reloadedGenerationEngineId = seam.generationEngineId()
+        measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
+        assertTrue("reloaded generation ID must be positive", reloadedGenerationId > 0L)
+        assertTrue("reloaded engine ID must be positive", reloadedGenerationEngineId > 0L)
         assertTrue("reloaded backend must use a new engine ID",
             reloadedGenerationEngineId != cancelledGenerationEngineId)
         assertTrue("reloaded request must use a distinct engine/generation identity pair",
             reloadedGenerationEngineId != cancelledGenerationEngineId || reloadedGenerationId != generationId)
+        assertFalse("stale cancellation for the released engine must be rejected",
+            seam.cancelGenerationForDiagnostic(cancelledGenerationEngineId, generationId))
+        val reloadedResult = withTimeout(30_000) { reloadedRequest.await() }
+        assertTrue("reloaded native model must generate", reloadedResult.text.isNotBlank())
+        assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
         measurements["reloaded_generation_engine_id"] = reloadedGenerationEngineId.toString()
         measurements["reloaded_generation_id"] = reloadedGenerationId.toString()
         assertEquals("prior cancellation must not target the new generation", 0, seam.cancelObservedGenerationId())
@@ -248,6 +257,7 @@ class NativeGgufLifecycleTest {
 internal class NativeJniFailureSeam {
     external fun failNextLoadAfterModel()
     external fun failNextFree()
+    external fun cancelGenerationForDiagnostic(engineId: Long, generationId: Long): Boolean
     external fun generationProgress(): Int
     external fun generationSequence(): Int
     external fun nativeCancelCount(): Int

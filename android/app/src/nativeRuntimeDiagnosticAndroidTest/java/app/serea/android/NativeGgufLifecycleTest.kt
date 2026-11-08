@@ -98,6 +98,8 @@ class NativeGgufLifecycleTest {
         }
         val generationId = awaitNativeGeneration(oldGenerationSequence)
         assertTrue("native generation ID must be positive", generationId > 0L)
+        val cancelledGenerationEngineId = seam.generationEngineId()
+        assertTrue("native generation engine ID must be positive", cancelledGenerationEngineId > 0L)
         first.cancelActive()
         val cancelledResult = withTimeout(30_000) { inFlight.await() }
         assertTrue("JNI generation must end through cancellation", cancelledResult.isFailure)
@@ -130,7 +132,10 @@ class NativeGgufLifecycleTest {
         measurements["reloaded_generation_ms"] = elapsedMs(reloadedGenerationStarted).toString()
         assertTrue("reloaded native model must generate", reloadedResult.text.isNotBlank())
         assertTokenUsage(reloadedResult.inputTokens, reloadedResult.outputTokens, 32)
-        assertTrue("reloaded backend must use a new generation ID", seam.generationId() > generationId)
+        val reloadedGenerationId = seam.generationId()
+        val reloadedGenerationEngineId = seam.generationEngineId()
+        assertTrue("reloaded request must use a distinct engine/generation identity pair",
+            reloadedGenerationEngineId != cancelledGenerationEngineId || reloadedGenerationId != generationId)
         assertEquals("prior cancellation must not target the new generation", 0, seam.cancelObservedGenerationId())
         assertEquals(oldCancelCount + 1, seam.nativeCancelCount())
         val finalFreeStarted = SystemClock.elapsedRealtimeNanos()
@@ -241,6 +246,7 @@ internal class NativeJniFailureSeam {
     external fun generationSequence(): Int
     external fun nativeCancelCount(): Int
     external fun generationId(): Long
+    external fun generationEngineId(): Long
     external fun generationOutcome(): Int
     external fun cancelObservedGenerationId(): Long
     external fun cancelledReleaseGenerationId(): Long

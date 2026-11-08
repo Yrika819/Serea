@@ -776,6 +776,13 @@ Java_app_serea_android_NativeJniFailureSeam_generationId(JNIEnv * env, jobject) 
     });
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_app_serea_android_NativeJniFailureSeam_generationEngineId(JNIEnv * env, jobject) {
+    return jni_boundary<jlong>(env, 0, [&] {
+        return test_generation_engine_id.load(std::memory_order_acquire);
+    });
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_app_serea_android_NativeJniFailureSeam_generationOutcome(JNIEnv * env, jobject) {
     return jni_boundary<jint>(env, 0, [&] {

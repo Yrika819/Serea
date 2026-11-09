@@ -511,9 +511,11 @@ impl Tx<'_> {
             let mut revoked_steps = Vec::new();
             if current.corruption.is_none() {
                 for step in &current.steps {
-                    if let Some(authority) = &step.authority {
-                        if authority.released_at.is_none() && authority.expires_at <= now
-                            && matches!(step.raw_status.as_str(), "LEASED" | "EXECUTING") {
+                    if let Some(authority) = &step.authority
+                        && authority.released_at.is_none()
+                        && authority.expires_at <= now
+                        && matches!(step.raw_status.as_str(), "LEASED" | "EXECUTING")
+                    {
                             let changed = tx.inner.execute(
                                 "UPDATE leases SET released_at_ms=?1 WHERE step_id=?2 AND owner=?3
                                     AND generation=?4 AND acquired_at_ms=?5 AND expires_at_ms=?6
@@ -528,7 +530,6 @@ impl Tx<'_> {
                             )?;
                             if changed != 1 { return Err(StoreError::RecoverySnapshotStale); }
                             revoked_steps.push(step.step_id.clone());
-                        }
                     }
                 }
             }
@@ -676,16 +677,16 @@ impl Tx<'_> {
             facts.attempt = Some(step.attempt);
             facts.generation = Some(step.generation);
 
-            if let Some(model) = &snapshot.projection {
-                if let Some(s) = model.steps.iter().find(|s| s.step.step_id == step.step_id) {
-                    facts.result = s.step.result_digest.clone();
-                    facts.receipt_id = s
-                        .step
-                        .side_effect_receipt
-                        .as_ref()
-                        .map(|r| r.receipt_id.clone());
-                    facts.revision = Some(s.plan_revision);
-                }
+            if let Some(model) = &snapshot.projection
+                && let Some(s) = model.steps.iter().find(|s| s.step.step_id == step.step_id)
+            {
+                facts.result = s.step.result_digest.clone();
+                facts.receipt_id = s
+                    .step
+                    .side_effect_receipt
+                    .as_ref()
+                    .map(|r| r.receipt_id.clone());
+                facts.revision = Some(s.plan_revision);
             }
         }
         self.record_transition(&facts)

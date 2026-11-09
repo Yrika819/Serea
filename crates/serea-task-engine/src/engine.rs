@@ -377,10 +377,10 @@ impl TaskEngine {
                 let active = tx
                     .current_registry_generation()?
                     .ok_or(StoreError::RegistryGenerationNotFound)?;
-                if let Some(expected) = expected_active_generation {
-                    if expected != active.generation_id() {
-                        return Err(StoreError::RegistryGenerationNotFound);
-                    }
+                if let Some(expected) = expected_active_generation
+                    && expected != active.generation_id()
+                {
+                    return Err(StoreError::RegistryGenerationNotFound);
                 }
                 let snapshot = tx.insert_task(&task, context)?;
                 tx.pin_task_registry_generation(&task.task_id, active.generation_id())?;

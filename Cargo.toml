@@ -6,7 +6,7 @@ exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 publish = false
 
@@ -31,7 +31,7 @@ serea-model-router = { path = "crates/serea-model-router" }
 
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled"] }
 # Cooperative file locking for the explicitly gated synthetic P7 ledger only.
 fs2 = "=0.4.3"
 serea-testkit = { path = "crates/serea-testkit" }

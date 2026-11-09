@@ -936,10 +936,9 @@ pub fn evaluate(input: &PolicyInputV1, revision: &PolicyRevision) -> PolicyDecis
     if let Some(denied) = matching
         .iter()
         .find(|rule| matches!(rule.decision, RuleDecision::Deny(_)))
+        && let RuleDecision::Deny(reason) = denied.decision
     {
-        if let RuleDecision::Deny(reason) = denied.decision {
-            return PolicyDecision::Deny(reason);
-        }
+        return PolicyDecision::Deny(reason);
     }
 
     if facts.authorization == Authorization::CredentialHandoff

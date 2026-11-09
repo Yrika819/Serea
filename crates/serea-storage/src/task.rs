@@ -247,10 +247,10 @@ fn validate_membership(steps: &[StoredInput]) -> Result<(), StoreError> {
         if !sequences.insert(step.sequence) {
             return Err(StoreError::DuplicateSequence);
         }
-        if let Some(key) = &step.idempotency_key {
-            if !keys.insert(key.as_str()) {
-                return Err(StoreError::DuplicateIdempotencyKey);
-            }
+        if let Some(key) = &step.idempotency_key
+            && !keys.insert(key.as_str())
+        {
+            return Err(StoreError::DuplicateIdempotencyKey);
         }
         if step.kind == StepKind::Verify {
             verify = true;

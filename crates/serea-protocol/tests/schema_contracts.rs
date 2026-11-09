@@ -974,14 +974,14 @@ fn collect_refs(node: &Value, document: SchemaName, out: &mut Vec<String>) {
     match node {
         Value::Object(map) => {
             for (key, child) in map {
-                if key == "$ref" {
-                    if let Some(reference) = child.as_str() {
-                        assert!(
-                            reference.starts_with("#/$defs/"),
-                            "{document} $ref must be local to the document: {reference}"
-                        );
-                        out.push(reference.to_owned());
-                    }
+                if key == "$ref"
+                    && let Some(reference) = child.as_str()
+                {
+                    assert!(
+                        reference.starts_with("#/$defs/"),
+                        "{document} $ref must be local to the document: {reference}"
+                    );
+                    out.push(reference.to_owned());
                 }
                 collect_refs(child, document, out);
             }

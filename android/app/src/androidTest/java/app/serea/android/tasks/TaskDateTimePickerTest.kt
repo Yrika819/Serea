@@ -3,6 +3,7 @@ package app.serea.android.tasks
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.test.hasClickAction
@@ -20,6 +21,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.uiautomator.UiDevice
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.semantics.Role
@@ -30,6 +32,7 @@ import java.time.ZoneId
 import java.text.NumberFormat
 import java.util.Locale
 import androidx.test.platform.app.InstrumentationRegistry
+import android.util.Log
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -175,7 +178,38 @@ class TaskDateTimePickerTest {
         minute.performClick()
         compose.onNode(selectedLocalizedPickerNumber(35, pickerLocale)).assertIsSelected()
         compose.onNodeWithTag("task_time_picker_confirm").performClick()
-        compose.onNodeWithTag("task_due_time").assertIsDisplayed()
+        // Keep the existing post-confirm visibility contract: the picker closes and
+        // returns to the time field without requiring a scroll. Wait only for the
+        // observable dialog-dismissal/layout transition, then retain the same assertion.
+        try {
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithTag("task_time_picker_confirm").fetchSemanticsNodes().isEmpty()
+            }
+            compose.waitForIdle()
+            compose.onNodeWithTag("task_due_time").assertIsDisplayed()
+        } catch (failure: AssertionError) {
+            // These diagnostics are emitted only on failure. The CI artifact keeps
+            // per-test logcat, so the full semantics tree and window/IME state are
+            // available without changing the assertion or scrolling the editor.
+            compose.onRoot(useUnmergedTree = true).printToLog("task-time-picker-after-confirm")
+            val root = runCatching { compose.onRoot(useUnmergedTree = true).fetchSemanticsNode() }.getOrNull()
+            val dueTime = runCatching { compose.onNodeWithTag("task_due_time").fetchSemanticsNode() }.getOrNull()
+            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            val focus = runCatching {
+                device.executeShellCommand("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")
+            }.getOrDefault("unavailable")
+            val ime = runCatching {
+                device.executeShellCommand("dumpsys input_method | grep -E 'mShowRequested|mInputShown|mImeWindowVis|mCurId' | head -12")
+            }.getOrDefault("unavailable")
+            Log.e(
+                "TaskDateTimePickerTest",
+                "POST_CONFIRM_DIAGNOSTICS|confirmNodes=${compose.onAllNodesWithTag("task_time_picker_confirm").fetchSemanticsNodes().size}|" +
+                    "rootBounds=${root?.boundsInRoot}|dueTimeBounds=${dueTime?.boundsInRoot}|" +
+                    "dueTimeWindowBounds=${dueTime?.boundsInWindow}|windowFocus=$focus|ime=$ime",
+                failure,
+            )
+            throw failure
+        }
         compose.onNodeWithTag("task_save").performClick()
         compose.waitUntil(5_000) { repository.createDrafts.size == 1 }
         val saved = repository.createDrafts.single()

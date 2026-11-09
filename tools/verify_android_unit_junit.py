@@ -7,6 +7,7 @@ import argparse
 import re
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -216,9 +217,25 @@ def collect_junit_test_methods(directory: Path) -> dict[str, set[str]]:
     return methods
 
 
-def verify_source_discovery(directory: Path, source_root: Path, required_classes: tuple[str, ...]) -> None:
-    expected = collect_source_class_counts(source_root)
-    expected_methods = collect_source_test_methods(source_root)
+def verify_source_discovery(
+    directory: Path,
+    source_roots: Path | Sequence[Path],
+    required_classes: tuple[str, ...],
+) -> None:
+    roots = (source_roots,) if isinstance(source_roots, Path) else tuple(source_roots)
+    if not roots:
+        raise ValueError("At least one Android unit test source root is required")
+    expected: dict[str, int] = {}
+    expected_methods: dict[str, set[str]] = {}
+    for source_root in roots:
+        for name, count in collect_source_class_counts(source_root).items():
+            if name in expected:
+                raise ValueError(f"Duplicate Android unit test class source: {name}")
+            expected[name] = count
+        for name, methods in collect_source_test_methods(source_root).items():
+            if name in expected_methods:
+                raise ValueError(f"Duplicate Android unit test class source: {name}")
+            expected_methods[name] = methods
     actual = collect_junit_class_counts(directory)
     actual_methods = collect_junit_test_methods(directory)
     missing_required = sorted(set(required_classes) - set(expected))
@@ -256,7 +273,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="Gradle testDebugUnitTest JUnit result directory")
     parser.add_argument("--minimum", type=int, default=1, help="minimum number of executed tests")
-    parser.add_argument("--source-root", type=Path, help="Kotlin unit-test source root for source/JUnit discovery comparison")
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        action="append",
+        help="Kotlin unit-test source root for source/JUnit discovery comparison (repeat for variant-specific roots)",
+    )
     parser.add_argument("--require-class", action="append", default=None, help="critical source test class that must remain present (repeatable)")
     args = parser.parse_args()
     if args.minimum < 1:

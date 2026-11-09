@@ -21,6 +21,24 @@ val betaSigningInputsReady = listOf(
     betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
 ).all { !it.isNullOrBlank() }
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
+// Opt-in is local to the Owner's private Beta invocation. Missing input keeps OAuth compiled off.
+val ownerPrivateBetaGoogleEnabled = providers.environmentVariable("SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED").orNull == "true"
+val ciBuild = providers.environmentVariable("CI").orNull.equals("true", ignoreCase = true) ||
+    providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true)
+val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("PrivateBeta", ignoreCase = true) }
+// CI may compile and run this exact no-secret JVM unit-test variant. Every other
+// CI invocation leaves the Private Beta variant disabled, and packaging tasks are rejected.
+val privateBetaUnitTestFilterArgs = setOf(
+    "--tests",
+    "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
+)
+val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
+val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&
+    requestedTaskNames.isNotEmpty() &&
+    requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
+if (privateBetaRequested && ciBuild && !privateBetaUnitTestOnlyInvocation) {
+    error("CI may only run the isolated Private Beta unit-test task; packaging is local-only.")
+}
 val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
 val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
     gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation" }
@@ -74,6 +92,7 @@ android {
             "app.serea.android.SereaIsolatedAndroidJUnitRunner"
         }
         buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
+        buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
         if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
             ndk { abiFilters += nativeRuntimeAbi }
             externalNativeBuild {
@@ -134,6 +153,18 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
             matchingFallbacks += listOf("release")
+            buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
+            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
+        }
+        create("privateBeta") {
+            initWith(getByName("beta"))
+            applicationIdSuffix = ".beta"
+            matchingFallbacks += listOf("beta", "release")
+            buildConfigField(
+                "boolean",
+                "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED",
+                ownerPrivateBetaGoogleEnabled.toString(),
+            )
             if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
         }
     }
@@ -177,6 +208,9 @@ android {
 
 androidComponents {
     beforeVariants(selector().all()) { variant ->
+        if (ciBuild && variant.buildType == "privateBeta" && !privateBetaUnitTestOnlyInvocation) {
+            variant.enable = false
+        }
         if (isolatedNativeRuntimeOptIn) {
             if (variant.buildType == "isolated") nativeEnabledBuildTypes += variant.buildType!!
             else {
@@ -192,7 +226,7 @@ tasks.register("verifyLocalNativeRuntimeVariantIsolation") {
     doLast {
         check(isolatedNativeRuntimeOptIn) { "Use -PsereaIsolatedNativeRuntime=true." }
         check(nativeEnabledBuildTypes == setOf("isolated")) { "Native enabled variants: $nativeEnabledBuildTypes" }
-        check(nativeDisabledBuildTypes.containsAll(setOf("debug", "beta", "release"))) {
+        check(nativeDisabledBuildTypes.containsAll(setOf("debug", "beta", "privateBeta", "release"))) {
             "Native disabled variants: $nativeDisabledBuildTypes"
         }
     }
@@ -232,8 +266,10 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
     outputs.upToDateWhen { false }
     doLast {
         fun failClosed(message: String): Nothing {
-            layout.buildDirectory.dir("outputs/apk/beta").get().asFile.deleteRecursively()
-            layout.buildDirectory.dir("outputs/bundle/beta").get().asFile.deleteRecursively()
+            listOf("beta", "privateBeta").forEach { variant ->
+                layout.buildDirectory.dir("outputs/apk/$variant").get().asFile.deleteRecursively()
+                layout.buildDirectory.dir("outputs/bundle/$variant").get().asFile.deleteRecursively()
+            }
             error(message)
         }
 
@@ -292,7 +328,12 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
     }
 }
 
-tasks.matching { it.name in setOf("assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle") }
+tasks.matching {
+    it.name in setOf(
+        "assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle",
+        "assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta", "signPrivateBetaBundle",
+    )
+}
     .configureEach { dependsOn(validatePersonalBetaSigning) }
 
 tasks.configureEach {
@@ -302,7 +343,7 @@ tasks.configureEach {
 }
 
 androidComponents.onVariants { variant ->
-    if (variant.buildType == "beta") {
+    if (variant.buildType == "beta" || variant.buildType == "privateBeta") {
         check(variant.applicationId.get() == "app.serea.android.beta") {
             "Personal Beta applicationId drifted: expected app.serea.android.beta, got ${variant.applicationId.get()}"
         }

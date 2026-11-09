@@ -428,17 +428,16 @@ fn occurrence_inventory_covers_every_old_free_text_site_and_live_actor_receipt_p
             {
                 panic!("uncategorized inline free-text site {pointer}");
             }
-            if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
-                if [
+            if let Some(reference) = object.get("$ref").and_then(Value::as_str)
+                && [
                     "#/$defs/opaqueToken",
                     "#/$defs/singleLineLabel",
                     "#/$defs/prose",
                     "#/$defs/freeText",
                 ]
                 .contains(&reference)
-                {
-                    sites.push(pointer.trim_end_matches("/anyOf/0").to_owned());
-                }
+            {
+                sites.push(pointer.trim_end_matches("/anyOf/0").to_owned());
             }
             for (key, child) in object {
                 inventory(child, &format!("{pointer}/{key}"), sites);

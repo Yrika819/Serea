@@ -166,11 +166,11 @@ impl Store {
     #[cfg(all(feature = "p7-experimental", test))]
     pub(crate) fn p7_read_only<T>(
         &self,
-        body: impl FnOnce(&Connection) -> Result<T, StoreError>,
+        body: impl FnOnce(&mut Connection) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        let conn = self.connection()?;
+        let mut conn = self.connection()?;
         conn.pragma_update(None, "query_only", "ON")?;
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&conn)));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&mut conn)));
         let restored = conn.pragma_update(None, "query_only", "OFF");
         match outcome {
             Ok(result) => {

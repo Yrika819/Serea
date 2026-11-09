@@ -27,7 +27,7 @@ fn p7_migration_has_exact_parent_keys_and_clean_foreign_key_state() {
     let sqlite_version: String = conn
         .query_row("SELECT sqlite_version()", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(sqlite_version, "3.53.2");
+    assert_eq!(sqlite_version, "3.54.1");
     let mut indexes = conn
         .prepare("SELECT name FROM pragma_index_list('p7_memory_items') WHERE \"unique\"=1")
         .unwrap();

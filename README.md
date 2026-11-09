@@ -16,7 +16,7 @@ The runtime dependency graph is acyclic: Event Bus depends on Storage and Protoc
 
 ## Build and test
 
-Requirements: Rust stable (MSRV 1.85.0) with `rustfmt` and `clippy`, Python 3, and a platform C toolchain required by bundled SQLite.
+Requirements: Rust stable (MSRV 1.89.0) with `rustfmt` and `clippy`, Python 3, and a platform C toolchain required by bundled SQLite.
 
 ```sh
 cargo fetch --locked
@@ -31,7 +31,7 @@ python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 python3 tools/validate_docs.py docs
 ```
 
-The offline Cargo commands assume dependencies were fetched first. To verify the declared MSRV, install Rust 1.85.0 and repeat the Cargo checks/tests/Clippy commands with `cargo +1.85.0`.
+The offline Cargo commands assume dependencies were fetched first. To verify the declared MSRV, install Rust 1.89.0 and repeat the Cargo checks/tests/Clippy commands with `cargo +1.89.0`.
 
 ## Synthetic Host process
 

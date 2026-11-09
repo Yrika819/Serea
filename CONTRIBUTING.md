@@ -2,7 +2,7 @@
 
 ## Development setup
 
-Use Rust stable and MSRV 1.85.0. Install `rustfmt` and `clippy`; Python 3 is used by repository checks. Fetch locked dependencies before running Cargo offline:
+Use Rust stable and MSRV 1.89.0. Install `rustfmt` and `clippy`; Python 3 is used by repository checks. Fetch locked dependencies before running Cargo offline:
 
 ```sh
 cargo fetch --locked

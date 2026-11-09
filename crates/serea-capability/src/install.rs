@@ -80,16 +80,15 @@ pub fn install(
         .validate_advertisements(manifest)
         .map_err(InstallError::Provider)?;
     let current = CapabilityRegistry::current_generation(store)?;
-    if let Some(current) = current {
-        if current.manifest_digest() == manifest.digest()
-            && current.schema_catalog_digest() == manifest.catalog_digest()
-        {
-            verify_generation_matches_manifest(store, manifest, current.generation_id())?;
-            return Ok(InstallOutcome {
-                generation_id: current.generation_id(),
-                activated: false,
-            });
-        }
+    if let Some(current) = current
+        && current.manifest_digest() == manifest.digest()
+        && current.schema_catalog_digest() == manifest.catalog_digest()
+    {
+        verify_generation_matches_manifest(store, manifest, current.generation_id())?;
+        return Ok(InstallOutcome {
+            generation_id: current.generation_id(),
+            activated: false,
+        });
     }
     // new prepared generation
     let generation = CapabilityRegistry::create_generation(
@@ -137,18 +136,16 @@ pub fn install(
         // A higher id may activate before the lower id reaches activation;
         // in that case reuse the now-active generation only after rechecking
         // its complete durable manifest facts.
-        if matches!(&error, StoreError::RegistryGenerationOrder) {
-            if let Some(current) = CapabilityRegistry::current_generation(store)? {
-                if current.manifest_digest() == manifest.digest()
-                    && current.schema_catalog_digest() == manifest.catalog_digest()
-                {
-                    verify_generation_matches_manifest(store, manifest, current.generation_id())?;
-                    return Ok(InstallOutcome {
-                        generation_id: current.generation_id(),
-                        activated: false,
-                    });
-                }
-            }
+        if matches!(&error, StoreError::RegistryGenerationOrder)
+            && let Some(current) = CapabilityRegistry::current_generation(store)?
+            && current.manifest_digest() == manifest.digest()
+            && current.schema_catalog_digest() == manifest.catalog_digest()
+        {
+            verify_generation_matches_manifest(store, manifest, current.generation_id())?;
+            return Ok(InstallOutcome {
+                generation_id: current.generation_id(),
+                activated: false,
+            });
         }
         return Err(InstallError::Store(error));
     }

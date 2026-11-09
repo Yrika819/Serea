@@ -300,7 +300,7 @@ impl P7ExperimentalMemory {
     ) -> Result<MemoryPage, StoreError> {
         let literal = format!("\"{}\"", request.query.replace('"', "\"\""));
         store.p7_read_only(|conn| {
-            with_vm_budget(conn, vm_budget, || {
+            with_vm_budget(conn, vm_budget, |conn| {
                 ensure_ready_conn(conn, &self.owner_id)?;
                 let mut s=conn.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id AND m.owner_id=f.owner_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
                 let rows=s.query_map(params![literal,self.owner_id,request.class.rank(),request.now.get(),request.after,1001_i64],record_from_row)?;
@@ -391,9 +391,9 @@ fn ensure_ready_conn(conn: &Connection, owner: &str) -> Result<(), StoreError> {
     }
 }
 fn with_vm_budget<T>(
-    conn: &Connection,
+    conn: &mut Connection,
     vm_budget: usize,
-    body: impl FnOnce() -> Result<T, StoreError>,
+    body: impl FnOnce(&Connection) -> Result<T, StoreError>,
 ) -> Result<T, StoreError> {
     let check_interval = vm_budget.clamp(1, 100);
     let intervals = vm_budget.div_ceil(check_interval);
@@ -409,7 +409,7 @@ fn with_vm_budget<T>(
             }
         }),
     )?;
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(conn)));
     let reset = conn.progress_handler(0, None::<fn() -> bool>);
     match outcome {
         Ok(result) => {
@@ -1054,10 +1054,10 @@ mod tests {
             .query_row("PRAGMA query_only", [], |r| r.get(0))
             .unwrap();
         assert_eq!(query_only, 0);
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: Result<(), StoreError> =
-                with_vm_budget(&conn, 10, || panic!("controlled budget unwind"));
+                with_vm_budget(&mut conn, 10, |_| panic!("controlled budget unwind"));
         }));
         assert!(panic.is_err());
         conn.execute("CREATE TABLE after_unwind(value INTEGER)", [])

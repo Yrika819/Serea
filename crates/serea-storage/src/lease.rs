@@ -271,10 +271,11 @@ fn acquire_in(
         .optional()?;
     let (old_generation, attempt, ceiling) = step.ok_or(StoreError::LeaseFenced)?;
     let prior = authority(conn, &task_id, &step_id)?;
-    if let Some(row) = &prior {
-        if row.released_at.is_none() && row.expires_at > now.get() {
-            return Err(StoreError::LeaseHeld);
-        }
+    if let Some(row) = &prior
+        && row.released_at.is_none()
+        && row.expires_at > now.get()
+    {
+        return Err(StoreError::LeaseHeld);
     }
     if old_generation != expected_generation.unwrap_or(0)
         || prior.as_ref().map_or(0, |row| row.generation) != old_generation

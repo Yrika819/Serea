@@ -11,7 +11,7 @@ root workspace lockfile and each checked-in vendored or standalone lockfile:
 The scanner is pinned to cargo-audit 0.22.2 and runs under the current stable
 Rust toolchain. Installation errors fail the workflow, the workflow checks the
 installed version, and the scanner independently verifies the executable
-version before scanning. The product build remains on its declared MSRV, Rust 1.85.0;
+version before scanning. The product build remains on its declared MSRV, Rust 1.89.0;
 the scanner does not compile or alter the product. CI has `contents: read`, no
 secrets, and checkout credentials are disabled.
 
@@ -23,6 +23,26 @@ unparseable results, inability to identify the advisory database revision,
 scanner execution errors, and unexcepted advisory findings have distinct
 statuses and fail the check. Any unexcepted advisory is a release blocker;
 CVSS 7.0+ findings are P0/P1-equivalent and block release without exception.
+
+## MSRV required-check name migration
+
+The Linux required check is renamed with the compiler from `Linux MSRV 1.85.0`
+to `Linux MSRV 1.89.0`. Branch Protection and rulesets are intentionally not
+changed by this repository change. Before merging the remediation, an Owner
+should:
+
+1. Confirm the Draft PR's `Linux MSRV 1.89.0` check passed on its current head.
+2. In the active branch protection rule or ruleset, replace the required check
+   `Linux MSRV 1.85.0` with `Linux MSRV 1.89.0`, preserving every other required
+   check and any existing review or deployment requirement.
+3. Save the rule and confirm GitHub reports the new `Linux MSRV 1.89.0` check
+   as required and successful on the PR head before considering merge.
+
+Do not merge while the old required name is still configured: the renamed
+workflow no longer emits that status, so GitHub can keep the PR blocked. If the
+new status is absent or not successful, leave the rule and PR unmerged and
+investigate the workflow run. This procedure changes only the required-check
+name; it does not relax branch protection.
 
 ## Vendored code scope
 

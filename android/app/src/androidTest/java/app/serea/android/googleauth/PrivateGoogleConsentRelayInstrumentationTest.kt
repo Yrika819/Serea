@@ -67,6 +67,7 @@ class PrivateGoogleConsentRelayInstrumentationTest {
         val contract = PrivateGoogleConsentRelayContract()
         PrivateGoogleConsentSenderTestActivity.prepareDelayedResult()
         val identity = PrivateGoogleConsentIdentity("consent-recreated", 53L, "session-recreated")
+        PrivateGoogleConsentRelayTestActivity.prepareRecreation()
         val launch = contract.createIntent(
             context,
             PendingGoogleConsentActivityResult(identity, senderPendingIntent(context, 2)),
@@ -75,7 +76,11 @@ class PrivateGoogleConsentRelayInstrumentationTest {
         val scenario = ActivityScenario.launchActivityForResult<PrivateGoogleConsentRelayTestActivity>(launch)
         try {
             assertTrue(PrivateGoogleConsentSenderTestActivity.awaitLaunch())
-            scenario.recreate()
+            // The nested sender is foreground, so ActivityScenario.recreate() would wait forever
+            // for the relay to resume. Request the same Activity recreation directly and await
+            // the replacement's onCreate while the sender remains in flight.
+            scenario.onActivity { activity -> activity.recreate() }
+            assertTrue(PrivateGoogleConsentRelayTestActivity.awaitRecreation())
             assertEquals(1, PrivateGoogleConsentSenderTestActivity.launchCount())
             PrivateGoogleConsentSenderTestActivity.completeDelayedResult(instrumentation)
             val outerResult = scenario.result

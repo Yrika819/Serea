@@ -7,7 +7,22 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /** Isolated-only activity using the same relay implementation as the Private Beta component. */
-internal class PrivateGoogleConsentRelayTestActivity : PrivateGoogleConsentRelayBaseActivity()
+internal class PrivateGoogleConsentRelayTestActivity : PrivateGoogleConsentRelayBaseActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        created.countDown()
+    }
+
+    companion object {
+        @Volatile private var created = CountDownLatch(2)
+
+        fun prepareRecreation() {
+            created = CountDownLatch(2)
+        }
+
+        fun awaitRecreation(): Boolean = created.await(10, TimeUnit.SECONDS)
+    }
+}
 
 /** Isolated PendingIntent target lets instrumentation exercise nested Activity Results offline. */
 class PrivateGoogleConsentSenderTestActivity : Activity() {

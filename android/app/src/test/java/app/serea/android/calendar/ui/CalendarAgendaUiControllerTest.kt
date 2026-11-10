@@ -35,6 +35,127 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarAgendaUiControllerTest {
+    @Test fun primaryOnlyAgendaUsesPrimaryWithoutCallingCalendarList() = runTest {
+        val provider = fakeProvider(
+            listOf(calendar("primary")),
+            listOf(
+                timedEvent("primary", "primary-event-1", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z"),
+                timedEvent("primary", "primary-event-2", "2026-10-20T14:00:00Z", "2026-10-20T15:00:00Z"),
+                timedEvent("primary", "primary-event-3", "2026-10-20T15:00:00Z", "2026-10-20T16:00:00Z"),
+            ),
+            pageSize = 1,
+        )
+        val delegate = CalendarAgendaUiFake(provider)
+        var listCalls = 0
+        var calendarDetailCalls = 0
+        var eventDetailCalls = 0
+        val requestedCalendarIds = mutableListOf<String>()
+        val requestedPageTokens = mutableListOf<String?>()
+        val primaryOnly = object : app.serea.android.calendar.CalendarReadPort,
+            app.serea.android.calendar.CalendarAuthorizationPort by delegate {
+            override suspend fun listCalendars(): List<app.serea.android.calendar.CalendarDescriptor> {
+                listCalls++
+                error("Primary-only agenda must not call CalendarList.")
+            }
+            override suspend fun getCalendar(calendarId: CalendarId): app.serea.android.calendar.CalendarDescriptor {
+                calendarDetailCalls++
+                return delegate.getCalendar(calendarId)
+            }
+            override suspend fun getEvent(key: CalendarEventKey): app.serea.android.calendar.CalendarEvent {
+                eventDetailCalls++
+                return delegate.getEvent(key)
+            }
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: app.serea.android.calendar.CalendarDateRange,
+                pageToken: String?,
+            ): app.serea.android.calendar.CalendarEventPage {
+                requestedCalendarIds += calendarId.value
+                requestedPageTokens += pageToken
+                return delegate.listEventsPage(calendarId, range, pageToken)
+            }
+        }
+        val controller = CalendarAgendaUiController(
+            primaryOnly, primaryOnly, UI_TEST_CLOCK, ZoneId.of("UTC"), this,
+            initialCalendarId = "attacker-calendar-id",
+            primaryCalendarOnly = true,
+        )
+        advanceUntilIdle()
+        val result = agenda(controller)
+        assertEquals("primary", result.selectedCalendarId)
+        assertEquals(listOf("primary"), result.calendars.map { it.id.value })
+        assertEquals(listOf("primary-event-1", "primary-event-2", "primary-event-3"), result.events.map { it.key.eventId.value })
+        assertEquals(0, listCalls)
+        assertEquals(0, calendarDetailCalls)
+        assertEquals(0, eventDetailCalls)
+        assertEquals(listOf("primary", "primary", "primary"), requestedCalendarIds)
+        assertEquals(listOf(null, "page-1", "page-2"), requestedPageTokens)
+        controller.selectCalendar("another-calendar")
+        advanceUntilIdle()
+        assertEquals("primary", agenda(controller).selectedCalendarId)
+        assertEquals(0, listCalls)
+        assertTrue(requestedCalendarIds.all { it == "primary" })
+        controller.close()
+    }
+
+    @Test fun primaryOnlyRejectsForgedNonPrimaryDetailBeforeProviderAccess() = runTest {
+        val provider = fakeProvider(
+            listOf(calendar("primary")),
+            listOf(timedEvent("primary", "primary-event", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")),
+        )
+        val delegate = CalendarAgendaUiFake(provider)
+        var providerCalls = 0
+        val guarded = object : app.serea.android.calendar.CalendarReadPort,
+            app.serea.android.calendar.CalendarAuthorizationPort by delegate {
+            override suspend fun listCalendars(): List<app.serea.android.calendar.CalendarDescriptor> {
+                providerCalls++
+                error("Primary-only route must not enumerate calendars.")
+            }
+            override suspend fun getCalendar(calendarId: CalendarId): app.serea.android.calendar.CalendarDescriptor {
+                providerCalls++
+                return delegate.getCalendar(calendarId)
+            }
+            override suspend fun getEvent(key: CalendarEventKey): app.serea.android.calendar.CalendarEvent {
+                providerCalls++
+                return delegate.getEvent(key)
+            }
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: app.serea.android.calendar.CalendarDateRange,
+                pageToken: String?,
+            ): app.serea.android.calendar.CalendarEventPage {
+                providerCalls++
+                return delegate.listEventsPage(calendarId, range, pageToken)
+            }
+        }
+        val forgedKey = CalendarEventKey(CalendarId("shared-calendar@example.test"), EventId("forged-event"))
+        val controller = CalendarAgendaUiController(
+            guarded,
+            guarded,
+            UI_TEST_CLOCK,
+            ZoneId.of("UTC"),
+            this,
+            initialCalendarId = "shared-calendar@example.test",
+            initialDetailKey = forgedKey,
+            primaryCalendarOnly = true,
+        )
+        advanceUntilIdle()
+        val restoredFailure = controller.state.value as CalendarAgendaUiState.Failure
+        assertEquals("primary", restoredFailure.selectedCalendarId)
+        assertEquals(CalendarAgendaFailure.EVENT_UNAVAILABLE, restoredFailure.reason)
+        assertEquals(forgedKey, restoredFailure.detailKey)
+        assertEquals(0, providerCalls)
+
+        controller.retry()
+        advanceUntilIdle()
+        controller.openEvent(forgedKey)
+        advanceUntilIdle()
+        val explicitFailure = controller.state.value as CalendarAgendaUiState.Failure
+        assertEquals(CalendarAgendaFailure.EVENT_UNAVAILABLE, explicitFailure.reason)
+        assertEquals(0, providerCalls)
+        controller.close()
+    }
+
     @Test fun providerCancellationEndsLoadingAndCanBeRetried() = runTest {
         val provider = fakeProvider(
             listOf(calendar("demo")),

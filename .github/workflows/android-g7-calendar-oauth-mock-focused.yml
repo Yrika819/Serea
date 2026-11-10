@@ -47,7 +47,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon :app:testDebugUnitTest
           --tests 'app.serea.android.calendar.CalendarOAuthMockE2ETest'
-      - name: Require the one expected JUnit test and no skipped or failed cases
+      - name: Require exactly two expected JUnit tests and no skipped or failed cases
         run: |
           python3 - <<'PY'
           import glob
@@ -60,12 +60,18 @@ jobs:
               root = ET.parse(name).getroot()
               for case in root.iter('testcase'):
                   cases.append((name, case))
-          assert len(cases) == 1, f'Expected exactly one focused test, found {len(cases)}'
-          name, case = cases[0]
-          assert case.attrib.get('classname') == 'app.serea.android.calendar.CalendarOAuthMockE2ETest', (name, case.attrib)
-          assert case.attrib.get('name') == 'syntheticConsentAllowsOnlyCalendarReadAndAccountSwitchStopsFurtherDispatch', (name, case.attrib)
-          assert not list(case.findall('failure')) and not list(case.findall('error')) and not list(case.findall('skipped')), (name, ET.tostring(case, encoding='unicode'))
-          print('PASS: exact G7 Calendar OAuth mock E2E JUnit case; failures=0 errors=0 skips=0')
+          expected = {
+              'syntheticConsentAllowsOnlyCalendarReadAndAccountSwitchStopsFurtherDispatch',
+              'primaryAliasNeverUsesCalendarListEvenWhenThatScopeIsAlreadyGranted',
+          }
+          assert len(cases) == len(expected), f'Expected exactly {len(expected)} focused tests, found {len(cases)}'
+          actual = set()
+          for name, case in cases:
+              assert case.attrib.get('classname') == 'app.serea.android.calendar.CalendarOAuthMockE2ETest', (name, case.attrib)
+              actual.add(case.attrib.get('name'))
+              assert not list(case.findall('failure')) and not list(case.findall('error')) and not list(case.findall('skipped')), (name, ET.tostring(case, encoding='unicode'))
+          assert actual == expected, f'Unexpected focused JUnit cases: {actual}'
+          print('PASS: exact G7 Calendar OAuth mock E2E JUnit cases (2); failures=0 errors=0 skips=0')
           PY
       - name: Upload focused JUnit evidence
         if: always()

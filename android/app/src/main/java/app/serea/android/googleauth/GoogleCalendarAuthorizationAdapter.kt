@@ -16,14 +16,19 @@ class GoogleCalendarAuthorizationAdapter(
     private val gateway: GoogleAuthorizationGateway,
 ) : CalendarAuthorizationPort, CalendarAccessTokenPort {
     private val authorizationSessionId = gateway.authorizationSessionId
-    private val calendarScopes = setOf(
-        GoogleScope.CALENDAR_EVENTS_READ_ONLY,
-        GoogleScope.CALENDAR_LIST_READ_ONLY,
-    )
+    private val eventScope = GoogleScope.CALENDAR_EVENTS_READ_ONLY
 
-    override suspend fun status(): CalendarAuthorizationStatus {
-        val googleStatus = gateway.status(calendarScopes)
-        val missingScopes = calendarScopes
+    override suspend fun status(): CalendarAuthorizationStatus = status(setOf(eventScope.value))
+
+    override suspend fun status(requiredScopes: Set<String>): CalendarAuthorizationStatus {
+        val requestedScopes = buildSet {
+            add(eventScope)
+            if (CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY in requiredScopes) {
+                add(GoogleScope.CALENDAR_LIST_READ_ONLY)
+            }
+        }
+        val googleStatus = gateway.status(requestedScopes)
+        val missingScopes = requestedScopes
             .filter { googleStatus.permissions[it] != ScopePermission.GRANTED }
             .mapTo(linkedSetOf()) { it.value }
         val eventsPermission = googleStatus.permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY]

@@ -59,7 +59,7 @@ class PermissionCheckedCalendarReadPort(
     }
 
     private suspend fun check(scope: String) {
-        val status = authorization.status()
+        val status = authorization.status(setOf(scope))
         if (status.state != CalendarAuthorizationState.AUTHORIZED && status.state != CalendarAuthorizationState.MOCK_ONLY) {
             throw CalendarReadFailure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read permission is unavailable.")
         }

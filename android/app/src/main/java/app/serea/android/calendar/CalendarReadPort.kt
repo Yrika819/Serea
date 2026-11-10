@@ -20,6 +20,9 @@ data class CalendarEventPage(
 /** Future adapter seam. It describes authorization but has no token or sign-in methods. */
 interface CalendarAuthorizationPort {
     suspend fun status(): CalendarAuthorizationStatus
+
+    /** Callers that explicitly use a scoped endpoint can request its required-scope status. */
+    suspend fun status(requiredScopes: Set<String>): CalendarAuthorizationStatus = status()
 }
 
 data class CalendarReadLimits(

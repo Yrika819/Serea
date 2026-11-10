@@ -494,9 +494,30 @@ if [[ "$sdk_ok" == true ]]; then
           run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 900 16 '' || diagnostics_result=1
         fi
       else
-        run_diagnostic_stage cursor-position-focused \
-          app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
-          900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
+        consent_recreation_test='app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#relayRecreationDoesNotRelaunchOrLoseTheInFlightIdentity'
+        # Reproduce the API 26 Activity/window lifecycle failure in isolation before any other
+        # instrumentation. Then run every companion Consent Relay, AccountPicker, and manifest
+        # assertion consecutively on the same disposable emulator. The full formal and 21-test
+        # focused suites below remain unchanged and must still pass.
+        run_diagnostic_stage consent-relay-lifecycle-api26 \
+          "$consent_recreation_test" 1200 1 "$consent_recreation_test" || diagnostics_result=1
+        if [[ "$diagnostics_result" -eq 0 ]]; then
+          consent_companion_tests=$(cat <<'TESTS'
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#nestedActivityResultReturnsLaunchIdentityAndOriginalPayload
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#missingRelayIdentityFailsClosed
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#accountPickerContractCarriesPerLaunchTokenAcrossSuccessAndCancellation
+app.serea.android.googleauth.PrivateGoogleIsolatedManifestTest#isolatedManifestDoesNotRegisterPrivateProductRelayActivities
+TESTS
+)
+          run_diagnostic_stage consent-relay-companion-api26 \
+            app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest,app.serea.android.googleauth.PrivateGoogleIsolatedManifestTest \
+            1200 4 '' "$consent_companion_tests" || diagnostics_result=1
+        fi
+        if [[ "$diagnostics_result" -eq 0 ]]; then
+          run_diagnostic_stage cursor-position-focused \
+            app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
+            900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
+        fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi

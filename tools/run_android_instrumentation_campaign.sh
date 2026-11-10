@@ -775,7 +775,7 @@ TESTS
   done
 
   if [[ "$google_demo_ui_cleanup_result" -eq 0 ]]; then
-    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 16 '' "$google_demo_ui_tests" \
+    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 21 '' "$google_demo_ui_tests" \
       || google_demo_ui_stage_result=1
   else
     google_demo_ui_stage_result=1

@@ -2312,24 +2312,24 @@ impl Tx<'_> {
             if previous.as_ref().map(|row| row.0.as_str()) != expected_previous_key {
                 return Err(StoreError::ScheduleRevisionConflict);
             }
-            if let Some((previous_key, _)) = previous {
-                if previous_key != draft.occurrence_key {
-                    let event = missed_event.ok_or(StoreError::AuditRejected)?;
-                    let changed = tx.inner.execute(
-                        "UPDATE schedule_occurrences SET state='SKIPPED',processed_at_ms=?3,
+            if let Some((previous_key, _)) = previous
+                && previous_key != draft.occurrence_key
+            {
+                let event = missed_event.ok_or(StoreError::AuditRejected)?;
+                let changed = tx.inner.execute(
+                    "UPDATE schedule_occurrences SET state='SKIPPED',processed_at_ms=?3,
                            updated_at_ms=?3,outcome_code='COALESCED_RUN_ONCE'
                          WHERE schedule_id=?1 AND occurrence_key=?2 AND state='PENDING'",
-                        rusqlite::params![
-                            draft.schedule_id.as_str(),
-                            previous_key,
-                            draft.created_at.get()
-                        ],
-                    )?;
-                    if changed != 1 {
-                        return Err(StoreError::ScheduleOccurrenceNotClaimable);
-                    }
-                    tx.append_event(event.event, event.retention_at)?;
+                    rusqlite::params![
+                        draft.schedule_id.as_str(),
+                        previous_key,
+                        draft.created_at.get()
+                    ],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::ScheduleOccurrenceNotClaimable);
                 }
+                tx.append_event(event.event, event.retention_at)?;
             }
             tx.enqueue_calendar_occurrence_and_advance(
                 draft,

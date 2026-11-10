@@ -73,30 +73,30 @@ jobs:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - name: Install exact MSRV
-        run: rustup toolchain install 1.85.0 --profile minimal
+        run: rustup toolchain install 1.89.0 --profile minimal
 
       - name: Verify compiler
         shell: pwsh
         run: |
-          rustup run 1.85.0 rustc --version
-          rustup run 1.85.0 cargo --version
+          rustup run 1.89.0 rustc --version
+          rustup run 1.89.0 cargo --version
 
       - name: Fetch locked dependencies
-        run: cargo +1.85.0 fetch --locked
+        run: cargo +1.89.0 fetch --locked
 
       - name: Feature gated Gate C tests
-        run: cargo +1.85.0 test -p serea-storage --lib --features p7-experimental,p7-gate-c p7_ --locked --offline
+        run: cargo +1.89.0 test -p serea-storage --lib --features p7-experimental,p7-gate-c p7_ --locked --offline
 
       - name: Cross-process file lock and termination test
-        run: cargo +1.85.0 test -p serea-storage --test p7_gate_c_lock --features p7-gate-c --locked --offline
+        run: cargo +1.89.0 test -p serea-storage --test p7_gate_c_lock --features p7-gate-c --locked --offline
 
       - name: Verify default optimized feature isolation
-        run: cargo +1.85.0 check -p serea-storage --release --locked --offline
+        run: cargo +1.89.0 check -p serea-storage --release --locked --offline
 
       - name: Verify optimized feature exclusion
         shell: pwsh
         run: |
-          cargo +1.85.0 check -p serea-storage --release --features p7-gate-c --locked --offline
+          cargo +1.89.0 check -p serea-storage --release --features p7-gate-c --locked --offline
           if ($LASTEXITCODE -eq 0) { throw "optimized p7-gate-c unexpectedly compiled" }
           Write-Host "optimized p7-gate-c was correctly rejected"
           exit 0
@@ -206,7 +206,7 @@ jobs:
         run: python3 tools/verify_pr_merge_result.py
 
   linux-msrv:
-    name: Linux MSRV 1.85.0
+    name: Linux MSRV 1.89.0
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -222,32 +222,32 @@ jobs:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - name: Install exact MSRV
-        run: rustup toolchain install 1.85.0 --profile minimal --component clippy
+        run: rustup toolchain install 1.89.0 --profile minimal --component clippy
 
       - name: Verify exact compiler and Cargo versions
         run: |
-          rustc_version="$(rustup run 1.85.0 rustc --version)"
+          rustc_version="$(rustup run 1.89.0 rustc --version)"
           printf '%s\n' "$rustc_version"
           case "$rustc_version" in
-            "rustc 1.85.0 "*) ;;
-            *) echo "Expected rustc 1.85.0 exactly" >&2; exit 1 ;;
+            "rustc 1.89.0 "*) ;;
+            *) echo "Expected rustc 1.89.0 exactly" >&2; exit 1 ;;
           esac
-          rustup run 1.85.0 cargo --version
+          rustup run 1.89.0 cargo --version
 
       - name: Fetch locked dependencies
-        run: cargo +1.85.0 fetch --locked
+        run: cargo +1.89.0 fetch --locked
 
       - name: Check workspace (all targets and features)
-        run: cargo +1.85.0 check --workspace --all-targets --all-features --locked --offline
+        run: cargo +1.89.0 check --workspace --all-targets --all-features --locked --offline
 
       - name: Test all targets
-        run: cargo +1.85.0 test --workspace --all-targets --locked --offline
+        run: cargo +1.89.0 test --workspace --all-targets --locked --offline
 
       - name: Test all features
-        run: cargo +1.85.0 test --workspace --all-features --locked --offline
+        run: cargo +1.89.0 test --workspace --all-features --locked --offline
 
       - name: Clippy (deny warnings)
-        run: cargo +1.85.0 clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
+        run: cargo +1.89.0 clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
 
   macos-intel:
     name: macOS Intel x86_64

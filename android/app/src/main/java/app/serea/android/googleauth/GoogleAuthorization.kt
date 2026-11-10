@@ -185,6 +185,10 @@ fun interface GoogleAuthorizationStatusPort {
 
 enum class GoogleAuthorizationMode { PLAY_SERVICES, MOCK_ONLY }
 
+/** Public/default variants stay OAuth-off even if a caller passes an enabling constructor flag. */
+internal fun ownerPrivateGoogleOAuthEnabled(requestedByLocalPrivateBuild: Boolean): Boolean =
+    requestedByLocalPrivateBuild && app.serea.android.BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED
+
 interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthorizationStatusPort {
     val mode: GoogleAuthorizationMode
     /**
@@ -313,6 +317,8 @@ class PlayServicesGoogleAuthorizationGateway(
     private val realOAuthEnabled: Boolean = false,
     private val selectedAccount: Account? = null,
 ) : GoogleAuthorizationGateway {
+    /** A constructor flag alone cannot enable OAuth in a public/default build variant. */
+    internal val realOAuthEnabledForBuild: Boolean = ownerPrivateGoogleOAuthEnabled(realOAuthEnabled)
     override val mode = GoogleAuthorizationMode.PLAY_SERVICES
     override val authorizationSessionId: String? = selectedAccount?.let { java.util.UUID.randomUUID().toString() }
     private val consentLock = Any()
@@ -329,7 +335,7 @@ class PlayServicesGoogleAuthorizationGateway(
         grantInvalidationObservers.observe(listener)
 
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
-        if (!realOAuthEnabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
+        if (!realOAuthEnabledForBuild) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return TokenSupplyResult.Unavailable(AuthorizationFailure.ACCOUNT_REQUIRED)
         if (synchronized(consentLock) { !grantState.isEnabledInApp(feature) }) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
         if (scopes.isEmpty() || !feature.scopes.containsAll(scopes)) return TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
@@ -355,7 +361,7 @@ class PlayServicesGoogleAuthorizationGateway(
 
     /** Call from a user initiated foreground action. ConsentRequired must be launched by the UI. */
     suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
-        if (!realOAuthEnabled) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
+        if (!realOAuthEnabledForBuild) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_REQUIRED)
         if (scopes.isEmpty()) return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
         synchronized(consentLock) {
@@ -410,7 +416,7 @@ class PlayServicesGoogleAuthorizationGateway(
     /** Complete a foreground consent flow using the Activity Result Intent. */
     @MainThread
     fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome {
-        if (!realOAuthEnabled) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
+        if (!realOAuthEnabledForBuild) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_REQUIRED)
         val pending = synchronized(consentLock) {
             consentRequests.complete(requestId)
@@ -452,7 +458,7 @@ class PlayServicesGoogleAuthorizationGateway(
 
     override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
         val service = serviceState()
-        if (!realOAuthEnabled) return AuthorizationStatus(
+        if (!realOAuthEnabledForBuild) return AuthorizationStatus(
             service,
             scopes.associateWith { ScopePermission.NOT_REQUESTED },
             AuthorizationFailure.NOT_CONFIGURED,
@@ -479,7 +485,7 @@ class PlayServicesGoogleAuthorizationGateway(
 
     /** Google revokeAccess revokes the app's whole grant, including other requested services. */
     suspend fun revokeGoogleGrant(): AuthorizationFailure? {
-        if (!realOAuthEnabled) return AuthorizationFailure.NOT_CONFIGURED
+        if (!realOAuthEnabledForBuild) return AuthorizationFailure.NOT_CONFIGURED
         if (selectedAccount == null) return AuthorizationFailure.ACCOUNT_REQUIRED
         val mayRevoke = synchronized(consentLock) {
             if (consentRequests.peek() != null || !grantState.tryBeginAuthorizationOperation()) false

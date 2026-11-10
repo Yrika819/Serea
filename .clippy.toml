@@ -8,7 +8,7 @@
 # no P1 test can quietly become wall-clock dependent and no identifier can be
 # minted from unseeded randomness.
 
-msrv = "1.85"
+msrv = "1.89"
 
 disallowed-methods = [
     { path = "std::time::SystemTime::now", reason = "inject a Clock; Model Protocol §10 determinism" },

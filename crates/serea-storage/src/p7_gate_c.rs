@@ -1256,10 +1256,10 @@ impl LedgerFileGuard {
         let mut lock_name = ledger_path.as_os_str().to_os_string();
         lock_name.push(".lock");
         let lock_path = PathBuf::from(lock_name);
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(LedgerError::Invalid);
-            }
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(LedgerError::Invalid);
         }
         let lock_file = OpenOptions::new()
             .create(true)

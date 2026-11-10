@@ -448,10 +448,10 @@ fn validate_structure(root: &Value, uri: &str) -> Result<(), CatalogError> {
                 if map.contains_key("patternProperties") {
                     return Err(CatalogError::PatternProperties);
                 }
-                if let Some(props) = map.get("properties").and_then(Value::as_object) {
-                    if props.len() > MAX_SCHEMA_PROPERTIES {
-                        return Err(CatalogError::TooManyProperties);
-                    }
+                if let Some(props) = map.get("properties").and_then(Value::as_object)
+                    && props.len() > MAX_SCHEMA_PROPERTIES
+                {
+                    return Err(CatalogError::TooManyProperties);
                 }
                 if looks_like_schema(node) {
                     if can_produce_object(node)
@@ -757,10 +757,11 @@ fn pairwise_disjoint(
         }
     }
     // common required discriminator property with pairwise distinct const
-    if let (Some(pa), Some(pb)) = (discriminator_const(a), discriminator_const(b)) {
-        if pa.0 == pb.0 && pa.1 != pb.1 {
-            return true;
-        }
+    if let (Some(pa), Some(pb)) = (discriminator_const(a), discriminator_const(b))
+        && pa.0 == pb.0
+        && pa.1 != pb.1
+    {
+        return true;
     }
     // two distinct consts on the same property with distinct values
     false

@@ -720,7 +720,7 @@ printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
 google_demo_ui_result=NOT_RUN
 google_demo_ui_cleanup_result=NOT_RUN
 if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
-  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GoogleCalendarHandoffRevocationUiTest,app.serea.android.GmailHtmlInertUiSecurityTest,app.serea.android.GoogleTrustedHandoffUiTest,app.serea.android.GoogleTrustedHandoffShellTest'
+  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GoogleCalendarHandoffRevocationUiTest,app.serea.android.GmailHtmlInertUiSecurityTest,app.serea.android.GoogleTrustedHandoffUiTest,app.serea.android.GoogleTrustedHandoffShellTest,app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest,app.serea.android.googleauth.PrivateGooglePublicVariantIsolationTest'
   google_demo_ui_tests=$(cat <<'TESTS'
 app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch
 app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection
@@ -738,6 +738,11 @@ app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClose
 app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
 app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
 app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#nestedActivityResultReturnsLaunchIdentityAndOriginalPayload
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#relayRecreationDoesNotRelaunchOrLoseTheInFlightIdentity
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#missingRelayIdentityFailsClosed
+app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#accountPickerContractCarriesPerLaunchTokenAcrossSuccessAndCancellation
+app.serea.android.googleauth.PrivateGooglePublicVariantIsolationTest#publicDebugManifestDoesNotRegisterPrivateConsentOrAccountRelays
 TESTS
 )
   google_demo_ui_cleanup_log="$evidence/google-demo-ui-cleanup.log"

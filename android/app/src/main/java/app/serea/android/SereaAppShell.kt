@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -50,6 +51,8 @@ import app.serea.android.handoff.HandoffDestination
 import app.serea.android.handoff.HandoffAuthorizationState
 import app.serea.android.handoff.trustedHandoffSource
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
+import app.serea.android.googleauth.PrivateGoogleAuthorizationViewModel
+import app.serea.android.googleauth.PrivateGoogleAuthorizationViewModelFactory
 import java.time.Clock
 import java.time.ZoneId
 
@@ -76,6 +79,14 @@ internal fun SereaAppShell(
     val chatState by chatViewModel.state.collectAsState()
     val googleAuthorizationDemoViewModel: GoogleAuthorizationDemoViewModel = viewModel()
     val googleDemoCalendarSession by googleAuthorizationDemoViewModel.calendarDemoSession.collectAsState()
+    val privateGoogleAuthorizationViewModel: PrivateGoogleAuthorizationViewModel? =
+        if (BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED) {
+            viewModel(factory = PrivateGoogleAuthorizationViewModelFactory(LocalContext.current))
+        } else null
+    val emptyPrivateCalendarSession = remember { kotlinx.coroutines.flow.MutableStateFlow<CalendarProviderSession?>(null) }
+    val privateCalendarSession by (privateGoogleAuthorizationViewModel?.calendarSession ?: emptyPrivateCalendarSession)
+        .collectAsState()
+    val activeAuthorizationCalendarSession = privateCalendarSession ?: googleDemoCalendarSession
     DisposableEffect(activeProviders) {
         onDispose { if (providers == null) activeProviders.close() }
     }
@@ -85,8 +96,8 @@ internal fun SereaAppShell(
     val destination = SereaNavigationState.restore(destinationName, backStackNames).current
     val canGoBack = backStackNames.isNotEmpty()
     var showGoogleDemoCalendar by remember { mutableStateOf(false) }
-    LaunchedEffect(googleDemoCalendarSession) {
-        if (googleDemoCalendarSession == null) showGoogleDemoCalendar = false
+    LaunchedEffect(activeAuthorizationCalendarSession) {
+        if (activeAuthorizationCalendarSession == null) showGoogleDemoCalendar = false
     }
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
     val saveableStateHolder = rememberSaveableStateHolder()
@@ -244,8 +255,8 @@ internal fun SereaAppShell(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 saveableStateHolder.SaveableStateProvider(destination.name) {
-                    if (showGoogleDemoCalendar && googleDemoCalendarSession != null) {
-                        val demoSession = checkNotNull(googleDemoCalendarSession)
+                    if (showGoogleDemoCalendar && activeAuthorizationCalendarSession != null) {
+                        val demoSession = checkNotNull(activeAuthorizationCalendarSession)
                         val demoCoordinator = remember(demoSession) {
                             GoogleTrustedHandoffCoordinator(demoSession.trustedHandoffSource())
                         }
@@ -272,8 +283,11 @@ internal fun SereaAppShell(
                             onOpenTasks = { navigate(SereaDestination.TASKS) },
                             onOpenSettings = { navigate(SereaDestination.SETTINGS) },
                             googleAuthorizationDemoViewModel = googleAuthorizationDemoViewModel,
+                            privateGoogleAuthorizationViewModel = privateGoogleAuthorizationViewModel,
                             onOpenGoogleCalendarDemo = { session ->
-                                if (googleAuthorizationDemoViewModel.calendarDemoSession.value === session) {
+                                if (privateGoogleAuthorizationViewModel?.calendarSession?.value === session ||
+                                    googleAuthorizationDemoViewModel.calendarDemoSession.value === session
+                                ) {
                                     showGoogleDemoCalendar = true
                                 }
                             },
@@ -303,8 +317,11 @@ internal fun SereaAppShell(
                             settingsDestination = true,
                             onSettingsClosed = ::goBack,
                             googleAuthorizationDemoViewModel = googleAuthorizationDemoViewModel,
+                            privateGoogleAuthorizationViewModel = privateGoogleAuthorizationViewModel,
                             onOpenGoogleCalendarDemo = { session ->
-                                if (googleAuthorizationDemoViewModel.calendarDemoSession.value === session) {
+                                if (privateGoogleAuthorizationViewModel?.calendarSession?.value === session ||
+                                    googleAuthorizationDemoViewModel.calendarDemoSession.value === session
+                                ) {
                                     showGoogleDemoCalendar = true
                                 }
                             },

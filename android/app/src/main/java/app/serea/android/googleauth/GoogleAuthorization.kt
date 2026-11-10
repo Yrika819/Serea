@@ -456,9 +456,10 @@ internal class PlayServicesGoogleAuthorizationGateway(
     /** Explicitly discard a cancelled/failed foreground consent flow. */
     override fun cancelConsentRequest(requestId: String): Boolean = consentRequests.cancel(requestId)
 
-    override fun disableInApp(feature: GoogleFeature) = synchronized(consentLock) {
+    override fun disableInApp(feature: GoogleFeature): Unit = synchronized(consentLock) {
         grantState.disableInApp(feature)
         consentRequests.cancelFeature(feature)
+        Unit
     }
     fun enableInApp(feature: GoogleFeature) = synchronized(consentLock) { grantState.enableInApp(feature) }
     override fun isEnabledInApp(feature: GoogleFeature): Boolean = synchronized(consentLock) {

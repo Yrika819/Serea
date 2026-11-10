@@ -81,7 +81,7 @@ class PrivateGoogleConsentRelayInstrumentationTest {
         // lifecycle tracker remains valid while we exercise the in-flight nested result.
         val scenario = ActivityScenario.launch<PrivateGoogleConsentRelayResultHarnessActivity>(launch)
         try {
-            assertTrue(PrivateGoogleConsentSenderTestActivity.awaitLaunch())
+            assertTrue(PrivateGoogleConsentSenderTestActivity.awaitResumed())
             // The isolated sender is translucent, so the relay remains STARTED (paused with its
             // window attached) while the nested sender is foreground. API 26 crashes in
             // ActivityThread.handleDestroyActivity if Activity.recreate() is requested after an
@@ -91,6 +91,7 @@ class PrivateGoogleConsentRelayInstrumentationTest {
                 Lifecycle.State.STARTED,
                 PrivateGoogleConsentRelayTestActivity.currentLifecycleState(),
             )
+            assertTrue(PrivateGoogleConsentRelayTestActivity.isCurrentWindowAttached())
             instrumentation.runOnMainSync {
                 PrivateGoogleConsentRelayTestActivity.recreateCurrent()
             }

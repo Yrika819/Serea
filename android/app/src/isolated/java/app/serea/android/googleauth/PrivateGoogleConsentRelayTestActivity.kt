@@ -32,10 +32,15 @@ internal class PrivateGoogleConsentRelayTestActivity : PrivateGoogleConsentRelay
 
         fun currentLifecycleState(): Lifecycle.State? = current?.lifecycle?.currentState
 
+        fun isCurrentWindowAttached(): Boolean = current?.window?.decorView?.isAttachedToWindow == true
+
         fun recreateCurrent() {
             val activity = checkNotNull(current)
             check(activity.lifecycle.currentState == Lifecycle.State.STARTED) {
                 "Consent Relay recreation requires an attached, started window"
+            }
+            check(activity.window.decorView.isAttachedToWindow) {
+                "Consent Relay recreation requires its decor view to remain attached"
             }
             activity.recreate()
         }
@@ -49,7 +54,6 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
         instance = this
         launchCount++
         if (delayedResult) {
-            launched.countDown()
             return
         }
         finishWith(417, "original-google-result")
@@ -57,7 +61,7 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (delayedResult) launched.countDown()
+        if (delayedResult) resumed.countDown()
     }
 
     private fun finishWith(resultCode: Int, payload: String) {
@@ -68,18 +72,18 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
     companion object {
         const val EXTRA_PAYLOAD = "relay-test-payload"
         @Volatile private var delayedResult = false
-        private var launched = CountDownLatch(0)
+        private var resumed = CountDownLatch(0)
         @Volatile private var instance: PrivateGoogleConsentSenderTestActivity? = null
         @Volatile private var launchCount = 0
 
         fun prepareDelayedResult() {
             delayedResult = true
-            launched = CountDownLatch(1)
+            resumed = CountDownLatch(1)
             instance = null
             launchCount = 0
         }
 
-        fun awaitLaunch(): Boolean = launched.await(10, TimeUnit.SECONDS)
+        fun awaitResumed(): Boolean = resumed.await(10, TimeUnit.SECONDS)
         fun launchCount(): Int = launchCount
 
         fun completeDelayedResult(instrumentation: android.app.Instrumentation) {

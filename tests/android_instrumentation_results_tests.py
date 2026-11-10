@@ -117,7 +117,7 @@ class InstrumentationResultTests(unittest.TestCase):
             )
             self.assertNotEqual(0, wrong_case.returncode)
 
-    def test_103_required_plus_two_additional_testcases_are_verified_by_identity(self) -> None:
+    def test_required_additional_and_non_required_testcases_are_verified_by_identity(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         required_manifest = repo / "tools/android-instrumentation-required-tests.txt"
         additional_manifest = repo / "tools/android-instrumentation-additional-tests.txt"
@@ -141,7 +141,7 @@ class InstrumentationResultTests(unittest.TestCase):
         self.assertEqual(2, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
         # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
-        self.assertEqual(24, len(non_required_tests))
+        self.assertEqual(29, len(non_required_tests))
         self.assertFalse(non_required_tests & (required_tests | additional_tests))
         required: dict[str, int] = {}
         for class_name, _ in required_tests:

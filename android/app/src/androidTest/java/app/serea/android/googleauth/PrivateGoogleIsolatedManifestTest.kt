@@ -9,9 +9,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class PrivateGooglePublicVariantIsolationTest {
+class PrivateGoogleIsolatedManifestTest {
     @Test
-    fun publicDebugManifestDoesNotRegisterPrivateConsentOrAccountRelays() {
+    fun isolatedManifestDoesNotRegisterPrivateProductRelayActivities() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         listOf(
             "app.serea.android.googleauth.PrivateGoogleConsentRelayActivity",

@@ -509,8 +509,9 @@ app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#accoun
 app.serea.android.googleauth.PrivateGoogleIsolatedManifestTest#isolatedManifestDoesNotRegisterPrivateProductRelayActivities
 TESTS
 )
+          consent_companion_filter="$(printf '%s\n' "$consent_companion_tests" | paste -sd, -)"
           run_diagnostic_stage consent-relay-companion-api26 \
-            app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest,app.serea.android.googleauth.PrivateGoogleIsolatedManifestTest \
+            "$consent_companion_filter" \
             1200 4 '' "$consent_companion_tests" || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then

@@ -901,9 +901,21 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         isolated_consent_stage = campaign.index('run_diagnostic_stage consent-relay-lifecycle-api26')
         consent_companion_stage = campaign.index('run_diagnostic_stage consent-relay-companion-api26')
         api26_focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused', isolated_consent_stage)
+        companion_block = campaign.split("consent_companion_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
+        companion_identities = {line.strip() for line in companion_block.splitlines() if line.strip()}
         class_stage = campaign.index('run_diagnostic_stage calendar-class')
         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
         full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+        self.assertEqual(4, len(companion_identities))
+        self.assertNotIn(
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#relayRecreationDoesNotRelaunchOrLoseTheInFlightIdentity",
+            companion_identities,
+        )
+        self.assertIn('consent_companion_filter="$(printf', campaign)
+        self.assertRegex(
+            campaign,
+            r'run_diagnostic_stage consent-relay-companion-api26 \\\s+"\$consent_companion_filter" \\\s+1200 4',
+        )
         self.assertLess(isolated_consent_stage, consent_companion_stage)
         self.assertLess(consent_companion_stage, api26_focused_stage)
         self.assertLess(focused_stage, class_stage)

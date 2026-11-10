@@ -92,7 +92,7 @@ class PrivateGoogleConsentRelayInstrumentationTest {
             PrivateGoogleConsentSenderTestActivity.completeDelayedResult(instrumentation)
             assertTrue(PrivateGoogleConsentRelayResultHarnessActivity.awaitResult())
             val outerResult = PrivateGoogleConsentRelayResultHarnessActivity.result()
-            val result = contract.parseResult(outerResult.resultCode, outerResult.resultData)
+            val result = contract.parseResult(outerResult.resultCode, outerResult.data)
             assertEquals(identity, result.identity)
             assertEquals(418, result.resultCode)
             assertEquals(1, PrivateGoogleConsentSenderTestActivity.launchCount())

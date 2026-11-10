@@ -10,17 +10,26 @@ import java.util.concurrent.TimeUnit
 internal class PrivateGoogleConsentRelayTestActivity : PrivateGoogleConsentRelayBaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = this
         created.countDown()
+    }
+
+    override fun onDestroy() {
+        if (current === this) current = null
+        super.onDestroy()
     }
 
     companion object {
         @Volatile private var created = CountDownLatch(2)
+        @Volatile private var current: PrivateGoogleConsentRelayTestActivity? = null
 
         fun prepareRecreation() {
             created = CountDownLatch(2)
         }
 
         fun awaitRecreation(): Boolean = created.await(10, TimeUnit.SECONDS)
+
+        fun recreateCurrent() = checkNotNull(current).recreate()
     }
 }
 

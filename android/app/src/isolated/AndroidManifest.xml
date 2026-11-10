@@ -13,6 +13,9 @@
             android:name="app.serea.android.googleauth.PrivateGoogleConsentRelayTestActivity"
             android:exported="false" />
         <activity
+            android:name="app.serea.android.googleauth.PrivateGoogleConsentRelayResultHarnessActivity"
+            android:exported="false" />
+        <activity
             android:name="app.serea.android.googleauth.PrivateGoogleConsentSenderTestActivity"
             android:exported="false" />
         <receiver

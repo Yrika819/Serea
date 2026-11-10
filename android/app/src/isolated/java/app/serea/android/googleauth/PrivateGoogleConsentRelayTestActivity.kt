@@ -3,6 +3,7 @@ package app.serea.android.googleauth
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import androidx.lifecycle.Lifecycle
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -29,7 +30,15 @@ internal class PrivateGoogleConsentRelayTestActivity : PrivateGoogleConsentRelay
 
         fun awaitRecreation(): Boolean = created.await(10, TimeUnit.SECONDS)
 
-        fun recreateCurrent() = checkNotNull(current).recreate()
+        fun currentLifecycleState(): Lifecycle.State? = current?.lifecycle?.currentState
+
+        fun recreateCurrent() {
+            val activity = checkNotNull(current)
+            check(activity.lifecycle.currentState == Lifecycle.State.STARTED) {
+                "Consent Relay recreation requires an attached, started window"
+            }
+            activity.recreate()
+        }
     }
 }
 
@@ -44,6 +53,11 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
             return
         }
         finishWith(417, "original-google-result")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (delayedResult) launched.countDown()
     }
 
     private fun finishWith(resultCode: Int, payload: String) {

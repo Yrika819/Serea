@@ -3,6 +3,7 @@ package app.serea.android.googleauth
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -81,9 +82,15 @@ class PrivateGoogleConsentRelayInstrumentationTest {
         val scenario = ActivityScenario.launch<PrivateGoogleConsentRelayResultHarnessActivity>(launch)
         try {
             assertTrue(PrivateGoogleConsentSenderTestActivity.awaitLaunch())
-            // The nested sender is foreground, so ActivityScenario.recreate() would wait forever
-            // for the relay to resume. Request the same Activity recreation directly and await
-            // the replacement's onCreate while the sender remains in flight.
+            // The isolated sender is translucent, so the relay remains STARTED (paused with its
+            // window attached) while the nested sender is foreground. API 26 crashes in
+            // ActivityThread.handleDestroyActivity if Activity.recreate() is requested after an
+            // opaque sender has already moved the relay to STOPPED and detached its decor view.
+            // Recreate only from the valid STARTED state and keep the sender/result pending.
+            assertEquals(
+                Lifecycle.State.STARTED,
+                PrivateGoogleConsentRelayTestActivity.currentLifecycleState(),
+            )
             instrumentation.runOnMainSync {
                 PrivateGoogleConsentRelayTestActivity.recreateCurrent()
             }

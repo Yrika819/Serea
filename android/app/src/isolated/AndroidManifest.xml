@@ -17,7 +17,8 @@
             android:exported="false" />
         <activity
             android:name="app.serea.android.googleauth.PrivateGoogleConsentSenderTestActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <receiver
             android:name=".ProcessDeathHarnessReceiver"
             android:exported="true"

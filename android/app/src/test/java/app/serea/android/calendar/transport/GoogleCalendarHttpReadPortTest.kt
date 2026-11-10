@@ -156,6 +156,44 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun invalidTokenLeaseAndCancelledAuthorizationDoNotDispatchHttp() = runBlocking {
+        val invalidLease = CalendarAccessToken(
+            AccessTokenLease(
+                token = "fixture-invalid-token",
+                grantedScopes = setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+                expiresAtElapsedRealtimeMillis = null,
+                validityCheck = { false },
+            ),
+        )
+        try {
+            port(tokenProvider = { invalidLease }).listEventsPage(CalendarId("primary"), range())
+            fail("Expected invalid token lease to be rejected")
+        } catch (failure: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code)
+        }
+        assertEquals(0, server.requestCount)
+
+        var tokenCalls = 0
+        val cancelledAuthorization = object : CalendarAuthorizationPort {
+            override suspend fun status(): CalendarAuthorizationStatus =
+                throw kotlinx.coroutines.CancellationException("fixture authorization cancelled before HTTP")
+        }
+        val cancelledPort = GoogleCalendarHttpReadPort(
+            cancelledAuthorization,
+            CalendarAccessTokenPort { tokenCalls++; freshToken() },
+            OkHttpClient(),
+            server.url("/calendar/v3/"),
+        )
+        try {
+            cancelledPort.listEventsPage(CalendarId("primary"), range())
+            fail("Expected authorization cancellation")
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            // Cancellation must propagate without acquiring a token or reaching HTTP.
+        }
+        assertEquals(0, tokenCalls)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun accountSwitchDuringTokenLeaseAcquisitionRejectsBeforeHttpDispatch() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"id":"fixture+calendar@example.test","timeZone":"UTC","accessRole":"reader"}"""))
         var selectedSession = "calendar-session-before-switch"

@@ -119,7 +119,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     private suspend fun requireAuthorized(scope: String) {
-        val status = authorization.status()
+        val status = authorization.status(setOf(scope))
         if (status.state != CalendarAuthorizationState.AUTHORIZED) {
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
         }
@@ -127,7 +127,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     private suspend fun get(url: HttpUrl, scope: String): String {
-        val status = authorization.status()
+        val status = authorization.status(setOf(scope))
         if (status.state != CalendarAuthorizationState.AUTHORIZED) {
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
         }
@@ -272,7 +272,10 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     private suspend fun calendarTimeZoneIfAlreadyAuthorized(calendarId: CalendarId): ZoneId? {
-        val status = authorization.status()
+        // The primary alias is intentionally event-scope-only. Never expand it into a
+        // CalendarList read just because the Owner happens to have that additional grant.
+        if (calendarId.value == PRIMARY_CALENDAR_ID) return null
+        val status = authorization.status(setOf(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
         if (status.state != CalendarAuthorizationState.AUTHORIZED ||
             CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY in status.missingScopes
         ) return null
@@ -298,6 +301,7 @@ class GoogleCalendarHttpReadPort internal constructor(
 
     companion object {
         private const val GOOGLE_API_HOST = "www.googleapis.com"
+        private const val PRIMARY_CALENDAR_ID = "primary"
         private val TEST_HOSTS = setOf("127.0.0.1", "localhost", "[::1]")
         private val GOOGLE_API_BASE = "https://www.googleapis.com/calendar/v3/".toHttpUrl()
         private const val MAX_RESPONSE_BYTES = GoogleCalendarEventParser.MAX_PAYLOAD_BYTES

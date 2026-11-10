@@ -36,12 +36,17 @@ class CalendarOAuthMockE2ETest {
 
         private val grantedScopes = linkedSetOf<GoogleScope>()
         val requestedScopeSets = mutableListOf<Set<GoogleScope>>()
+        val statusScopeSets = mutableListOf<Set<GoogleScope>>()
         var tokenRequests = 0
             private set
 
         /** Represents a local test-fixture user action; it never calls Google's consent UI. */
         fun approveSyntheticCalendarEventsScope() {
             grantedScopes += GoogleScope.CALENDAR_EVENTS_READ_ONLY
+        }
+
+        fun approveSyntheticCalendarListScope() {
+            grantedScopes += GoogleScope.CALENDAR_LIST_READ_ONLY
         }
 
         fun switchSyntheticAccount() {
@@ -72,12 +77,15 @@ class CalendarOAuthMockE2ETest {
             )
         }
 
-        override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
-            service = GoogleServiceState.AVAILABLE,
-            permissions = scopes.associateWith { scope ->
-                if (scope in grantedScopes) ScopePermission.GRANTED else ScopePermission.NEEDS_CONSENT
-            },
-        )
+        override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+            statusScopeSets += scopes.toSet()
+            return AuthorizationStatus(
+                service = GoogleServiceState.AVAILABLE,
+                permissions = scopes.associateWith { scope ->
+                    if (scope in grantedScopes) ScopePermission.GRANTED else ScopePermission.NEEDS_CONSENT
+                },
+            )
+        }
     }
 
     @Test fun syntheticConsentAllowsOnlyCalendarReadAndAccountSwitchStopsFurtherDispatch() = runBlocking {
@@ -87,7 +95,7 @@ class CalendarOAuthMockE2ETest {
             client = OkHttpClient(),
             baseUrl = server.url("/calendar/v3/"),
         )
-        val calendarId = CalendarId("primary-fixture")
+        val calendarId = CalendarId("primary")
         val range = CalendarDateRange(
             Instant.parse("2026-10-28T00:00:00Z"),
             Instant.parse("2026-10-29T00:00:00Z"),
@@ -123,6 +131,7 @@ class CalendarOAuthMockE2ETest {
         assertEquals("Test-only event detail", detail.description)
         assertEquals(CalendarEventSource.GOOGLE_CALENDAR_API, detail.source)
         assertEquals(2, gateway.tokenRequests)
+        assertTrue(gateway.statusScopeSets.all { it == setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY) })
         assertEquals(
             listOf(
                 setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
@@ -138,6 +147,7 @@ class CalendarOAuthMockE2ETest {
             request.requestUrl!!.pathSegments,
         )
         assertEquals("localhost", request.requestUrl!!.host)
+        assertEquals("primary", request.requestUrl!!.pathSegments[3])
         assertEquals("Bearer synthetic-never-valid-token", request.getHeader("Authorization"))
         assertFalse(request.requestLine.contains("gmail"))
         val detailRequest = server.takeRequest()
@@ -154,5 +164,42 @@ class CalendarOAuthMockE2ETest {
         assertTrue(staleAccountRead is CalendarReadFailure)
         assertEquals(2, server.requestCount)
         assertEquals(2, gateway.tokenRequests)
+    }
+
+    @Test fun primaryAliasNeverUsesCalendarListEvenWhenThatScopeIsAlreadyGranted() = runBlocking {
+        val gateway = SyntheticCalendarAuthorization()
+        gateway.approveSyntheticCalendarEventsScope()
+        gateway.approveSyntheticCalendarListScope()
+        val session = CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
+            gateway = gateway,
+            client = OkHttpClient(),
+            baseUrl = server.url("/calendar/v3/"),
+        )
+        val bothScopes = session.status(
+            setOf(
+                app.serea.android.calendar.CalendarPermissionPolicy.EVENTS_READ_ONLY,
+                app.serea.android.calendar.CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY,
+            ),
+        )
+        assertEquals(emptySet<String>(), bothScopes.missingScopes)
+        gateway.statusScopeSets.clear()
+        server.enqueue(MockResponse().setBody(
+            """{"items":[{"id":"all-day","summary":"Synthetic holiday","status":"confirmed","start":{"date":"2026-10-28"},"end":{"date":"2026-10-29"}}]}""",
+        ))
+
+        val result = runCatching {
+            session.listEventsPage(
+                CalendarId("primary"),
+                CalendarDateRange(Instant.parse("2026-10-28T00:00:00Z"), Instant.parse("2026-10-29T00:00:00Z")),
+            )
+        }
+        assertTrue(result.exceptionOrNull() is CalendarReadFailure)
+        assertEquals(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, (result.exceptionOrNull() as CalendarReadFailure).code)
+        assertEquals(1, server.requestCount)
+        assertTrue(gateway.statusScopeSets.all { it == setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY) })
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals(listOf("calendar", "v3", "calendars", "primary", "events"), request.requestUrl!!.pathSegments)
+        session.close()
     }
 }

@@ -107,6 +107,10 @@ class CalendarProviderSession internal constructor(
         authorizationDelegate.status()
     }
 
+    override suspend fun status(requiredScopes: Set<String>): CalendarAuthorizationStatus = withActiveSession {
+        authorizationDelegate.status(requiredScopes)
+    }
+
     override suspend fun listCalendars(): List<CalendarDescriptor> = withActiveSession { delegate.listCalendars() }
     override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor = withActiveSession { delegate.getCalendar(calendarId) }
     override suspend fun getEvent(key: CalendarEventKey): CalendarEvent = withActiveSession { delegate.getEvent(key) }

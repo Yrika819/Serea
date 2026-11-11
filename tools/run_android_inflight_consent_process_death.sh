@@ -14,6 +14,7 @@ test_apk="app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.ap
 evidence="${SEREA_CONSENT_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/inflight-consent-process-death}"
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
+printf 'none: synthetic sender is launched into its own task without startActivityForResult; post-death delivery is not applicable\n' > "$evidence/activity-result-route.txt"
 adb_cmd=(adb -s "$ANDROID_SERIAL")
 
 fail() {
@@ -110,26 +111,20 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=42:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not reject stale A consent and picker results'
-# Return to the original sender Activity in A's task. CLEAR_TOP plus singleTop delivers
-# ACTION_COMPLETE to the existing instance, preserving its ActivityResult link to the relay.
+# Return to the existing external sender Activity and complete the synthetic UI. It has no
+# ActivityResult route to Serea; the host separately injects A's old identity into B's ViewModel.
 "${adb_cmd[@]}" shell am start -W -f 0x04000000 -n "$sender_component" \
   --es token "$SEREA_CONSENT_DEATH_RUN_ID" --es action complete > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not complete external Consent A after B started'
 grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityManager did not reactivate the external Consent sender'
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
-  if grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then
-    if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi
-  fi
+  grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" && break
   sleep 1
 done
 sender_launch_count="$(grep -Fc "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/result-delivery-logcat.txt" || true)"
 [[ "$sender_launch_count" == 1 ]] || fail "synthetic Consent sender launched $sender_launch_count times"
 grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
-if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt"; then
-  printf 'delivered\n' > "$evidence/activity-result-delivery.txt"
-else
-  printf 'not-delivered-within-30s-after-external-sender-completion\n' > "$evidence/activity-result-delivery.txt"
-fi
+printf 'not-applicable-no-ActivityResult-route; stale-A-identity-injected-into-B-ViewModel-and-rejected\n' > "$evidence/activity-result-delivery.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-restart.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-restart.txt"
 
@@ -140,5 +135,5 @@ target_pid_after_restart="$(pid_for "$package")"
 [[ -n "$target_pid_after_restart" && "$target_pid_after_restart" != "$target_pid_before" ]] || fail 'target process did not return with a new PID'
 printf 'target_pid_after_restart=%s\n' "$target_pid_after_restart" >> "$evidence/provenance.txt"
 printf 'PASS\n' > "$evidence/status.txt"
-printf 'PASS: API %s OS process death while synthetic Consent A was foreground; ActivityResult=%s; stale A rejected against B. Evidence: %s\n' \
-  "$sdk" "$(cat "$evidence/activity-result-delivery.txt")" "$evidence"
+printf 'PASS: API %s OS process death while synthetic Consent A was foreground; ActivityResult=not-applicable-no-route; stale A replay rejected against B. Evidence: %s\n' \
+  "$sdk" "$evidence"

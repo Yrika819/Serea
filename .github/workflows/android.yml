@@ -202,6 +202,8 @@ jobs:
       - name: Verify exact checkout commit
         shell: bash
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Test Android CI host preflight and APT fallback helpers
+        run: python3 -m unittest tools.test_android_ci_host -v
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -341,6 +343,10 @@ jobs:
       - name: Verify exact checkout commit
         shell: bash
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Initialize Android host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api26
+        run: python3 tools/android_ci_host.py initialize --api 26
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -349,6 +355,10 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
+      - name: Host Preflight API 26
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api26
+        run: python3 tools/android_ci_host.py preflight --api 26
       - name: Download build APKs from this workflow run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -380,11 +390,16 @@ jobs:
               "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             cat "$RUNNER_TEMP/api26-verified-build-provenance.txt"
           } > "$RUNNER_TEMP/api26-build-provenance.txt"
-      - name: Install API 26 emulator image and host runtime
-        run: |
-          sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86' 'build-tools;35.0.0' emulator
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
+      - name: APT Runtime Preparation API 26
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api26
+        run: python3 tools/android_ci_host.py install-runtime --api 26
+      - name: Install API 26 emulator image
+        run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86' 'build-tools;35.0.0'
+      - name: Record API 26 system image provenance
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api26
+        run: python3 tools/android_ci_host.py record-image --api 26 --image 'system-images;android-26;google_apis;x86'
       - name: Verify runner KVM and prepare disposable emulator
         run: |
           set -euo pipefail
@@ -437,6 +452,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: android/app/build/outputs/androidTest-results/api26/
+      - name: Upload API 26 host preflight and APT diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-host-api26-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-android-host-api26/
 
   android-emulator-api35:
     name: Android Formal API 35
@@ -453,6 +476,10 @@ jobs:
       - name: Verify exact checkout commit
         shell: bash
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Initialize Android host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api35
+        run: python3 tools/android_ci_host.py initialize --api 35
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -461,6 +488,10 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
+      - name: Host Preflight API 35
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api35
+        run: python3 tools/android_ci_host.py preflight --api 35
       - name: Download build APKs from this workflow run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -492,11 +523,16 @@ jobs:
               "$EXPECTED_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             cat "$RUNNER_TEMP/api35-verified-build-provenance.txt"
           } > "$RUNNER_TEMP/api35-build-provenance.txt"
-      - name: Install API 35 emulator image and host runtime
-        run: |
-          sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0' emulator
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
+      - name: APT Runtime Preparation API 35
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api35
+        run: python3 tools/android_ci_host.py install-runtime --api 35
+      - name: Install API 35 emulator image
+        run: sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64' 'build-tools;35.0.0'
+      - name: Record API 35 system image provenance
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-api35
+        run: python3 tools/android_ci_host.py record-image --api 35 --image 'system-images;android-35;google_apis;x86_64'
       - name: Verify runner KVM and prepare disposable emulator
         run: |
           set -euo pipefail
@@ -549,6 +585,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: android/app/build/outputs/androidTest-results/api35/
+      - name: Upload API 35 host preflight and APT diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-host-api35-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-android-host-api35/
 
   android-storage-emulator:
     name: Android Storage and Emulator
@@ -940,6 +984,10 @@ jobs:
       - name: Verify exact checkout commit
         shell: bash
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Initialize Android host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-identity
+        run: python3 tools/android_ci_host.py initialize --api 35-identity
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -947,13 +995,21 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: platform-tools
+          packages: platform-tools emulator
+      - name: Host Preflight Identity Isolation
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-identity
+        run: python3 tools/android_ci_host.py preflight --api 35-identity
+      - name: APT Runtime Preparation Identity Isolation
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-identity
+        run: python3 tools/android_ci_host.py install-runtime --api 35-identity
       - name: Install API 35 emulator image and build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
-      - name: Install Emulator host runtime dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'system-images;android-35;google_apis;x86_64'
+      - name: Record Identity Isolation system image provenance
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-identity
+        run: python3 tools/android_ci_host.py record-image --api 35 --image 'system-images;android-35;google_apis;x86_64'
       - name: Apply official KVM udev permissions
         if: always() && !cancelled()
         run: |
@@ -986,6 +1042,14 @@ jobs:
           name: serea-personal-beta-identity-isolation
           if-no-files-found: error
           path: android/app/build/outputs/androidTest-results/personal-beta-identity.txt
+      - name: Upload Identity Isolation host preflight and APT diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-host-identity-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-android-host-identity/
 
   android-emulator-required-gate:
     name: Android Emulator Required Gate

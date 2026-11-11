@@ -97,9 +97,13 @@ test_pid_after_kill="$(pid_for "$test_package")"
 printf 'target_pid_after_kill=absent\n' >> "$evidence/provenance.txt"
 printf 'external_sender_pid_after_target_kill=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
 
-"${adb_cmd[@]}" shell am start -W -n "$component" \
+"${adb_cmd[@]}" shell am start -W -f 0x18000000 -n "$component" \
   --es phase verify-B --es token "$SEREA_CONSENT_DEATH_RUN_ID" > "$evidence/start-B.txt" 2>&1 || fail 'could not restart app for request B'
 grep -Fxq 'Status: ok' "$evidence/start-B.txt" || fail 'ActivityManager did not start request B verification'
+grep -Fq "Activity: $component" "$evidence/start-B.txt" || fail 'request B did not start its own harness Activity in a separate task'
+"${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-B-before-result.txt"
+"${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-B-before-result.txt"
+grep -Fq "$sender_component" "$evidence/activities-after-B-before-result.txt" || fail 'external Consent A was not preserved while request B was active'
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I > "$evidence/recovery-logcat.txt"
   if grep -F "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=42:session=session-B:pid=" "$evidence/recovery-logcat.txt" >/dev/null; then break; fi
@@ -108,8 +112,6 @@ done
 grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=42:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not reject stale A consent and picker results'
 # Return to the original sender Activity in A's task. CLEAR_TOP plus singleTop delivers
 # ACTION_COMPLETE to the existing instance, preserving its ActivityResult link to the relay.
-"${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-B-before-result.txt"
-"${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-B-before-result.txt"
 "${adb_cmd[@]}" shell am start -W -f 0x04000000 -n "$sender_component" \
   --es token "$SEREA_CONSENT_DEATH_RUN_ID" --es action complete > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not complete external Consent A after B started'
 grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityManager did not reactivate the external Consent sender'

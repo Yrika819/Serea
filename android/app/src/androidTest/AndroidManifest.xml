@@ -5,7 +5,7 @@
             android:name="app.serea.android.googleauth.SyntheticConsentSenderActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:taskAffinity="app.serea.android.isolated"
+            android:taskAffinity="app.serea.android.isolated.test"
             android:launchMode="singleTop" />
     </application>
 </manifest>

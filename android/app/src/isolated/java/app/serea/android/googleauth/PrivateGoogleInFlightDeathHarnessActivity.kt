@@ -48,7 +48,8 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         // leave this external synthetic consent UI alive so the host can return A afterward.
         val sender = Intent().setComponent(
             ComponentName("${packageName}.test", "app.serea.android.googleauth.SyntheticConsentSenderActivity"),
-        ).putExtra(EXTRA_TOKEN, runToken)
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            .putExtra(EXTRA_TOKEN, runToken)
         val pendingIntent = PendingIntent.getActivity(
             this, 5101, sender, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

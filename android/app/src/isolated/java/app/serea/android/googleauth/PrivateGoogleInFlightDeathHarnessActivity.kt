@@ -26,7 +26,11 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         val runToken = token()
         if (!runToken.matches(Regex("[A-Za-z0-9-]{1,120}"))) error("invalid run token")
         when (phase) {
-            PHASE_IN_FLIGHT -> startInFlightSender(runToken)
+            PHASE_IN_FLIGHT -> if (savedInstanceState == null) {
+                startInFlightSender(runToken)
+            } else {
+                Log.i(TAG, "A_RECREATED_NO_RELAUNCH:$runToken:pid=${Process.myPid()}")
+            }
             PHASE_VERIFY_B -> verifyFreshRequest(runToken)
             else -> error("invalid phase")
         }

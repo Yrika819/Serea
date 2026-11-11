@@ -94,6 +94,8 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
+sender_launch_count="$(grep -Fc "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/result-delivery-logcat.txt" || true)"
+[[ "$sender_launch_count" == 1 ]] || fail "synthetic Consent sender launched $sender_launch_count times"
 if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt"; then
   printf 'delivered\n' > "$evidence/activity-result-delivery.txt"
 else

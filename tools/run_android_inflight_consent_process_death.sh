@@ -10,6 +10,7 @@ package=app.serea.android.isolated
 test_package=app.serea.android.isolated.test
 component="$package/app.serea.android.googleauth.PrivateGoogleInFlightDeathHarnessActivity"
 sender_component="$test_package/app.serea.android.googleauth.SyntheticConsentSenderActivity"
+test_apk="app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk"
 evidence="${SEREA_CONSENT_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/inflight-consent-process-death}"
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
@@ -27,20 +28,41 @@ pid_for() {
 
 package_path="$("${adb_cmd[@]}" shell pm path "$package" | tr -d '\r')"
 [[ -n "$package_path" ]] || fail 'isolated target package is not installed'
+[[ -s "$test_apk" ]] || fail 'isolated AndroidTest APK is missing'
+if ! "${adb_cmd[@]}" install -t -r "$test_apk" > "$evidence/install-test-apk.txt" 2>&1; then
+  fail 'could not install the isolated AndroidTest APK for the external consent sender'
+fi
+test_apk_path="$("${adb_cmd[@]}" shell pm path "$test_package" | tr -d '\r' | sed -n 's/^package://p')"
+test_apk_expected="$(sha256sum "$test_apk" | awk '{print $1}')"
+test_apk_actual="$("${adb_cmd[@]}" shell sha256sum "$test_apk_path" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+[[ -n "$test_apk_path" && "$test_apk_actual" == "$test_apk_expected" ]] || fail 'installed AndroidTest APK did not match the campaign artifact'
 test_pid_before="$(pid_for "$test_package")"
 os_release="$("${adb_cmd[@]}" shell getprop ro.build.version.release | tr -d '\r')"
 sdk="$("${adb_cmd[@]}" shell getprop ro.build.version.sdk | tr -d '\r')"
 [[ "$sdk" == "$EXPECTED_API_LEVEL" ]] || fail "device API $sdk did not match expected API $EXPECTED_API_LEVEL"
+checkout_head="$(git -C "$(dirname "$0")/.." rev-parse HEAD)"
+candidate_head="$checkout_head"
+if [[ -n "${GITHUB_EVENT_PATH:-}" && -f "$GITHUB_EVENT_PATH" ]]; then
+  candidate_head="$(python3 - "$GITHUB_EVENT_PATH" "$checkout_head" <<'PY'
+import json, sys
+try:
+    event = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(event.get("pull_request", {}).get("head", {}).get("sha") or sys.argv[2])
+except Exception:
+    print(sys.argv[2])
+PY
+)"
+fi
 
 {
-  printf 'run_id=%s\nhead=%s\napi=%s\nos_release=%s\nbuild_fingerprint=%s\nserial=%s\ntarget_package=%s\ninstrumentation_package=%s\ninstrumentation_pid_before=%s\n' \
-    "$SEREA_CONSENT_DEATH_RUN_ID" "$(git -C "$(dirname "$0")/.." rev-parse HEAD)" "$sdk" "$os_release" \
-    "$("${adb_cmd[@]}" shell getprop ro.build.fingerprint | tr -d '\r')" "$ANDROID_SERIAL" "$package" "$test_package" "${test_pid_before:-absent}"
+  printf 'run_id=%s\nhead=%s\ncheckout_head=%s\napi=%s\nos_release=%s\nbuild_fingerprint=%s\nserial=%s\ntarget_package=%s\ninstrumentation_package=%s\ninstrumentation_apk_sha256=%s\ninstrumentation_pid_before=%s\n' \
+    "$SEREA_CONSENT_DEATH_RUN_ID" "$candidate_head" "$checkout_head" "$sdk" "$os_release" \
+    "$("${adb_cmd[@]}" shell getprop ro.build.fingerprint | tr -d '\r')" "$ANDROID_SERIAL" "$package" \
+    "$test_package" "$test_apk_actual" "${test_pid_before:-absent}"
 } > "$evidence/provenance.txt"
 
 # The host shell controls the target independently and never signals the AndroidJUnitRunner package.
 "${adb_cmd[@]}" shell am force-stop "$package"
-"${adb_cmd[@]}" logcat -c
 "${adb_cmd[@]}" shell am start -W -n "$component" \
   --es phase in-flight-A --es token "$SEREA_CONSENT_DEATH_RUN_ID" > "$evidence/start-A.txt" 2>&1 || fail 'could not start Consent A harness'
 grep -Fxq 'Status: ok' "$evidence/start-A.txt" || fail 'ActivityManager did not start the Consent A harness'
@@ -84,7 +106,11 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=42:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not reject stale A consent and picker results'
-"${adb_cmd[@]}" shell am start -W -n "$sender_component" \
+# Return to the original sender Activity in A's task. CLEAR_TOP plus singleTop delivers
+# ACTION_COMPLETE to the existing instance, preserving its ActivityResult link to the relay.
+"${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-B-before-result.txt"
+"${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-B-before-result.txt"
+"${adb_cmd[@]}" shell am start -W -f 0x04000000 -n "$sender_component" \
   --es token "$SEREA_CONSENT_DEATH_RUN_ID" --es action complete > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not complete external Consent A after B started'
 grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityManager did not reactivate the external Consent sender'
 for _ in $(seq 1 30); do
@@ -96,6 +122,7 @@ for _ in $(seq 1 30); do
 done
 sender_launch_count="$(grep -Fc "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/result-delivery-logcat.txt" || true)"
 [[ "$sender_launch_count" == 1 ]] || fail "synthetic Consent sender launched $sender_launch_count times"
+grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
 if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt"; then
   printf 'delivered\n' > "$evidence/activity-result-delivery.txt"
 else

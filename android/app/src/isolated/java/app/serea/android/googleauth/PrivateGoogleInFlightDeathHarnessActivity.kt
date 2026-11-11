@@ -153,6 +153,8 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         Log.i(TAG, "STALE_REJECTED:$runToken:request=${before.pendingRealConsentRequestId}:generation=${before.pendingRealConsentGeneration}:session=${before.pendingRealConsentSessionId}:pid=${Process.myPid()}:provider=Fake:resultCode=${result.resultCode}:gateway=${activeBStats?.gatewayMode}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:authorize=${activeBStats?.authorizeCalls}:result=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}")
     }
 
+    private fun identityA() = PrivateGoogleConsentIdentity("request-A", 1L, "session-A")
+
     private fun token(): String = intent.getStringExtra(EXTRA_TOKEN).orEmpty()
 
     companion object {

@@ -92,6 +92,7 @@ grep -Fq "mCurrentFocus=Window{" "$evidence/windows-in-flight.txt" || fail 'wind
 grep -F "mCurrentFocus=Window{" "$evidence/windows-in-flight.txt" | grep -Fq "$sender_component" || fail 'synthetic Consent sender did not own window focus while A was in flight'
 target_pid_before="$(pid_for "$package")"
 [[ -n "$target_pid_before" ]] || fail 'target process PID was missing before OS process death'
+[[ "$test_pid_before" != "$target_pid_before" ]] || fail 'host-side synthetic sender and Serea target shared one process'
 printf 'target_pid_before=%s\n' "$target_pid_before" >> "$evidence/provenance.txt"
 "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I > "$evidence/pre-kill-result-check.txt"
 if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/pre-kill-result-check.txt"; then

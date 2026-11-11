@@ -91,6 +91,8 @@ jobs:
               "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt"|\
               "android/app/src/debug/AndroidManifest.xml"|\
               "android/app/src/isolated/AndroidManifest.xml"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleInFlightDeathHarnessActivity.kt"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleConsentRelayTestActivity.kt"|\
               "android/app/build.gradle.kts"|\
               "tools/verify_serea_real_ime_manifest_scope.py"|\
               "android/app/src/main/java/app/serea/android/MainActivity.kt"|\

@@ -117,22 +117,26 @@ if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/pre-kill-
 fi
 printf 'no-ActivityResult-callback-before-kill\n' >> "$evidence/provenance.txt"
 
-# The relay Activity remains in the task stack underneath the foreground synthetic sender, so
-# Android 8 may classify its process as non-killable for `am kill`. `am force-stop` asks
-# ActivityManager to terminate the target package while leaving the separate test/sender package
-# alive; it is an OS process death, and we still measure whether the saved result route survives.
-"${adb_cmd[@]}" shell am force-stop --user 0 "$package" > "$evidence/am-force-stop.txt" 2>&1
-printf 'target_termination_method=ActivityManager am force-stop --user 0 %s\n' "$package" >> "$evidence/provenance.txt"
+# `am kill` only terminates cached/background processes and can refuse a process whose task
+# contains the visible relay. On this disposable userdebug AVD, restart adbd as root and SIGKILL
+# only the target PID. This preserves OS task/result records and leaves the sender Activity and
+# its separate process alive, allowing Android's saved ActivityResult route to be exercised.
+"${adb_cmd[@]}" root > "$evidence/adb-root.txt" 2>&1 || fail 'could not obtain root shell on disposable emulator'
+grep -Fq 'restarting adbd as root' "$evidence/adb-root.txt" || grep -Fq 'already running as root' "$evidence/adb-root.txt" || fail 'adb root did not confirm root shell'
+"${adb_cmd[@]}" shell id > "$evidence/adb-root-id.txt" 2>&1
+grep -Fq 'uid=0(root)' "$evidence/adb-root-id.txt" || fail 'adb shell is not root on disposable emulator'
+"${adb_cmd[@]}" shell kill -9 "$target_pid_before" > "$evidence/target-sigkill.txt" 2>&1 || fail 'OS SIGKILL failed for the target PID'
+printf 'target_termination_method=adb root then kill -9 %s\n' "$target_pid_before" >> "$evidence/provenance.txt"
 target_pid_after='pending'
 for _ in $(seq 1 30); do
   target_pid_after="$(pid_for "$package")"
-  [[ -z "$target_pid_after" ]] && break
+  [[ -z "$target_pid_after" || "$target_pid_after" != "$target_pid_before" ]] && break
   sleep 1
 done
-[[ -z "$target_pid_after" ]] || fail "target process survived ActivityManager force-stop with PID $target_pid_after"
+[[ -z "$target_pid_after" || "$target_pid_after" != "$target_pid_before" ]] || fail "target process survived SIGKILL with PID $target_pid_after"
 test_pid_after_kill="$(pid_for "$test_package")"
 [[ "$test_pid_before" == "$test_pid_after_kill" ]] || fail 'external sender/instrumentation package process was terminated with the target'
-printf 'target_pid_after_force_stop=absent\n' >> "$evidence/provenance.txt"
+printf 'target_pid_after_SIGKILL=%s\n' "${target_pid_after:-absent}" >> "$evidence/provenance.txt"
 printf 'external_sender_pid_after_target_death=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-kill.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-kill.txt"
@@ -214,5 +218,5 @@ target_pid_after_restart="$(pid_for "$package")"
 [[ -n "$target_pid_after_restart" && "$target_pid_after_restart" != "$target_pid_before" ]] || fail 'target process did not return with a new PID'
 printf 'target_pid_after_restart=%s\n' "$target_pid_after_restart" >> "$evidence/provenance.txt"
 printf 'PASS\n' > "$evidence/status.txt"
-printf 'PASS: API %s ActivityManager force-stop process death during real Private Consent Relay; ActivityResult=%s; stale result protected against B. Evidence: %s\n' \
+printf 'PASS: API %s target-process SIGKILL during real Private Consent Relay; ActivityResult=%s; stale result protected against B. Evidence: %s\n' \
   "$sdk" "$delivery" "$evidence"

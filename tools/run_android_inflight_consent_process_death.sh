@@ -88,8 +88,25 @@ printf 'external_sender_pid_before_target_kill=%s\n' "$test_pid_before" >> "$evi
 grep -Fq "$sender_component" "$evidence/activities-in-flight.txt" || fail 'synthetic Consent sender was not the active Activity'
 grep -Fq 'PrivateGoogleConsentRelayTestActivity' "$evidence/activities-in-flight.txt" || fail 'the isolated Activity Result relay was not retained under the synthetic sender'
 grep -Eq "(mResumedActivity:|topResumedActivity=).*${sender_component//\//\\/}" "$evidence/activities-in-flight.txt" || fail 'synthetic Consent sender was not resumed while A was in flight'
-grep -Fq "mCurrentFocus=Window{" "$evidence/windows-in-flight.txt" || fail 'window focus was unavailable while A was in flight'
-grep -F "mCurrentFocus=Window{" "$evidence/windows-in-flight.txt" | grep -Fq "$sender_component" || fail 'synthetic Consent sender did not own window focus while A was in flight'
+if grep -Fq 'mCurrentFocus=Window{' "$evidence/windows-in-flight.txt"; then
+  grep -F 'mCurrentFocus=Window{' "$evidence/windows-in-flight.txt" | grep -Fq "$sender_component" || fail 'synthetic Consent sender did not own window focus while A was in flight'
+else
+  # Android 15 omits the legacy mCurrentFocus line from `dumpsys window windows`.
+  # The resumed Activity assertion above plus this sender-specific visible surface
+  # establishes that the external sender is foreground without relying on that line.
+  awk -v needle="$sender_component" '
+    /^  Window #[0-9]+ Window\{/ {
+      if (found) exit
+      in_sender = index($0, needle) > 0
+      if (in_sender) found = 1
+    }
+    in_sender { print }
+  ' "$evidence/windows-in-flight.txt" > "$evidence/sender-window-in-flight.txt"
+  grep -Fq 'mViewVisibility=0x0' "$evidence/sender-window-in-flight.txt" || fail 'synthetic sender window was not visible on API without mCurrentFocus'
+  grep -Fq 'isOnScreen=true' "$evidence/sender-window-in-flight.txt" || fail 'synthetic sender window was not on-screen on API without mCurrentFocus'
+  grep -Fq 'isVisible=true' "$evidence/sender-window-in-flight.txt" || fail 'synthetic sender window was not visible on API without mCurrentFocus'
+  grep -Fq 'Surface: shown=true' "$evidence/sender-window-in-flight.txt" || fail 'synthetic sender surface was not shown on API without mCurrentFocus'
+fi
 target_pid_before="$(pid_for "$package")"
 [[ -n "$target_pid_before" ]] || fail 'target process PID was missing before OS process death'
 [[ "$test_pid_before" != "$target_pid_before" ]] || fail 'host-side synthetic sender and Serea target shared one process'

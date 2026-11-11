@@ -105,6 +105,7 @@ printf 'no-ActivityResult-callback-before-kill\n' >> "$evidence/provenance.txt"
 # ActivityManager to terminate the target package while leaving the separate test/sender package
 # alive; it is an OS process death, and we still measure whether the saved result route survives.
 "${adb_cmd[@]}" shell am force-stop --user 0 "$package" > "$evidence/am-force-stop.txt" 2>&1
+printf 'target_termination_method=ActivityManager am force-stop --user 0 %s\n' "$package" >> "$evidence/provenance.txt"
 target_pid_after='pending'
 for _ in $(seq 1 30); do
   target_pid_after="$(pid_for "$package")"
@@ -115,7 +116,7 @@ done
 test_pid_after_kill="$(pid_for "$test_package")"
 [[ "$test_pid_before" == "$test_pid_after_kill" ]] || fail 'external sender/instrumentation package process was terminated with the target'
 printf 'target_pid_after_force_stop=absent\n' >> "$evidence/provenance.txt"
-printf 'external_sender_pid_after_target_kill=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
+printf 'external_sender_pid_after_target_death=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-kill.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-kill.txt"
 

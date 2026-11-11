@@ -328,10 +328,20 @@ jobs:
           if-no-files-found: error
           path: android/app/build/test-results/testDebugUnitTest/*.xml
 
+  android-host-probe:
+    name: Android Host Probe (no AVD)
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    uses: ./.github/workflows/android-host-probe.yml
+    permissions:
+      contents: read
+
   android-emulator-api26:
     name: Android Formal API 26
-    needs: [android-changes, android-build]
-    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
+    needs: [android-changes, android-build, android-host-probe]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success' && needs.android-host-probe.result == 'success'
+    outputs:
+      artifact_attempt: ${{ github.run_attempt }}
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -448,7 +458,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-formal-api26-provisional
+          name: serea-android-formal-api26-provisional-attempt-${{ github.run_attempt }}
           if-no-files-found: error
           retention-days: 14
           path: android/app/build/outputs/androidTest-results/api26/
@@ -457,14 +467,16 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-host-api26-attempt-${{ github.run_attempt }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
           path: ${{ runner.temp }}/serea-android-host-api26/
 
   android-emulator-api35:
     name: Android Formal API 35
-    needs: [android-changes, android-build]
-    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
+    needs: [android-changes, android-build, android-host-probe]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success' && needs.android-host-probe.result == 'success'
+    outputs:
+      artifact_attempt: ${{ github.run_attempt }}
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -581,7 +593,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-formal-api35-provisional
+          name: serea-android-formal-api35-provisional-attempt-${{ github.run_attempt }}
           if-no-files-found: error
           retention-days: 14
           path: android/app/build/outputs/androidTest-results/api35/
@@ -590,7 +602,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-host-api35-attempt-${{ github.run_attempt }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
           path: ${{ runner.temp }}/serea-android-host-api35/
 
@@ -615,13 +627,13 @@ jobs:
         if: always()
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: serea-android-formal-api26-provisional
+          name: serea-android-formal-api26-provisional-attempt-${{ needs.android-emulator-api26.outputs.artifact_attempt }}
           path: android/app/build/outputs/androidTest-results/api26
       - name: Download API 35 evidence
         if: always()
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: serea-android-formal-api35-provisional
+          name: serea-android-formal-api35-provisional-attempt-${{ needs.android-emulator-api35.outputs.artifact_attempt }}
           path: android/app/build/outputs/androidTest-results/api35
       - name: Verify API evidence provenance, JUnit, and isolation results
         id: instrumentation
@@ -972,8 +984,8 @@ jobs:
 
   android-personal-beta-identity:
     name: Personal Beta Identity Isolation (temporary signing keys)
-    needs: [android-changes, android-build]
-    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
+    needs: [android-changes, android-build, android-host-probe]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success' && needs.android-host-probe.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -1047,7 +1059,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-host-identity-attempt-${{ github.run_attempt }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
           path: ${{ runner.temp }}/serea-android-host-identity/
 
@@ -1057,6 +1069,7 @@ jobs:
     needs:
       - android-changes
       - android-build
+      - android-host-probe
       - android-unit
       - android-integration
       - android-security
@@ -1082,6 +1095,7 @@ jobs:
           ANDROID_CHANGED: ${{ needs.android-changes.outputs.android }}
           DOCS_CHANGED: ${{ needs.android-changes.outputs.docs }}
           BUILD_RESULT: ${{ needs.android-build.result }}
+          HOST_PROBE_RESULT: ${{ needs.android-host-probe.result }}
           UNIT_RESULT: ${{ needs.android-unit.result }}
           INTEGRATION_RESULT: ${{ needs.android-integration.result }}
           SECURITY_RESULT: ${{ needs.android-security.result }}
@@ -1105,7 +1119,7 @@ jobs:
             echo 'PASS: no Android implementation/configuration change requires emulator execution.'
             exit 0
           fi
-          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "beta-identity:$BETA_IDENTITY_RESULT" "dependency-audit:$AUDIT_RESULT" "reacceptance-bundle:$BUNDLE_RESULT"; do
+          for check in "build:$BUILD_RESULT" "host-probe:$HOST_PROBE_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "beta-identity:$BETA_IDENTITY_RESULT" "dependency-audit:$AUDIT_RESULT" "reacceptance-bundle:$BUNDLE_RESULT"; do
             if [ "${check#*:}" != success ]; then
               echo "FAIL: required Android check $check. Emulator status is NOT_RUN or incomplete until its full test result succeeds."
               exit 1

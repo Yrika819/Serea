@@ -64,7 +64,7 @@ class AndroidCiHostTests(unittest.TestCase):
         self.assertIn("Acquire::Retries=1", host.APT_OPTIONS)
         self.assertIn("Acquire::http::Timeout=12", host.APT_OPTIONS)
         self.assertIn("Acquire::https::Timeout=12", host.APT_OPTIONS)
-        self.assertEqual(host.APT_TIMEOUT_SECONDS, 90)
+        self.assertEqual(host.APT_TIMEOUT_SECONDS, 45)
 
     def test_apt_invocation_applies_retries_and_timeout_to_subprocess(self) -> None:
         seen = {}
@@ -97,7 +97,7 @@ class AndroidCiHostTests(unittest.TestCase):
             self.assertIn("mirror.example.test", hosts)
             self.assertNotIn("secret", host.safe_text(sources / "ubuntu.sources"))
 
-    def test_official_fallback_is_used_only_after_network_failure_and_rechecks_libraries(self) -> None:
+    def test_official_package_source_is_used_only_after_dns_and_https_probe_pass(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             sdk = Path(temporary)
             qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
@@ -106,22 +106,29 @@ class AndroidCiHostTests(unittest.TestCase):
             qemu.chmod(0o755)
             evidence = sdk / "host-preflight.txt"
             results = [
-                subprocess.CompletedProcess([], 0, "primary update ok"),
-                subprocess.CompletedProcess([], 100, "Temporary failure resolving azure.archive.ubuntu.com"),
                 subprocess.CompletedProcess([], 0, "official update ok"),
                 subprocess.CompletedProcess([], 0, "installed"),
             ]
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
             ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED (exit=1)", "libpulse0 1.0"]), patch.object(
-                host, "apt_invocation", side_effect=results
-            ) as apt, patch.object(host, "official_fallback", return_value=(Path(temporary) / "sources.list", ["-o", "source-options"])), patch.object(
-                host, "append"
+                host, "probe_official_mirrors", return_value=(True, "noble", "amd64", ["official source"], ["HTTPS PASS"])
+            ), patch.object(host, "apt_invocation", side_effect=results) as apt, patch.object(
+                host, "official_fallback", return_value=(Path(temporary) / "sources.list", ["-o", "source-options"])
             ):
                 self.assertEqual(host.install_runtime(evidence, "26"), 0)
-            self.assertEqual(apt.call_count, 4)
-            self.assertIn("source-options", apt.call_args_list[2].args[0])
-            self.assertIn("source-options", apt.call_args_list[3].args[0])
+            self.assertEqual(apt.call_count, 2)
+            self.assertEqual(apt.call_args_list[0].args[0][-1], "update")
+            self.assertIn("source-options", apt.call_args_list[0].args[0])
+            self.assertIn("source-options", apt.call_args_list[1].args[0])
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU", content)
+            self.assertIn("apt_signature_validation=enabled; tls_validation=enabled; third_party_repositories=none", content)
+            self.assertRegex(content, r"apt_sources_sha256_before_runtime=([0-9a-f]{64})")
+            self.assertRegex(content, r"apt_sources_sha256_after=([0-9a-f]{64})")
+            before_hash = next(line.split("=", 1)[1] for line in content.splitlines() if line.startswith("apt_sources_sha256_before_runtime="))
+            after_hash = next(line.split("=", 1)[1] for line in content.splitlines() if line.startswith("apt_sources_sha256_after="))
+            self.assertEqual(before_hash, after_hash)
 
     def test_system_image_recording_requires_the_requested_api_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -133,7 +140,7 @@ class AndroidCiHostTests(unittest.TestCase):
             with patch.object(host, "command", return_value=subprocess.CompletedProcess([], 0, "Installed packages:\n")):
                 self.assertEqual(host.record_image(evidence, "35", image), 1)
 
-    def test_non_network_apt_failure_fails_closed_without_mirror_fallback(self) -> None:
+    def test_unreachable_official_mirror_fails_before_apt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             sdk = Path(temporary)
             qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
@@ -141,19 +148,114 @@ class AndroidCiHostTests(unittest.TestCase):
             qemu.write_text("test binary placeholder", encoding="utf-8")
             qemu.chmod(0o755)
             evidence = sdk / "host-preflight.txt"
-            results = [
-                subprocess.CompletedProcess([], 0, "primary update ok"),
-                subprocess.CompletedProcess([], 100, "The repository is not signed"),
-            ]
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(
                 host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
             ), patch.object(host, "package_state", return_value="NOT_INSTALLED (exit=1)"), patch.object(
-                host, "apt_invocation", side_effect=results
-            ) as apt, patch.object(host, "official_fallback", side_effect=AssertionError("fallback must be network-failure-only")), patch.object(
-                host, "append"
+                host,
+                "probe_official_mirrors",
+                return_value=(False, "noble", "amd64", ["official source"], ["archive.ubuntu.com: UNRESOLVED", "HTTPS: UNREACHABLE (DNS)"]),
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run when official mirrors are unreachable")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            self.assertIn("result=HOST_INFRA", evidence.read_text(encoding="utf-8"))
+            self.assertIn("failure_cause=NETWORK_FAILURE", evidence.read_text(encoding="utf-8"))
+
+    def test_recorded_mirror_probe_is_reused_only_for_same_apt_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            with patch.object(host, "apt_source_snapshot", return_value="sources-a"):
+                evidence.write_text(
+                    "apt_sources_sha256_before=sources-a\nofficial_mirror_probe=FAIL\nofficial_mirror_probe_reason=DNS failure\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(host.recorded_mirror_probe(evidence), (False, "DNS failure", "NETWORK_FAILURE"))
+            with patch.object(host, "apt_source_snapshot", return_value="sources-b"):
+                self.assertIsNone(host.recorded_mirror_probe(evidence))
+
+    def test_preflight_records_runner_and_official_network_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            with patch.dict(os.environ, {"GITHUB_SHA": "head", "GITHUB_RUN_ID": "run", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_OS": "Linux", "RUNNER_ARCH": "X64", "ImageOS": "ubuntu24", "ImageVersion": "2026.11"}), patch.object(
+                host, "source_hosts", return_value=["azure.archive.ubuntu.com", "archive.ubuntu.com"]
+            ), patch.object(
+                host, "resolve_host", side_effect=lambda name, runner=subprocess.run, timeout=host.DNS_TIMEOUT_SECONDS: "192.0.2.1" if name == "archive.ubuntu.com" else "UNRESOLVED (timeout)"
+            ), patch.object(
+                host, "probe_official_mirrors", return_value=(False, "noble", "amd64", ["source"], ["official_https https://archive.ubuntu.com/ubuntu/dists/noble/InRelease: UNREACHABLE (DNS)"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "command", return_value=subprocess.CompletedProcess([], 0, "")
+            ), patch.object(host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])):
+                self.assertEqual(host.preflight(evidence, "probe"), 0)
+            text = evidence.read_text(encoding="utf-8")
+            for expected in ("source_head=head", "run_id=run", "run_attempt=2", "runner_image_os=ubuntu24", "runner_image_version=2026.11", "official_mirror_probe=FAIL", "official_mirror_probe_cause=NETWORK_FAILURE", "apt_sources_sha256_before="):
+                self.assertIn(expected, text)
+
+    def test_official_apt_update_non_network_failure_is_dependency_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=(True, "noble", "amd64", ["official source"], ["HTTPS PASS"])
+            ), patch.object(host, "official_fallback", return_value=(Path(temporary) / "sources.list", ["-o", "source-options"])), patch.object(
+                host, "apt_invocation", return_value=subprocess.CompletedProcess([], 100, "The repository is not signed")
             ):
                 self.assertEqual(host.install_runtime(evidence, "35"), 1)
-            self.assertEqual(apt.call_count, 2)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=DEPENDENCY_FAILURE", content)
+            self.assertIn("failure_cause=DEPENDENCY_FAILURE", content)
+
+    def test_apt_timeout_after_successful_probe_is_host_network_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=(True, "noble", "amd64", ["official source"], ["HTTPS PASS"])
+            ), patch.object(host, "official_fallback", return_value=(Path(temporary) / "sources.list", ["-o", "source-options"])), patch.object(
+                host, "apt_invocation", return_value=subprocess.CompletedProcess([], 124, "COMMAND TIMED OUT after 45s")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 1)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertIn("failure_cause=NETWORK_FAILURE", content)
+
+    def test_pre_udev_kvm_inaccessibility_is_recorded_not_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            with patch.object(host.Path, "exists", return_value=False), patch.object(host.Path, "is_file", return_value=False):
+                self.assertEqual(host.record_kvm(evidence, "before"), 0)
+                self.assertEqual(host.record_kvm(evidence, "after"), 1)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("kvm_phase=before", content)
+            self.assertIn("kvm_phase=after", content)
+            self.assertIn("result=HOST_INFRA", content)
+
+    def test_unresolved_non_pulse_runtime_dependency_is_dependency_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(
+                host, "library_report", return_value=(["libEGL.so => not found"], ["libEGL.so"])
+            ), patch.object(host, "package_state", return_value="libpulse0 1.0"):
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertIn("result=DEPENDENCY_FAILURE", evidence.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

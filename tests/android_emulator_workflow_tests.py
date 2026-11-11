@@ -1608,16 +1608,55 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
 
         workflow = yaml.safe_load((ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
         jobs = workflow["jobs"]
+        probe_workflow = (ROOT / ".github/workflows/android-host-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_call:", probe_workflow)
+        self.assertIn("  workflow_dispatch:", probe_workflow)
+        self.assertIn("serea-android-host-probe-attempt-${{ github.run_attempt }}", probe_workflow)
+        self.assertIn("record-kvm --api host-probe --phase-detail before", probe_workflow)
+        self.assertIn("record-kvm --api host-probe --phase-detail after", probe_workflow)
+        self.assertNotIn("system-images;android-", probe_workflow)
+        probe_yaml = yaml.safe_load(probe_workflow)
+        probe_steps = probe_yaml["jobs"]["probe"]["steps"]
+        probe_upload = next(step for step in probe_steps if "upload-artifact" in step.get("uses", ""))
+        self.assertEqual(probe_upload["if"], "always()")
+        self.assertEqual(probe_upload["with"]["if-no-files-found"], "error")
+        self.assertGreaterEqual(
+            next(i for i, step in enumerate(probe_steps) if "phase-detail before" in step.get("run", "")),
+            0,
+        )
+        self.assertGreater(
+            next(i for i, step in enumerate(probe_steps) if "phase-detail after" in step.get("run", "")),
+            next(i for i, step in enumerate(probe_steps) if "phase-detail before" in step.get("run", "")),
+        )
+        probe_job = jobs["android-host-probe"]
+        self.assertEqual(probe_job["needs"], "android-changes")
+        self.assertEqual(probe_job["uses"], "./.github/workflows/android-host-probe.yml")
         for api in ("26", "35"):
             job = jobs[f"android-emulator-api{api}"]
-            self.assertEqual(job["needs"], ["android-changes", "android-build"])
+            self.assertEqual(job["needs"], ["android-changes", "android-build", "android-host-probe"])
+            self.assertIn("needs.android-host-probe.result == 'success'", job["if"])
+            self.assertEqual(job["outputs"]["artifact_attempt"], "${{ github.run_attempt }}")
             self.assertTrue(any("android-emulator-runner" in step.get("uses", "") for step in job["steps"]))
-            artifact_names = [
-                step.get("with", {}).get("name")
+            artifacts = [
+                step
                 for step in job["steps"]
                 if "upload-artifact" in step.get("uses", "")
             ]
-            self.assertEqual(artifact_names, [f"serea-android-formal-api{api}-provisional"])
+            self.assertEqual(
+                [step.get("with", {}).get("name") for step in artifacts],
+                [
+                    f"serea-android-formal-api{api}-provisional-attempt-${{{{ github.run_attempt }}}}",
+                    f"serea-android-host-api{api}-attempt-${{{{ github.run_attempt }}}}",
+                ],
+            )
+            self.assertEqual(artifacts[0]["if"], "always()")
+            self.assertIn("androidTest-results/api", artifacts[0]["with"]["path"])
+            self.assertIn("${{ github.run_attempt }}", artifacts[0]["with"]["name"])
+            self.assertEqual(artifacts[1]["if"], "always()")
+            self.assertIn("${{ runner.temp }}/serea-android-host-api", artifacts[1]["with"]["path"])
+            self.assertEqual(artifacts[1]["with"]["if-no-files-found"], "error")
+            provenance = next(step for step in job["steps"] if step.get("name") == f"Prepare API {api} artifact with producer provenance")
+            self.assertIn("producer_attempt=$GITHUB_RUN_ATTEMPT", provenance["run"])
 
         aggregate = jobs["android-storage-emulator"]
         self.assertEqual(
@@ -1626,6 +1665,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(any("android-emulator-runner" in step.get("uses", "") for step in aggregate["steps"]))
         self.assertEqual(aggregate["outputs"]["instrumentation"], "${{ steps.instrumentation.outputs.result }}")
+        api_downloads = [step for step in aggregate["steps"] if step.get("name") in ("Download API 26 evidence", "Download API 35 evidence")]
+        self.assertEqual(
+            [step["with"]["name"] for step in api_downloads],
+            [
+                "serea-android-formal-api26-provisional-attempt-${{ needs.android-emulator-api26.outputs.artifact_attempt }}",
+                "serea-android-formal-api35-provisional-attempt-${{ needs.android-emulator-api35.outputs.artifact_attempt }}",
+            ],
+        )
         verification = next(step for step in aggregate["steps"] if step.get("id") == "instrumentation")["run"]
         self.assertIn("verify_android_formal_aggregate.py", verification)
         module = (ROOT / "tools/verify_android_formal_aggregate.py").read_text(encoding="utf-8")
@@ -1633,6 +1680,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn(required, module)
         self.assertIn("result=PASS", module)
         self.assertIn("result=FAIL", module)
+        gate = jobs["android-emulator-required-gate"]
+        self.assertIn("android-host-probe", gate["needs"])
+        self.assertEqual(gate["steps"][2]["env"]["HOST_PROBE_RESULT"], "${{ needs.android-host-probe.result }}")
+        self.assertIn('"host-probe:$HOST_PROBE_RESULT"', gate["steps"][2]["run"])
 
     def test_wrong_emulator_api_level_fails_closed_as_not_run(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"

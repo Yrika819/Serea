@@ -19,7 +19,9 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-APT_TIMEOUT_SECONDS = 90
+APT_TIMEOUT_SECONDS = 45
+DNS_TIMEOUT_SECONDS = 3
+HTTPS_TIMEOUT_SECONDS = 4
 APT_OPTIONS = (
     "-o", "Acquire::Retries=1",
     "-o", "Acquire::http::Timeout=12",
@@ -50,8 +52,8 @@ def append(path: Path, message: str) -> None:
         stream.write(message.rstrip() + "\n")
 
 
-def record_failure(path: Path, category: str, reason: str) -> int:
-    append(path, f"result={category}\nreason={reason}")
+def record_failure(path: Path, category: str, reason: str, cause: str | None = None) -> int:
+    append(path, f"result={category}\nfailure_cause={cause or category}\nreason={reason}")
     print(f"{category}: {reason}", file=sys.stderr)
     return 1
 
@@ -123,8 +125,8 @@ def source_hosts(root: Path = Path("/etc/apt")) -> list[str]:
     return sorted(hosts)
 
 
-def resolve_host(host: str, runner: RUN = subprocess.run) -> str:
-    result = command(("getent", "ahosts", host), timeout=8, runner=runner)
+def resolve_host(host: str, runner: RUN = subprocess.run, timeout: int = DNS_TIMEOUT_SECONDS) -> str:
+    result = command(("getent", "ahosts", host), timeout=timeout, runner=runner)
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip().replace("\n", "; ")
     return f"UNRESOLVED (exit={result.returncode}; {result.stdout.strip()})"
@@ -190,7 +192,7 @@ def fallback_check_urls(release: str, architecture: str) -> tuple[str, ...]:
     )
 
 
-def https_reachable(url: str, timeout: int = 8) -> tuple[bool, str]:
+def https_reachable(url: str, timeout: int = HTTPS_TIMEOUT_SECONDS) -> tuple[bool, str]:
     request = urllib.request.Request(url, method="GET", headers={"Range": "bytes=0-0", "User-Agent": "Serea-Android-CI-Host-Preflight"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -198,6 +200,49 @@ def https_reachable(url: str, timeout: int = 8) -> tuple[bool, str]:
             return 200 <= response.status < 400, f"HTTP {response.status}; TLS verification enabled"
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         return False, f"UNREACHABLE ({error})"
+
+
+def probe_official_mirrors(
+    runner: RUN = subprocess.run,
+    dns_cache: dict[str, str] | None = None,
+) -> tuple[bool, str, str, list[str], list[str]]:
+    """Check DNS and TLS-verified HTTPS for every official InRelease endpoint."""
+    release, architecture, plan = official_mirror_plan()
+    sources = list(plan[:3])
+    urls = list(plan[3:])
+    resolved = dns_cache if dns_cache is not None else {}
+    details: list[str] = []
+    hosts = sorted({urlparse(url).hostname or "" for url in urls} - {""})
+    for host in hosts:
+        if host not in resolved:
+            resolved[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
+        details.append(f"official_dns {host}: {resolved[host]}")
+    ok = True
+    for url in urls:
+        host = urlparse(url).hostname or ""
+        if "UNRESOLVED" in resolved.get(host, "UNRESOLVED"):
+            reachable = False
+            detail = f"UNREACHABLE (DNS resolution failed for {host})"
+        else:
+            reachable, detail = https_reachable(url, timeout=HTTPS_TIMEOUT_SECONDS)
+        details.append(f"official_https {url}: {'REACHABLE' if reachable else 'UNREACHABLE'} ({detail})")
+        ok = ok and reachable
+    return ok, release, architecture, sources, details
+
+
+def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
+    """Reuse a preflight result only when the current APT source hash matches."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    recorded_hash = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("apt_sources_sha256_before=")), None)
+    status = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe=")), None)
+    reason = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_reason=")), "no probe reason recorded")
+    cause = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_cause=")), "NETWORK_FAILURE")
+    if recorded_hash != apt_source_snapshot() or status not in ("PASS", "FAIL"):
+        return None
+    return status == "PASS", reason, cause
 
 
 def qemu_binaries(sdk: Path) -> list[Path]:
@@ -236,6 +281,8 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         f"run_attempt={os.environ.get('GITHUB_RUN_ATTEMPT', 'unknown')}",
         f"runner_os={os.environ.get('RUNNER_OS', 'unknown')}",
         f"runner_arch={os.environ.get('RUNNER_ARCH', 'unknown')}",
+        f"runner_image_os={os.environ.get('ImageOS', 'unknown')}",
+        f"runner_image_version={os.environ.get('ImageVersion', 'unknown')}",
         f"uname_m={command(('uname', '-m'), timeout=5, runner=runner).stdout.strip() or platform.machine()}",
         "os_release:",
         safe_text(Path("/etc/os-release")),
@@ -245,17 +292,24 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     for source in apt_source_files():
         lines.append(f"--- {source} ---\n{safe_text(source)}")
     lines.append("apt_mirror_dns:")
+    dns_results: dict[str, str] = {}
     for host in source_hosts():
-        lines.append(f"{host}: {resolve_host(host, runner)}")
+        dns_results[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
+        lines.append(f"{host}: {dns_results[host]}")
     lines.append("official_ubuntu_mirror_https:")
     try:
-        release, architecture, plan = official_mirror_plan()
+        mirrors_ok, release, architecture, _sources, details = probe_official_mirrors(runner, dns_results)
         lines.extend((f"fallback_release={release}", f"fallback_architecture={architecture}"))
-        for url in plan[3:]:
-            ok, detail = https_reachable(url)
-            lines.append(f"{url}: {'REACHABLE' if ok else 'UNREACHABLE'} ({detail})")
+        lines.extend(details)
+        lines.append(f"official_mirror_probe={'PASS' if mirrors_ok else 'FAIL'}")
+        probe_reason = "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
+        lines.append(f"official_mirror_probe_reason={probe_reason}")
+        lines.append(f"official_mirror_probe_cause={'HOST_READY' if mirrors_ok else 'NETWORK_FAILURE'}")
     except RuntimeError as error:
         lines.append(f"fallback_plan=UNAVAILABLE ({error})")
+        lines.append("official_mirror_probe=FAIL")
+        lines.append(f"official_mirror_probe_reason=official source plan unavailable: {error}")
+        lines.append("official_mirror_probe_cause=DEPENDENCY_FAILURE")
     lines.append(f"libpulse0_package={package_state(runner)}")
     ldconfig = command(("ldconfig", "-p"), timeout=10, runner=runner)
     lines.append("ldconfig_pulse_entries:")
@@ -315,15 +369,7 @@ def runtime_install_args(package: str) -> tuple[str, ...]:
 def official_fallback(path: Path, api: str, runner: RUN = subprocess.run) -> tuple[Path, list[str]]:
     release, architecture, plan = official_mirror_plan()
     lines = list(plan[:3])
-    urls = list(plan[3:])
     append(path, f"fallback_release={release}\nfallback_architecture={architecture}\napt_sources_fallback_before_update:\n" + "\n".join(lines))
-    for host in sorted({urlparse(url).hostname for url in urls if urlparse(url).hostname}):
-        append(path, f"fallback_dns {host}: {resolve_host(host, runner)}")
-    for url in urls:
-        ok, detail = https_reachable(url)
-        append(path, f"fallback_official_https {url}: {'PASS' if ok else 'FAIL'} ({detail})")
-        if not ok:
-            raise RuntimeError(f"official Ubuntu mirror HTTPS verification failed for {url}: {detail}")
     runner_temp = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
     run_id = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("GITHUB_RUN_ID", "local"))
     root = runner_temp / f"serea-apt-fallback-api{api}-{run_id}"
@@ -351,52 +397,83 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     pulse_missing = any(name.startswith("libpulse") for name in missing)
     other_missing = [name for name in missing if not name.startswith("libpulse")]
     if not missing:
-        append(path, "apt_result=SKIPPED\napt_skip_reason=all emulator QEMU dynamic libraries resolve; libpulse package presence recorded independently")
+        append(path, "result=HOST_READY\napt_result=SKIPPED\napt_skip_reason=all emulator QEMU dynamic libraries resolve; libpulse package presence recorded independently")
         print("Emulator runtime dependencies are loadable; APT installation skipped.")
         return 0
     if other_missing:
-        return record_failure(path, "HOST_INFRA", f"unresolved non-libpulse emulator libraries: {','.join(other_missing)}")
+        return record_failure(path, "DEPENDENCY_FAILURE", f"unresolved non-libpulse emulator libraries: {','.join(other_missing)}")
     if not pulse_missing:
         return record_failure(path, "HOST_INFRA", "runtime dependency state is inconsistent")
-
-    default_outputs: list[str] = []
-    default_update = apt_invocation(("update",), runner=runner)
-    default_outputs.append(f"default apt-get update exit={default_update.returncode}\n{default_update.stdout}")
-    default_install: subprocess.CompletedProcess[str] | None = None
-    if default_update.returncode == 0:
-        default_install = apt_invocation(runtime_install_args(package), runner=runner)
-        default_outputs.append(f"default apt-get install exit={default_install.returncode}\n{default_install.stdout}")
-        if default_install.returncode == 0:
-            after, still_missing = library_report(sdk, runner)
-            append(path, "\n".join(default_outputs) + f"\napt_sources_sha256_after={apt_source_snapshot()}\nlibpulse0_package_after={package_state(runner)}\nldd_after:\n" + "\n".join(after))
-            if still_missing:
-                return record_failure(path, "HOST_INFRA", f"shared libraries remain unresolved: {','.join(still_missing)}")
-            append(path, "apt_result=INSTALLED_DEFAULT_SOURCE\nsource_change=none")
-            return 0
-
-    failure_output = "\n".join(default_outputs)
-    append(path, "\n".join(default_outputs))
-    if not is_network_failure(failure_output):
-        category = "HOST_INFRA" if "command timed out after" in failure_output.lower() else "DEPENDENCY_FAILURE"
-        return record_failure(path, category, "default Ubuntu APT failed without a confirmed network/mirror failure; official fallback prohibited")
-    append(path, "default_source_failure=CONFIRMED_NETWORK_OR_MIRROR_FAILURE\nsource_change=existing system APT sources remain untouched; trying scoped official Ubuntu sources only")
-
+    mirror_probe = recorded_mirror_probe(path)
+    if mirror_probe is None:
+        try:
+            probe_ok, _release, _architecture, _sources, details = probe_official_mirrors(runner)
+            probe_reason = "all official InRelease endpoints verified" if probe_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
+            probe_cause = "HOST_READY" if probe_ok else "NETWORK_FAILURE"
+            append(path, "\n".join(details) + f"\nofficial_mirror_probe={'PASS' if probe_ok else 'FAIL'}\nofficial_mirror_probe_reason={probe_reason}\nofficial_mirror_probe_cause={probe_cause}")
+            mirror_probe = (probe_ok, probe_reason, probe_cause)
+        except RuntimeError as error:
+            mirror_probe = (False, f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE")
+            append(path, f"official_mirror_probe=FAIL\nofficial_mirror_probe_reason={mirror_probe[1]}\nofficial_mirror_probe_cause={mirror_probe[2]}")
+    if not mirror_probe[0]:
+        return record_failure(
+            path,
+            "HOST_INFRA",
+            f"APT not attempted: {mirror_probe[1]}",
+            cause=mirror_probe[2],
+        )
+    original_sources_hash = apt_source_snapshot()
+    append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}")
     try:
         source_file, source_options = official_fallback(path, api, runner)
     except RuntimeError as error:
-        return record_failure(path, "HOST_INFRA", f"official Ubuntu fallback unavailable: {error}")
-    update = apt_invocation((*source_options, "update"), runner=runner)
-    append(path, f"official fallback apt-get update exit={update.returncode}\n{update.stdout}")
+        return record_failure(path, "DEPENDENCY_FAILURE", f"official Ubuntu source configuration unavailable: {error}")
+    update = apt_invocation((*source_options, "update"), timeout=APT_TIMEOUT_SECONDS, runner=runner)
+    append(path, f"official apt-get update exit={update.returncode}\n{update.stdout}")
     if update.returncode != 0:
-        append(path, f"apt_sources_sha256_after={apt_source_snapshot()}\napt_sources_after=system sources unchanged; scoped fallback was temporary")
-        return record_failure(path, "HOST_INFRA", "official Ubuntu fallback update failed")
-    install = apt_invocation((*source_options, *runtime_install_args(package)), runner=runner)
-    append(path, f"official fallback apt-get install exit={install.returncode}\n{install.stdout}")
+        append(path, f"apt_sources_sha256_after={apt_source_snapshot()}\napt_sources_after=system sources unchanged; temporary source was {source_file}")
+        cause = "NETWORK_FAILURE" if is_network_failure(update.stdout) or "command timed out after" in update.stdout.lower() else "DEPENDENCY_FAILURE"
+        category = "HOST_INFRA" if cause == "NETWORK_FAILURE" else "DEPENDENCY_FAILURE"
+        return record_failure(path, category, "official Ubuntu apt-get update failed", cause=cause)
+    install = apt_invocation((*source_options, *runtime_install_args(package)), timeout=APT_TIMEOUT_SECONDS, runner=runner)
+    append(path, f"official apt-get install exit={install.returncode}\n{install.stdout}")
     after, still_missing = library_report(sdk, runner)
-    append(path, f"apt_sources_sha256_after={apt_source_snapshot()}\napt_sources_after=system sources unchanged; scoped fallback source was {source_file}\nlibpulse0_package_after={package_state(runner)}\nldd_after:\n" + "\n".join(after))
+    final_sources_hash = apt_source_snapshot()
+    append(path, f"apt_sources_sha256_after={final_sources_hash}\napt_sources_after=system sources unchanged; temporary source was {source_file}\nlibpulse0_package_after={package_state(runner)}\nldd_after:\n" + "\n".join(after))
+    if final_sources_hash != original_sources_hash:
+        return record_failure(path, "HOST_INFRA", "system APT source configuration changed during temporary package installation")
     if install.returncode != 0 or still_missing:
-        return record_failure(path, "HOST_INFRA", f"official fallback failed or runtime libraries remain unresolved: {','.join(still_missing)}")
-    append(path, "apt_result=INSTALLED_OFFICIAL_UBUNTU_FALLBACK\napt_signature_validation=enabled; tls_validation=enabled; third_party_repositories=none")
+        cause = "NETWORK_FAILURE" if is_network_failure(install.stdout) or "command timed out after" in install.stdout.lower() else "DEPENDENCY_FAILURE"
+        category = "HOST_INFRA" if cause == "NETWORK_FAILURE" else "DEPENDENCY_FAILURE"
+        return record_failure(path, category, f"official package install failed or runtime libraries remain unresolved: {','.join(still_missing)}", cause=cause)
+    append(path, "result=HOST_READY\napt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU\napt_signature_validation=enabled; tls_validation=enabled; third_party_repositories=none")
+    return 0
+
+
+def record_kvm(path: Path, phase: str, runner: RUN = subprocess.run) -> int:
+    present = Path("/dev/kvm").exists()
+    readable = present and os.access("/dev/kvm", os.R_OK)
+    writable = present and os.access("/dev/kvm", os.W_OK)
+    stat = command(("stat", "-Lc", "device=%n owner=%U group=%G mode=%a", "/dev/kvm"), timeout=5, runner=runner) if present else None
+    emulator = Path(os.environ.get("ANDROID_HOME", "/nonexistent")) / "emulator/emulator"
+    acceleration = command((str(emulator), "-accel-check"), timeout=15, runner=runner) if emulator.is_file() else None
+    append(
+        path,
+        "\n".join((
+            f"kvm_phase={phase}",
+            f"kvm_device_present={present}",
+            f"kvm_readable={readable}",
+            f"kvm_writable={writable}",
+            f"kvm_stat={stat.stdout.strip() if stat else 'NOT_PRESENT'}",
+            f"emulator_accel_exit={acceleration.returncode if acceleration else 'NOT_RUN'}",
+            f"emulator_accel_output={acceleration.stdout.strip() if acceleration else 'NOT_RUN'}",
+        )),
+    )
+    print(f"KVM {phase} diagnostic saved: present={present} readable={readable} writable={writable}")
+    if phase == "after" and not (present and readable and writable and acceleration and acceleration.returncode == 0):
+        return record_failure(path, "HOST_INFRA", "KVM access or emulator acceleration unavailable after udev preparation")
+    if phase == "after":
+        append(path, "host_kvm_readiness=PASS")
     return 0
 
 
@@ -411,9 +488,10 @@ def record_image(path: Path, api: str, image: str, runner: RUN = subprocess.run)
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("initialize", "preflight", "install-runtime", "record-image"))
+    parser.add_argument("phase", choices=("initialize", "preflight", "install-runtime", "record-image", "record-kvm"))
     parser.add_argument("--api", required=True)
     parser.add_argument("--image")
+    parser.add_argument("--phase-detail", choices=("before", "after"))
     parser.add_argument("--evidence", type=Path, default=evidence_dir() / "host-preflight.txt")
     args = parser.parse_args(argv)
     if args.phase == "initialize":
@@ -422,6 +500,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"source_head={os.environ.get('GITHUB_SHA', 'unknown')}\n"
             f"run_id={os.environ.get('GITHUB_RUN_ID', 'unknown')}\n"
             f"run_attempt={os.environ.get('GITHUB_RUN_ATTEMPT', 'unknown')}\n"
+            f"runner_os={os.environ.get('RUNNER_OS', 'unknown')}\n"
+            f"runner_arch={os.environ.get('RUNNER_ARCH', 'unknown')}\n"
+            f"runner_image_os={os.environ.get('ImageOS', 'unknown')}\n"
+            f"runner_image_version={os.environ.get('ImageVersion', 'unknown')}\n"
             f"api={args.api}\nphase=HOST_PREFLIGHT_INITIALIZED\n",
             encoding="utf-8",
         )
@@ -430,6 +512,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return preflight(args.evidence, args.api)
     if args.phase == "install-runtime":
         return install_runtime(args.evidence, args.api)
+    if args.phase == "record-kvm":
+        if not args.phase_detail:
+            parser.error("record-kvm requires --phase-detail before|after")
+        return record_kvm(args.evidence, args.phase_detail)
     if not args.image:
         parser.error("record-image requires --image")
     return record_image(args.evidence, args.api, args.image)

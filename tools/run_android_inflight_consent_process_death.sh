@@ -9,7 +9,7 @@ source "$(dirname "$0")/assert_disposable_android_emulator.sh"
 package=app.serea.android.isolated
 test_package=app.serea.android.isolated.test
 component="$package/app.serea.android.googleauth.PrivateGoogleInFlightDeathHarnessActivity"
-sender_component="$package/app.serea.android.googleauth.PrivateGoogleConsentSenderTestActivity"
+sender_component="$test_package/app.serea.android.googleauth.SyntheticConsentSenderActivity"
 evidence="${SEREA_CONSENT_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/inflight-consent-process-death}"
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
@@ -51,6 +51,14 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 grep -Fq "IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:pid=" "$evidence/in-flight-logcat.txt" || fail 'A did not enter the synthetic in-flight Consent state'
+for _ in $(seq 1 30); do
+  "${adb_cmd[@]}" logcat -d -s SereaSyntheticConsent:I > "$evidence/sender-logcat.txt"
+  if grep -F "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/sender-logcat.txt" >/dev/null; then break; fi
+  sleep 1
+done
+grep -Fq "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/sender-logcat.txt" || fail 'external synthetic Consent sender did not become active'
+test_pid_before="$(pid_for "$test_package")"
+[[ -n "$test_pid_before" ]] || fail 'external sender/test package process PID was missing'
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-in-flight.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-in-flight.txt"
 grep -Fq "$sender_component" "$evidence/activities-in-flight.txt" || fail 'synthetic Consent sender was not the active Activity'
@@ -62,7 +70,10 @@ printf 'target_pid_before=%s\n' "$target_pid_before" >> "$evidence/provenance.tx
 "${adb_cmd[@]}" shell am force-stop "$package"
 target_pid_after="$(pid_for "$package")"
 [[ -z "$target_pid_after" ]] || fail "target process survived force-stop with PID $target_pid_after"
+test_pid_after_kill="$(pid_for "$test_package")"
+[[ "$test_pid_before" == "$test_pid_after_kill" ]] || fail 'external sender/instrumentation package process was terminated with the target'
 printf 'target_pid_after_kill=absent\n' >> "$evidence/provenance.txt"
+printf 'external_sender_pid_after_target_kill=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
 
 "${adb_cmd[@]}" shell am start -W -n "$component" \
   --es phase verify-B --es token "$SEREA_CONSENT_DEATH_RUN_ID" > "$evidence/start-B.txt" 2>&1 || fail 'could not restart app for request B'
@@ -73,17 +84,27 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=42:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not reject stale A consent and picker results'
-if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/recovery-logcat.txt"; then
+"${adb_cmd[@]}" shell am start -W -n "$sender_component" \
+  --es token "$SEREA_CONSENT_DEATH_RUN_ID" --es action complete > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not complete external Consent A after B started'
+grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityManager did not reactivate the external Consent sender'
+for _ in $(seq 1 30); do
+  "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
+  if grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then
+    if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi
+  fi
+  sleep 1
+done
+if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"; then
   printf 'delivered\n' > "$evidence/activity-result-delivery.txt"
 else
-  printf 'not-delivered-by-android-after-force-stop\n' > "$evidence/activity-result-delivery.txt"
+  printf 'not-delivered-within-30s-after-external-sender-completion\n' > "$evidence/activity-result-delivery.txt"
 fi
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-restart.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-restart.txt"
 
 test_pid_after="$(pid_for "$test_package")"
-printf 'instrumentation_pid_after=%s\n' "${test_pid_after:-absent}" >> "$evidence/provenance.txt"
-[[ "$test_pid_before" == "$test_pid_after" ]] || fail 'instrumentation package process changed during target process death check'
+printf 'external_sender_pid_after_result=%s\n' "${test_pid_after:-absent}" >> "$evidence/provenance.txt"
+[[ "$test_pid_before" == "$test_pid_after" ]] || fail 'external sender/instrumentation package process changed during target process death check'
 target_pid_after_restart="$(pid_for "$package")"
 [[ -n "$target_pid_after_restart" && "$target_pid_after_restart" != "$target_pid_before" ]] || fail 'target process did not return with a new PID'
 printf 'target_pid_after_restart=%s\n' "$target_pid_after_restart" >> "$evidence/provenance.txt"

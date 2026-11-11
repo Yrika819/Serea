@@ -2,6 +2,7 @@ package app.serea.android.googleauth
 
 import android.app.Activity
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import android.os.Process
@@ -34,9 +35,11 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         val identityA = identityA()
         val gate = PrivateGoogleConsentIdentityGate()
         check(gate.begin(identityA))
-        val sender = Intent(this, PrivateGoogleConsentSenderTestActivity::class.java)
-            .putExtra(PrivateGoogleConsentSenderTestActivity.EXTRA_HOLD_OPEN, true)
-            .putExtra(PrivateGoogleConsentSenderTestActivity.EXTRA_PAYLOAD, "synthetic-consent-A")
+        // The sender is installed in the separate AndroidTest APK. force-stop of Serea must
+        // leave this external synthetic consent UI alive so the host can return A afterward.
+        val sender = Intent().setComponent(
+            ComponentName("${packageName}.test", "app.serea.android.googleauth.SyntheticConsentSenderActivity"),
+        ).putExtra(EXTRA_TOKEN, runToken)
         val pendingIntent = PendingIntent.getActivity(
             this, 5101, sender, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -79,8 +82,8 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
     private fun token(): String = intent.getStringExtra(EXTRA_TOKEN).orEmpty()
 
     companion object {
-        const val EXTRA_PHASE = "phase"
         const val EXTRA_TOKEN = "token"
+        const val EXTRA_PHASE = "phase"
         const val PHASE_IN_FLIGHT = "in-flight-A"
         const val PHASE_VERIFY_B = "verify-B"
         const val TAG = "SereaConsentDeath"

@@ -10,6 +10,10 @@ import android.util.Log
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /** Host-controlled isolated harness for a real OS kill while a synthetic Consent sender is foreground. */
 class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
@@ -31,7 +35,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             } else {
                 Log.i(TAG, "A_RECREATED_NO_RELAUNCH:$runToken:pid=${Process.myPid()}")
             }
-            PHASE_VERIFY_B -> verifyFreshRequest(runToken)
+            PHASE_VERIFY_B -> lifecycleScope.launch { verifyFreshRequest(runToken) }
             else -> error("invalid phase")
         }
     }
@@ -55,7 +59,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         relay.launch(relayIntent)
     }
 
-    private fun verifyFreshRequest(runToken: String) {
+    private suspend fun verifyFreshRequest(runToken: String) {
         val identityB = PrivateGoogleConsentIdentity("request-B", 42L, "session-B")
         val gateB = PrivateGoogleConsentIdentityGate()
         check(gateB.begin(identityB))
@@ -74,24 +78,58 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
 
         // Exercise AccountPicker's OS result identity guard after restart. The IDs/generation
         // intentionally collide; the per-launch token must still protect request B.
+        val fakeGatewayStats = ConsentHarnessGatewayStats()
         val viewModel = PrivateGoogleAuthorizationViewModel(
             null,
             enabledInThisVariant = true,
             realOAuthEnabled = true,
-            realGatewayFactory = { _, _ -> error("real authorization gateway must never be constructed") },
+            realGatewayFactory = { _, _ ->
+                fakeGatewayStats.factoryCalls++
+                ConsentHarnessGateway(this, fakeGatewayStats)
+            },
         )
         check(viewModel.state.value.status == PrivateGoogleAuthStatus.DISCONNECTED)
         check(viewModel.state.value.pendingRealConsentRequestId == null)
         check(viewModel.calendarSession.value == null)
         val pickerB = checkNotNull(viewModel.beginRealAccountSelection())
-        check(!viewModel.cancelRealAccountSelection(pickerB.requestId, pickerB.generation, "old-picker-token"))
-        viewModel.completeRealConsentResult(
-            PrivateGoogleConsentActivityResult(identityA(), Activity.RESULT_OK, Intent()),
+        viewModel.onRealAccountSelected(
+            pickerB.requestId,
+            pickerB.generation,
+            "old-picker-token",
+            "synthetic@example.invalid",
+            GOOGLE_ACCOUNT_TYPE,
         )
         check(viewModel.state.value.status == PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING)
         check(viewModel.state.value.pendingAccountSelectionToken == pickerB.requestToken)
+        check(fakeGatewayStats.factoryCalls == 0) { "stale AccountPicker result constructed an authorization gateway" }
+        check(!viewModel.cancelRealAccountSelection(pickerB.requestId, pickerB.generation, "old-picker-token"))
+        viewModel.onRealAccountSelected(
+            pickerB.requestId,
+            pickerB.generation,
+            pickerB.requestToken,
+            "synthetic@example.invalid",
+            GOOGLE_ACCOUNT_TYPE,
+        )
+        check(fakeGatewayStats.factoryCalls == 1)
+        viewModel.requestPrimaryCalendarConsent()
+        withTimeout(5_000) {
+            viewModel.state.first { it.status == PrivateGoogleAuthStatus.CONSENT_PENDING }
+        }
+        val stateBeforeStaleConsent = viewModel.state.value
+        check(stateBeforeStaleConsent.pendingRealConsentRequestId == "request-B")
+        viewModel.completeRealConsentResult(
+            PrivateGoogleConsentActivityResult(identityA(), Activity.RESULT_OK, Intent()),
+        )
+        check(viewModel.state.value == stateBeforeStaleConsent) { "stale consent result changed the active B authorization state" }
         check(viewModel.calendarSession.value == null)
-        Log.i(TAG, "STALE_REJECTED:$runToken:request=${identityB.requestId}:generation=${identityB.generation}:session=${identityB.authorizationSessionId}:pid=${Process.myPid()}:provider=Fake:http=0:tokens=0:gmail=0:calendarList=0")
+        check(fakeGatewayStats.authorizeCalls == 1)
+        check(fakeGatewayStats.resultCalls == 0)
+        check(fakeGatewayStats.cancelCalls == 0)
+        check(fakeGatewayStats.tokenCalls == 0)
+        check(fakeGatewayStats.gmailCalls == 0)
+        check(fakeGatewayStats.calendarListCalls == 0)
+        check(fakeGatewayStats.httpCalls == 0)
+        Log.i(TAG, "STALE_REJECTED:$runToken:request=${identityB.requestId}:generation=${identityB.generation}:session=${identityB.authorizationSessionId}:pid=${Process.myPid()}:provider=Fake:factory=${fakeGatewayStats.factoryCalls}:authorize=${fakeGatewayStats.authorizeCalls}:result=${fakeGatewayStats.resultCalls}:cancel=${fakeGatewayStats.cancelCalls}:token=${fakeGatewayStats.tokenCalls}:gmail=${fakeGatewayStats.gmailCalls}:calendarList=${fakeGatewayStats.calendarListCalls}:http=${fakeGatewayStats.httpCalls}")
     }
 
     private fun identityA() = PrivateGoogleConsentIdentity("request-A", 41L, "session-A")
@@ -104,5 +142,61 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         const val PHASE_IN_FLIGHT = "in-flight-A"
         const val PHASE_VERIFY_B = "verify-B"
         const val TAG = "SereaConsentDeath"
+    }
+
+    private class ConsentHarnessGatewayStats {
+        var factoryCalls = 0
+        var authorizeCalls = 0
+        var resultCalls = 0
+        var cancelCalls = 0
+        var tokenCalls = 0
+        var gmailCalls = 0
+        var calendarListCalls = 0
+        var httpCalls = 0
+    }
+
+    /** In-memory gateway used only by this isolated test Activity; it has no Google client or HTTP path. */
+    private class ConsentHarnessGateway(
+        context: android.content.Context,
+        private val stats: ConsentHarnessGatewayStats,
+    ) : PrivateGoogleRealAuthorizationGateway {
+        override val mode = GoogleAuthorizationMode.MOCK_ONLY
+        override val authorizationSessionId = "session-B"
+        private val pendingIntent = PendingIntent.getActivity(
+            context,
+            991,
+            Intent(context, PrivateGoogleInFlightDeathHarnessActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+            stats.tokenCalls++
+            return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
+        }
+
+        override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+            GoogleServiceState.AVAILABLE,
+            scopes.associateWith { ScopePermission.NEEDS_CONSENT },
+        )
+
+        override suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
+            stats.authorizeCalls++
+            return AuthorizationOutcome.ConsentRequired(scopes, "request-B")
+        }
+
+        override fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome {
+            stats.resultCalls++
+            return AuthorizationOutcome.Rejected(AuthorizationFailure.STALE_CONSENT_RESULT)
+        }
+
+        override fun takePendingConsentIntent(requestId: String): PendingIntent? =
+            if (requestId == "request-B") pendingIntent else null
+
+        override fun cancelConsentRequest(requestId: String): Boolean {
+            stats.cancelCalls++
+            return false
+        }
+
+        override fun disableInApp(feature: GoogleFeature) = Unit
     }
 }

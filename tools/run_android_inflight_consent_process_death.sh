@@ -90,11 +90,11 @@ grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityMana
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
   if grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then
-    if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi
+    if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi
   fi
   sleep 1
 done
-if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"; then
+if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:" "$evidence/result-delivery-logcat.txt"; then
   printf 'delivered\n' > "$evidence/activity-result-delivery.txt"
 else
   printf 'not-delivered-within-30s-after-external-sender-completion\n' > "$evidence/activity-result-delivery.txt"

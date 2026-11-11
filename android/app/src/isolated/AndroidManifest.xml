@@ -14,6 +14,14 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:permission="android.permission.DUMP" />
+        <receiver
+            android:name="app.serea.android.googleauth.PrivateGoogleInFlightDeathReplayReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="app.serea.android.action.REPLAY_OLD_CONSENT_RESULT" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name="app.serea.android.googleauth.PrivateGoogleConsentRelayTestActivity"
             android:exported="false" />

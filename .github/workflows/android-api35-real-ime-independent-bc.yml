@@ -107,6 +107,7 @@ jobs:
               "tools/tests/test_android_formal_observer.py"|\
               "tools/observe_android_formal.py"|\
               "tools/run_android_instrumentation_campaign.sh"|\
+              "tools/run_android_inflight_consent_process_death.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
               "tools/run_android_instrumentation_campaign.sh"|\

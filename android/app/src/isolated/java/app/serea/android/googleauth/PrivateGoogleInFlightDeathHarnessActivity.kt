@@ -9,10 +9,12 @@ import android.os.Process
 import android.util.Log
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 
 /** Host-controlled isolated harness for a real OS kill while a synthetic Consent sender is foreground. */
 class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
-    private val relay = registerForActivityResult(PrivateGoogleConsentRelayContract()) { result ->
+    private val relay = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { activityResult ->
+        val result = PrivateGoogleConsentRelayProtocol.parseResult(activityResult.resultCode, activityResult.data)
         val identity = result.identity
         Log.i(TAG, "RESULT_DELIVERED:${token()}:request=${identity?.requestId}:generation=${identity?.generation}:session=${identity?.authorizationSessionId}:code=${result.resultCode}")
     }

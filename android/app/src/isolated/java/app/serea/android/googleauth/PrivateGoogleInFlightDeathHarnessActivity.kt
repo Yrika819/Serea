@@ -97,7 +97,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             pickerB.generation,
             "old-picker-token",
             "synthetic@example.invalid",
-            GOOGLE_ACCOUNT_TYPE,
+            PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE,
         )
         check(viewModel.state.value.status == PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING)
         check(viewModel.state.value.pendingAccountSelectionToken == pickerB.requestToken)
@@ -108,7 +108,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             pickerB.generation,
             pickerB.requestToken,
             "synthetic@example.invalid",
-            GOOGLE_ACCOUNT_TYPE,
+            PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE,
         )
         check(fakeGatewayStats.factoryCalls == 1)
         viewModel.requestPrimaryCalendarConsent()

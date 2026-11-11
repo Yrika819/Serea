@@ -18,7 +18,6 @@ class SyntheticConsentSenderActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getStringExtra(EXTRA_ACTION) != ACTION_COMPLETE || token().isBlank()) return
-        setResult(RESULT_OK, Intent().putExtra(EXTRA_PAYLOAD, "synthetic-consent-result-A"))
         Log.i(TAG, "SENDER_COMPLETED:${token()}:pid=${android.os.Process.myPid()}")
         finish()
     }
@@ -30,6 +29,5 @@ class SyntheticConsentSenderActivity : Activity() {
         const val EXTRA_TOKEN = "token"
         const val EXTRA_ACTION = "action"
         const val ACTION_COMPLETE = "complete"
-        const val EXTRA_PAYLOAD = "synthetic-consent-payload"
     }
 }

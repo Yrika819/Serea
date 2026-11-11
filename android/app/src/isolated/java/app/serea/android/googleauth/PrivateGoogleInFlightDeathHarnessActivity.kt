@@ -9,7 +9,6 @@ import android.os.Process
 import android.util.Log
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -17,12 +16,6 @@ import kotlinx.coroutines.withTimeout
 
 /** Host-controlled isolated harness for a real OS kill while a synthetic Consent sender is foreground. */
 class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
-    private val relay = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { activityResult ->
-        val result = PrivateGoogleConsentRelayProtocol.parseResult(activityResult.resultCode, activityResult.data)
-        val identity = result.identity
-        Log.i(TAG, "RESULT_DELIVERED:${token()}:request=${identity?.requestId}:generation=${identity?.generation}:session=${identity?.authorizationSessionId}:code=${result.resultCode}")
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply { text = "Private Google in-flight death harness" })
@@ -50,14 +43,10 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             ComponentName("${packageName}.test", "app.serea.android.googleauth.SyntheticConsentSenderActivity"),
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
             .putExtra(EXTRA_TOKEN, runToken)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 5101, sender, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val relayIntent = PrivateGoogleConsentRelayContract()
-            .createIntent(this, PendingGoogleConsentActivityResult(identityA, pendingIntent))
-            .setClass(this, PrivateGoogleConsentRelayTestActivity::class.java)
         Log.i(TAG, "IN_FLIGHT:$runToken:request=${identityA.requestId}:generation=${identityA.generation}:session=${identityA.authorizationSessionId}:pid=${Process.myPid()}")
-        relay.launch(relayIntent)
+        // Keep the external synthetic UI in its own task. The original Serea process owns the
+        // pending identity, while the host later replays A directly into B's guarded ViewModel.
+        startActivity(sender)
     }
 
     private suspend fun verifyFreshRequest(runToken: String) {

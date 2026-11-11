@@ -831,6 +831,26 @@ TESTS
         | tee "$fake_google_process_death_evidence/status.txt" >&2
       google_demo_ui_stage_result=1
     fi
+    if [[ "$google_demo_ui_stage_result" -eq 0 ]]; then
+      consent_death_evidence="$evidence/stages/google-calendar-and-gmail-ui/inflight-consent-process-death"
+      mkdir -p "$consent_death_evidence"
+      if EXPECTED_API_LEVEL="$api_level" \
+        SEREA_CONSENT_DEATH_RUN_ID="serea-consent-death-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
+        SEREA_CONSENT_DEATH_EVIDENCE_DIR="$consent_death_evidence" \
+        bash "$tool_dir/run_android_inflight_consent_process_death.sh" \
+        > "$consent_death_evidence/run.log" 2>&1; then
+        cat "$consent_death_evidence/run.log"
+      else
+        cat "$consent_death_evidence/run.log" >&2 || true
+        google_demo_ui_stage_result=1
+      fi
+      consent_death_status="$(cat "$consent_death_evidence/status.txt" 2>/dev/null || printf 'FAIL')"
+      if [[ "$consent_death_status" != PASS ]]; then
+        printf 'FAIL: in-flight Consent process-death status was %s.\n' "$consent_death_status" \
+          | tee "$consent_death_evidence/status.txt" >&2
+        google_demo_ui_stage_result=1
+      fi
+    fi
   fi
 
   # This campaign owns only the isolated CI target and test packages on a verified disposable

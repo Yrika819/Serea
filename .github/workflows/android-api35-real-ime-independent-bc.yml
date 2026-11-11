@@ -91,6 +91,10 @@ jobs:
               "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt"|\
               "android/app/src/debug/AndroidManifest.xml"|\
               "android/app/src/isolated/AndroidManifest.xml"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleInFlightDeathHarnessActivity.kt"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleConsentRelayTestActivity.kt"|\
+              "android/app/src/androidTest/AndroidManifest.xml"|\
+              "android/app/src/androidTest/java/app/serea/android/googleauth/SyntheticConsentSenderActivity.kt"|\
               "android/app/build.gradle.kts"|\
               "tools/verify_serea_real_ime_manifest_scope.py"|\
               "android/app/src/main/java/app/serea/android/MainActivity.kt"|\
@@ -105,6 +109,7 @@ jobs:
               "tools/tests/test_android_formal_observer.py"|\
               "tools/observe_android_formal.py"|\
               "tools/run_android_instrumentation_campaign.sh"|\
+              "tools/run_android_inflight_consent_process_death.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
               "tools/run_android_instrumentation_campaign.sh"|\

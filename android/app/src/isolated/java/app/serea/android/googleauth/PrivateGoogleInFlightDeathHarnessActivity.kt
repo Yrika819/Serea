@@ -59,7 +59,16 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         val identityB = PrivateGoogleConsentIdentity("request-B", 42L, "session-B")
         val gateB = PrivateGoogleConsentIdentityGate()
         check(gateB.begin(identityB))
+        check(!gateB.consume(identityB.copy(authorizationSessionId = "old-session"))) {
+            "session mismatch consumed new pending request"
+        }
+        check(gateB.isPending(identityB)) { "session mismatch changed new request" }
+        check(!gateB.consume(identityB.copy(generation = 41L))) {
+            "generation mismatch consumed new pending request"
+        }
+        check(gateB.isPending(identityB)) { "generation mismatch changed new request" }
         check(!gateB.consume(identityA())) { "old consent identity consumed new pending request" }
+        check(!gateB.cancel(identityA())) { "old consent identity cancelled new pending request" }
         check(gateB.isPending(identityB)) { "new request changed after stale consent result" }
         check(!gateB.begin(identityB)) { "second authorization was admitted" }
 

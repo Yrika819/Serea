@@ -53,7 +53,7 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
         super.onCreate(savedInstanceState)
         instance = this
         launchCount++
-        if (delayedResult) {
+        if (delayedResult || intent.getBooleanExtra(EXTRA_HOLD_OPEN, false)) {
             return
         }
         finishWith(417, "original-google-result")
@@ -71,6 +71,7 @@ class PrivateGoogleConsentSenderTestActivity : Activity() {
 
     companion object {
         const val EXTRA_PAYLOAD = "relay-test-payload"
+        const val EXTRA_HOLD_OPEN = "relay-test-hold-open"
         @Volatile private var delayedResult = false
         private var resumed = CountDownLatch(0)
         @Volatile private var instance: PrivateGoogleConsentSenderTestActivity? = null

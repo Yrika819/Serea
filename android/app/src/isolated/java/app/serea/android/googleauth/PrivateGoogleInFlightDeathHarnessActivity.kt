@@ -65,6 +65,9 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             realOAuthEnabled = true,
             realGatewayFactory = { _, _ -> error("real authorization gateway must never be constructed") },
         )
+        check(viewModel.state.value.status == PrivateGoogleAuthStatus.DISCONNECTED)
+        check(viewModel.state.value.pendingRealConsentRequestId == null)
+        check(viewModel.calendarSession.value == null)
         val pickerB = checkNotNull(viewModel.beginRealAccountSelection())
         check(!viewModel.cancelRealAccountSelection(pickerB.requestId, pickerB.generation, "old-picker-token"))
         viewModel.completeRealConsentResult(

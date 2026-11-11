@@ -898,9 +898,26 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertNotIn('activity-recreation', campaign)
         self.assertNotIn('calendar-target', campaign)
         focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
+        isolated_consent_stage = campaign.index('run_diagnostic_stage consent-relay-lifecycle-api26')
+        consent_companion_stage = campaign.index('run_diagnostic_stage consent-relay-companion-api26')
+        api26_focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused', isolated_consent_stage)
+        companion_block = campaign.split("consent_companion_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
+        companion_identities = {line.strip() for line in companion_block.splitlines() if line.strip()}
         class_stage = campaign.index('run_diagnostic_stage calendar-class')
         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
         full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+        self.assertEqual(4, len(companion_identities))
+        self.assertNotIn(
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#relayRecreationDoesNotRelaunchOrLoseTheInFlightIdentity",
+            companion_identities,
+        )
+        self.assertIn('consent_companion_filter="$(printf', campaign)
+        self.assertRegex(
+            campaign,
+            r'run_diagnostic_stage consent-relay-companion-api26 \\\s+"\$consent_companion_filter" \\\s+1200 4',
+        )
+        self.assertLess(isolated_consent_stage, consent_companion_stage)
+        self.assertLess(consent_companion_stage, api26_focused_stage)
         self.assertLess(focused_stage, class_stage)
         self.assertLess(class_stage, chat_class_stage)
         self.assertLess(chat_class_stage, full_suite)
@@ -940,16 +957,21 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
             "app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
             "app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview",
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#nestedActivityResultReturnsLaunchIdentityAndOriginalPayload",
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#relayRecreationDoesNotRelaunchOrLoseTheInFlightIdentity",
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#missingRelayIdentityFailsClosed",
+            "app.serea.android.googleauth.PrivateGoogleConsentRelayInstrumentationTest#accountPickerContractCarriesPerLaunchTokenAcrossSuccessAndCancellation",
+            "app.serea.android.googleauth.PrivateGoogleIsolatedManifestTest#isolatedManifestDoesNotRegisterPrivateProductRelayActivities",
         }
         focused = campaign.split("google_demo_ui_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
         actual = {line.strip() for line in focused.splitlines() if line.strip()}
         self.assertEqual(expected, actual)
-        self.assertEqual(16, len(actual))
+        self.assertEqual(21, len(actual))
         self.assertTrue(expected.issubset(set(manifest.splitlines())))
         self.assertFalse(expected.intersection(required.splitlines()))
         self.assertFalse(expected.intersection(additional.splitlines()))
         self.assertIn('if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS', campaign)
-        self.assertIn('run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 16', campaign)
+        self.assertIn('run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 21', campaign)
         helper = 'bash "$tool_dir/run_android_fake_google_process_death.sh"'
         self.assertIn("GoogleCalendarHandoffRevocationUiTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
         self.assertIn('SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1', campaign)

@@ -105,6 +105,21 @@ jobs:
               exit 1
             fi
           done
+      - name: Verify public Debug and Release APKs exclude Private Google relay activities
+        shell: bash
+        run: |
+          set -euo pipefail
+          aapt="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          for apk in android/app/build/outputs/apk/debug/app-debug.apk \
+                     android/app/build/outputs/apk/release/app-release-unsigned.apk; do
+            test -s "$apk"
+            manifest="$($aapt dump xmltree "$apk" AndroidManifest.xml)"
+            if grep -E 'PrivateGoogle(ConsentRelay|AccountPicker)Activity' <<<"$manifest"; then
+              echo "Private Google relay activity unexpectedly packaged in public APK: $apk" >&2
+              exit 1
+            fi
+          done
+          echo "PASS: public Debug and Release APK manifests omit Private Google relay activities"
       - name: Android lint
         working-directory: android
         run: ./gradlew --no-daemon lintDebug lintIsolated

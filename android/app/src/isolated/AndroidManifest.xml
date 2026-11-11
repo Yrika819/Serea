@@ -9,6 +9,16 @@
             android:excludeFromRecents="true"
             android:permission="android.permission.DUMP"
             android:launchMode="singleTask" />
+        <activity
+            android:name="app.serea.android.googleauth.PrivateGoogleConsentRelayTestActivity"
+            android:exported="false" />
+        <activity
+            android:name="app.serea.android.googleauth.PrivateGoogleConsentRelayResultHarnessActivity"
+            android:exported="false" />
+        <activity
+            android:name="app.serea.android.googleauth.PrivateGoogleConsentSenderTestActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <receiver
             android:name=".ProcessDeathHarnessReceiver"
             android:exported="true"

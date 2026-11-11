@@ -205,6 +205,15 @@ interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthoriz
     fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable = AutoCloseable { }
 }
 
+/** Private UI surface for foreground consent operations; never exposed to Public composition. */
+internal interface PrivateGoogleRealAuthorizationGateway : GoogleAuthorizationGateway {
+    suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome
+    fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome
+    fun takePendingConsentIntent(requestId: String): PendingIntent?
+    fun cancelConsentRequest(requestId: String): Boolean
+    fun disableInApp(feature: GoogleFeature)
+}
+
 /** Thread-safe synchronous notifications used to stop provider requests at grant invalidation. */
 internal class GoogleGrantInvalidationObservers {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -312,11 +321,11 @@ internal fun googleAuthorizationOperationFailure(
  * Real adapter around Google Play services AuthorizationClient. It is disabled unless an owner
  * explicitly enables it at construction. No authorization is initiated by application startup.
  */
-class PlayServicesGoogleAuthorizationGateway(
+internal class PlayServicesGoogleAuthorizationGateway(
     private val context: android.content.Context,
     private val realOAuthEnabled: Boolean = false,
     private val selectedAccount: Account? = null,
-) : GoogleAuthorizationGateway {
+) : PrivateGoogleRealAuthorizationGateway {
     /** A constructor flag alone cannot enable OAuth in a public/default build variant. */
     internal val realOAuthEnabledForBuild: Boolean = ownerPrivateGoogleOAuthEnabled(realOAuthEnabled)
     override val mode = GoogleAuthorizationMode.PLAY_SERVICES
@@ -360,7 +369,7 @@ class PlayServicesGoogleAuthorizationGateway(
     }
 
     /** Call from a user initiated foreground action. ConsentRequired must be launched by the UI. */
-    suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
+    override suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
         if (!realOAuthEnabledForBuild) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_REQUIRED)
         if (scopes.isEmpty()) return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
@@ -415,7 +424,7 @@ class PlayServicesGoogleAuthorizationGateway(
 
     /** Complete a foreground consent flow using the Activity Result Intent. */
     @MainThread
-    fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome {
+    override fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome {
         if (!realOAuthEnabledForBuild) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_REQUIRED)
         val pending = synchronized(consentLock) {
@@ -442,14 +451,15 @@ class PlayServicesGoogleAuthorizationGateway(
     }
 
     /** Consume the matching one-shot resolution. The request remains active until completion/cancel. */
-    fun takePendingConsentIntent(requestId: String): PendingIntent? = consentRequests.takeIntent(requestId)
+    override fun takePendingConsentIntent(requestId: String): PendingIntent? = consentRequests.takeIntent(requestId)
 
     /** Explicitly discard a cancelled/failed foreground consent flow. */
-    fun cancelConsentRequest(requestId: String): Boolean = consentRequests.cancel(requestId)
+    override fun cancelConsentRequest(requestId: String): Boolean = consentRequests.cancel(requestId)
 
-    fun disableInApp(feature: GoogleFeature) = synchronized(consentLock) {
+    override fun disableInApp(feature: GoogleFeature): Unit = synchronized(consentLock) {
         grantState.disableInApp(feature)
         consentRequests.cancelFeature(feature)
+        Unit
     }
     fun enableInApp(feature: GoogleFeature) = synchronized(consentLock) { grantState.enableInApp(feature) }
     override fun isEnabledInApp(feature: GoogleFeature): Boolean = synchronized(consentLock) {

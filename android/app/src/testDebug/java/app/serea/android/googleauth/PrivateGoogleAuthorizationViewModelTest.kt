@@ -371,13 +371,16 @@ class PrivateGoogleAuthorizationViewModelTest {
             assertEquals(CalendarAuthorizationState.MOCK_ONLY, session.status().state)
             val calendars = session.listCalendars()
             assertEquals(listOf("primary"), calendars.map { it.id.value })
-            assertTrue(session.listEventsPage(
+            val primaryEvents = session.listEventsPage(
                 app.serea.android.calendar.CalendarId("primary"),
                 app.serea.android.calendar.CalendarDateRange(
                     java.time.Instant.parse("2026-10-20T00:00:00Z"),
                     java.time.Instant.parse("2026-10-21T00:00:00Z"),
                 ), null,
-            ).events.all { it.key.calendarId.value == "primary" })
+            ).events
+            assertTrue(primaryEvents.isNotEmpty())
+            assertTrue(primaryEvents.all { it.key.calendarId.value == "primary" })
+            assertEquals("primary", session.getEvent(primaryEvents.first().key).key.calendarId.value)
             assertTrue(runCatching {
                 session.listEventsPage(
                     app.serea.android.calendar.CalendarId("demo-work"),

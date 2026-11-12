@@ -248,11 +248,15 @@ private class PrimaryOnlyCalendarReadPort(private val delegate: CalendarReadPort
     override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor = reject()
     override suspend fun getEvent(key: CalendarEventKey): CalendarEvent {
         requirePrimary(key.calendarId)
-        return delegate.getEvent(key)
+        return delegate.getEvent(key).also { event ->
+            if (event.key != key || event.key.calendarId.value != "primary") reject()
+        }
     }
     override suspend fun listEventsPage(calendarId: CalendarId, range: CalendarDateRange, pageToken: String?): CalendarEventPage {
         requirePrimary(calendarId)
-        return delegate.listEventsPage(calendarId, range, pageToken)
+        return delegate.listEventsPage(calendarId, range, pageToken).also { page ->
+            if (page.events.any { it.key.calendarId.value != "primary" }) reject()
+        }
     }
     private fun requirePrimary(calendarId: CalendarId) {
         if (calendarId.value != "primary") reject()

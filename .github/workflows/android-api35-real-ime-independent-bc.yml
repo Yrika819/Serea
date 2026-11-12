@@ -8,6 +8,8 @@ on:
       - codex/serea-g4-final-integration-candidate-20261027
     paths:
       - .github/workflows/android-api35-real-ime-independent-bc.yml
+      - tools/android_ci_host.py
+      - tools/test_android_ci_host.py
       - android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt
       - android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt
       - android/app/src/debug/AndroidManifest.xml
@@ -91,6 +93,10 @@ jobs:
               "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt"|\
               "android/app/src/debug/AndroidManifest.xml"|\
               "android/app/src/isolated/AndroidManifest.xml"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleInFlightDeathHarnessActivity.kt"|\
+              "android/app/src/isolated/java/app/serea/android/googleauth/PrivateGoogleConsentRelayTestActivity.kt"|\
+              "android/app/src/androidTest/AndroidManifest.xml"|\
+              "android/app/src/androidTest/java/app/serea/android/googleauth/SyntheticConsentSenderActivity.kt"|\
               "android/app/build.gradle.kts"|\
               "tools/verify_serea_real_ime_manifest_scope.py"|\
               "android/app/src/main/java/app/serea/android/MainActivity.kt"|\
@@ -105,6 +111,7 @@ jobs:
               "tools/tests/test_android_formal_observer.py"|\
               "tools/observe_android_formal.py"|\
               "tools/run_android_instrumentation_campaign.sh"|\
+              "tools/run_android_inflight_consent_process_death.sh"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
               "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
               "tools/run_android_instrumentation_campaign.sh"|\
@@ -273,9 +280,25 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: platform-tools
+          packages: platform-tools emulator
+      - name: Initialize API ${{ matrix.api }} host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}
+        run: python3 tools/android_ci_host.py initialize --api ${{ matrix.api }}-ime-${{ matrix.label }}
+      - name: Host Preflight API ${{ matrix.api }}
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}
+        run: python3 tools/android_ci_host.py preflight --api ${{ matrix.api }}-ime-${{ matrix.label }}
+      - name: APT Runtime Preparation API ${{ matrix.api }}
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}
+        run: python3 tools/android_ci_host.py install-runtime --api ${{ matrix.api }}-ime-${{ matrix.label }}
       - name: Install API ${{ matrix.api }} Google APIs x86_64 image
-        run: sdkmanager 'platforms;android-${{ matrix.api }}' 'build-tools;35.0.0' 'emulator' 'system-images;android-${{ matrix.api }};google_apis;x86_64'
+        run: sdkmanager 'platforms;android-${{ matrix.api }}' 'build-tools;35.0.0' 'system-images;android-${{ matrix.api }};google_apis;x86_64'
+      - name: Record API ${{ matrix.api }} system image
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}
+        run: python3 tools/android_ci_host.py record-image --api ${{ matrix.api }} --image 'system-images;android-${{ matrix.api }};google_apis;x86_64'
       - name: Initialize per-case evidence directory
         shell: bash
         run: |
@@ -322,8 +345,6 @@ jobs:
             "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
             "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
           } > "$host/runner-before-kvm.txt"
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
           if [[ "$(uname -m)" != x86_64 || ! -e /dev/kvm ]]; then
             echo 'BLOCKED: expected x86_64 runner with /dev/kvm; software emulation is not accepted.' | tee "$host/kvm-blocked.txt"
             exit 1
@@ -364,5 +385,13 @@ jobs:
         with:
           name: serea-api${{ matrix.api }}-ime-${{ matrix.label }}
           path: ${{ runner.temp }}/serea-api${{ matrix.api }}-ime-${{ matrix.label }}/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Preserve API ${{ matrix.api }} host preflight and APT evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/serea-r3-host-api${{ matrix.api }}-${{ matrix.label }}/
           if-no-files-found: warn
           retention-days: 30

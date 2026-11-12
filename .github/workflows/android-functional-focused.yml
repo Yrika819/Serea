@@ -9,6 +9,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/android-functional-focused.yml'
+      - 'tools/android_ci_host.py'
+      - 'tools/test_android_ci_host.py'
       - 'android/**'
       - 'tools/assert_exact_source_checkout.sh'
       - 'tools/run_android_functional_focused.sh'
@@ -19,6 +21,8 @@ on:
       - codex/serea-f5r-focused-candidate
     paths:
       - '.github/workflows/android-functional-focused.yml'
+      - 'tools/android_ci_host.py'
+      - 'tools/test_android_ci_host.py'
       - 'android/**'
       - 'tools/assert_exact_source_checkout.sh'
       - 'tools/run_android_functional_focused.sh'
@@ -110,6 +114,10 @@ jobs:
             exit 1
           fi
           echo "PASS: focused tests use exact source SHA $actual_source_sha"
+      - name: Initialize API 26 host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api26-host
+        run: python3 tools/android_ci_host.py initialize --api 26-focused
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -118,10 +126,20 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
-      - name: Install Emulator host runtime dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
+      - name: Host Preflight API 26 focused
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api26-host
+        run: python3 tools/android_ci_host.py preflight --api 26-focused
+      - name: APT Runtime Preparation API 26 focused
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api26-host
+        run: python3 tools/android_ci_host.py install-runtime --api 26-focused
+      - name: Install API 26 focused system image
+        run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
+      - name: Record API 26 focused system image
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api26-host
+        run: python3 tools/android_ci_host.py record-image --api 26 --image 'system-images;android-26;google_apis;x86'
       - name: Verify runner KVM and prepare accelerated disposable emulator
         run: |
           set -euo pipefail
@@ -148,7 +166,7 @@ jobs:
             echo 'runner_cpu_pressure_before_emulator:'
             cat /proc/pressure/cpu
             echo 'emulator_host_runtime:'
-            dpkg-query -W -f='${Package} ${Version}\n' libpulse0
+            dpkg-query -W -f='${Package} ${Version}\n' libpulse0 || echo 'libpulse0 package not installed; ldd preflight records actual loadability'
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
@@ -197,6 +215,14 @@ jobs:
           path: |
             android/app/build/outputs/androidTest-results/functional-api26/
             android/app/build/outputs/androidTest-results/functional-api26-host/
+      - name: Upload API 26 host preflight and APT diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-functional-api26-host-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-functional-api26-host/
 
   api35-focused:
     name: API 35 focused Fake providers, local Chat and Tasks E2E
@@ -218,6 +244,10 @@ jobs:
             exit 1
           fi
           echo "PASS: focused tests use exact source SHA $actual_source_sha"
+      - name: Initialize API 35 host evidence
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api35-host
+        run: python3 tools/android_ci_host.py initialize --api 35-focused
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -226,10 +256,20 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
-      - name: Install Emulator host runtime dependency
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libpulse0
+      - name: Host Preflight API 35 focused
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api35-host
+        run: python3 tools/android_ci_host.py preflight --api 35-focused
+      - name: APT Runtime Preparation API 35 focused
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api35-host
+        run: python3 tools/android_ci_host.py install-runtime --api 35-focused
+      - name: Install API 35 focused system image
+        run: sdkmanager 'platforms;android-35' 'system-images;android-35;google_apis;x86_64'
+      - name: Record API 35 focused system image
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-functional-api35-host
+        run: python3 tools/android_ci_host.py record-image --api 35 --image 'system-images;android-35;google_apis;x86_64'
       - name: Verify runner KVM and prepare accelerated disposable emulator
         run: |
           set -euo pipefail
@@ -256,7 +296,7 @@ jobs:
             echo 'runner_cpu_pressure_before_emulator:'
             cat /proc/pressure/cpu
             echo 'emulator_host_runtime:'
-            dpkg-query -W -f='${Package} ${Version}\n' libpulse0
+            dpkg-query -W -f='${Package} ${Version}\n' libpulse0 || echo 'libpulse0 package not installed; ldd preflight records actual loadability'
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
@@ -305,3 +345,11 @@ jobs:
           path: |
             android/app/build/outputs/androidTest-results/functional-api35/
             android/app/build/outputs/androidTest-results/functional-api35-host/
+      - name: Upload API 35 host preflight and APT diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-functional-api35-host-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-functional-api35-host/

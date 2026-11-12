@@ -1,0 +1,63 @@
+name: Android Host Probe
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Android host dependency and KVM probe (no AVD)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Initialize probe provenance
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-probe
+        run: python3 tools/android_ci_host.py initialize --api host-probe
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools emulator
+      - name: Host preflight and official mirror probe
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-probe
+        run: python3 tools/android_ci_host.py preflight --api host-probe
+      - name: Record pre-udev KVM state
+        if: always() && !cancelled()
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-probe
+        run: python3 tools/android_ci_host.py record-kvm --api host-probe --phase-detail before
+      - name: Prepare libpulse runtime from verified official Ubuntu sources if required
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-probe
+        run: python3 tools/android_ci_host.py install-runtime --api host-probe
+      - name: Apply disposable-runner KVM udev permissions
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record and require post-udev KVM access
+        if: always() && !cancelled()
+        env:
+          SEREA_ANDROID_HOST_EVIDENCE_DIR: ${{ runner.temp }}/serea-android-host-probe
+        run: python3 tools/android_ci_host.py record-kvm --api host-probe --phase-detail after
+      - name: Upload host probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-host-probe-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/serea-android-host-probe/

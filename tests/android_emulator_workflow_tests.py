@@ -1310,6 +1310,82 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('if ! observed="$(query_package_pid "$package")"; then', harness)
         subprocess.run(["bash", "-n", str(ROOT / "tools/run_android_fake_google_process_death.sh")], check=True)
 
+    def test_inflight_consent_completion_targets_original_androidtest_sender_once(self) -> None:
+        script = (ROOT / "tools/run_android_inflight_consent_process_death.sh").read_text(encoding="utf-8")
+        sender = (ROOT / "android/app/src/androidTest/java/app/serea/android/googleauth/SyntheticConsentSenderActivity.java").read_text(encoding="utf-8")
+        receiver = (ROOT / "android/app/src/androidTest/java/app/serea/android/googleauth/SyntheticConsentSenderCompletionReceiver.java").read_text(encoding="utf-8")
+        test_manifest = (ROOT / "android/app/src/androidTest/AndroidManifest.xml").read_text(encoding="utf-8")
+        main_manifest = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+        isolated_manifest = (ROOT / "android/app/src/isolated/AndroidManifest.xml").read_text(encoding="utf-8")
+        private_manifest = (ROOT / "android/app/src/privateBeta/AndroidManifest.xml").read_text(encoding="utf-8")
+
+        self.assertIn("SyntheticConsentSenderCompletionReceiver", script)
+        self.assertIn("am broadcast --receiver-foreground", script)
+        self.assertIn('original_a_task_id="$(awk -v sender="$sender_component"', script)
+        self.assertIn('/Task\\{.*#[0-9]+/', script)
+        self.assertIn('/Task id #[0-9]+/', script)
+        self.assertIn('"$original_a_task_id" != "$request_b_task_id"', script)
+        self.assertIn('shell am task focus "$original_a_task_id"', script)
+        self.assertNotIn('shell am task move-to-front', script)
+        self.assertNotIn('shell am stack move-task', script)
+        self.assertIn("TARGET_A_TASK_RESTORED:", script)
+        sender_completion_assertion = script.index(
+            'grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"'
+        )
+        unresolved_delivery_marker = script.index(
+            "printf 'DELIVERY_UNKNOWN\\n' > \"$evidence/activity-result-delivery.txt\"",
+            sender_completion_assertion,
+        )
+        original_task_restore = script.index('restore_task_output="$evidence/restore-original-A-task.txt"')
+        self.assertLess(sender_completion_assertion, unresolved_delivery_marker)
+        self.assertLess(unresolved_delivery_marker, original_task_restore)
+        self.assertIn('== NOT_RUN ||', script)
+        self.assertNotIn('am start -W -f 0x04000000 -n "$sender_component"', script)
+        self.assertIn("generation=1:session=session-A", script)
+        self.assertNotIn("generation=41:session=session-A", script)
+        self.assertIn('sender_created_count" == 1', script)
+        self.assertIn('sender_completion_count" == 1', script)
+        self.assertIn('sender_instance_nonce', script)
+        self.assertIn("SENDER_CREATED:", sender)
+        self.assertIn("SENDER_RESUMED:", sender)
+        self.assertNotIn("kotlin.", sender)
+        self.assertIn("SyntheticConsentSenderRegistry.current() != this", sender)
+        self.assertIn("!token.equals(registeredToken) || !nonce.equals(registeredNonce)", sender)
+        self.assertIn("if (completed ||", sender)
+        self.assertNotIn("kotlin.", receiver)
+        self.assertIn("ACTION_COMPLETE.equals(intent.getAction())", receiver)
+        self.assertIn("DELIVERED_REJECTED", script)
+        self.assertIn("NOT_DELIVERED", script)
+        self.assertIn("DELIVERY_UNKNOWN", script)
+        self.assertIn("NOT_RUN", script)
+        self.assertIn("printf 'FAIL\\n' > \"$evidence/activity-result-delivery.txt\"", script)
+        self.assertIn("status=CONSENT_PENDING", script)
+        self.assertIn(
+            'B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:',
+            script,
+        )
+        self.assertNotIn(
+            'B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:pid=',
+            script,
+        )
+        self.assertIn("synthetic-consent-result-A", script)
+        self.assertIn("duplicate-sender-completion.txt", script)
+        self.assertIn("SENDER_COMPLETION_REJECTED", script)
+        self.assertIn("sender_process_after_completion=process-exited-after-original-Activity-finished", script)
+        self.assertIn("SIGKILL_PRECHECK", script)
+        self.assertIn('NR > 1 && $1 == pid', script)
+        self.assertIn("STALE_REPLAY_REJECTED", script)
+        self.assertIn("complete-B", script)
+        self.assertIn("B_VALID_RESULT_DELIVERED", script)
+        self.assertIn("android:permission=\"android.permission.DUMP\"", test_manifest)
+        self.assertIn("SyntheticConsentSenderCompletionReceiver", test_manifest)
+        self.assertIn("SyntheticConsentBResultActivity", isolated_manifest)
+        self.assertNotIn("SyntheticConsentSenderCompletionReceiver", main_manifest)
+        self.assertNotIn("SyntheticConsentSenderCompletionReceiver", isolated_manifest)
+        self.assertNotIn("SyntheticConsentBResultActivity", main_manifest)
+        self.assertNotIn("SyntheticConsentBResultActivity", private_manifest)
+        subprocess.run(["bash", "-n", str(ROOT / "tools/run_android_inflight_consent_process_death.sh")], check=True)
+
     def test_fake_google_process_death_pid_queries_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1608,16 +1684,55 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
 
         workflow = yaml.safe_load((ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
         jobs = workflow["jobs"]
+        probe_workflow = (ROOT / ".github/workflows/android-host-probe.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_call:", probe_workflow)
+        self.assertIn("  workflow_dispatch:", probe_workflow)
+        self.assertIn("serea-android-host-probe-attempt-${{ github.run_attempt }}", probe_workflow)
+        self.assertIn("record-kvm --api host-probe --phase-detail before", probe_workflow)
+        self.assertIn("record-kvm --api host-probe --phase-detail after", probe_workflow)
+        self.assertNotIn("system-images;android-", probe_workflow)
+        probe_yaml = yaml.safe_load(probe_workflow)
+        probe_steps = probe_yaml["jobs"]["probe"]["steps"]
+        probe_upload = next(step for step in probe_steps if "upload-artifact" in step.get("uses", ""))
+        self.assertEqual(probe_upload["if"], "always()")
+        self.assertEqual(probe_upload["with"]["if-no-files-found"], "error")
+        self.assertGreaterEqual(
+            next(i for i, step in enumerate(probe_steps) if "phase-detail before" in step.get("run", "")),
+            0,
+        )
+        self.assertGreater(
+            next(i for i, step in enumerate(probe_steps) if "phase-detail after" in step.get("run", "")),
+            next(i for i, step in enumerate(probe_steps) if "phase-detail before" in step.get("run", "")),
+        )
+        probe_job = jobs["android-host-probe"]
+        self.assertEqual(probe_job["needs"], "android-changes")
+        self.assertEqual(probe_job["uses"], "./.github/workflows/android-host-probe.yml")
         for api in ("26", "35"):
             job = jobs[f"android-emulator-api{api}"]
-            self.assertEqual(job["needs"], ["android-changes", "android-build"])
+            self.assertEqual(job["needs"], ["android-changes", "android-build", "android-host-probe"])
+            self.assertIn("needs.android-host-probe.result == 'success'", job["if"])
+            self.assertEqual(job["outputs"]["artifact_attempt"], "${{ github.run_attempt }}")
             self.assertTrue(any("android-emulator-runner" in step.get("uses", "") for step in job["steps"]))
-            artifact_names = [
-                step.get("with", {}).get("name")
+            artifacts = [
+                step
                 for step in job["steps"]
                 if "upload-artifact" in step.get("uses", "")
             ]
-            self.assertEqual(artifact_names, [f"serea-android-formal-api{api}-provisional"])
+            self.assertEqual(
+                [step.get("with", {}).get("name") for step in artifacts],
+                [
+                    f"serea-android-formal-api{api}-provisional-attempt-${{{{ github.run_attempt }}}}",
+                    f"serea-android-host-api{api}-attempt-${{{{ github.run_attempt }}}}",
+                ],
+            )
+            self.assertEqual(artifacts[0]["if"], "always()")
+            self.assertIn("androidTest-results/api", artifacts[0]["with"]["path"])
+            self.assertIn("${{ github.run_attempt }}", artifacts[0]["with"]["name"])
+            self.assertEqual(artifacts[1]["if"], "always()")
+            self.assertIn("${{ runner.temp }}/serea-android-host-api", artifacts[1]["with"]["path"])
+            self.assertEqual(artifacts[1]["with"]["if-no-files-found"], "error")
+            provenance = next(step for step in job["steps"] if step.get("name") == f"Prepare API {api} artifact with producer provenance")
+            self.assertIn("producer_attempt=$GITHUB_RUN_ATTEMPT", provenance["run"])
 
         aggregate = jobs["android-storage-emulator"]
         self.assertEqual(
@@ -1626,6 +1741,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(any("android-emulator-runner" in step.get("uses", "") for step in aggregate["steps"]))
         self.assertEqual(aggregate["outputs"]["instrumentation"], "${{ steps.instrumentation.outputs.result }}")
+        api_downloads = [step for step in aggregate["steps"] if step.get("name") in ("Download API 26 evidence", "Download API 35 evidence")]
+        self.assertEqual(
+            [step["with"]["name"] for step in api_downloads],
+            [
+                "serea-android-formal-api26-provisional-attempt-${{ needs.android-emulator-api26.outputs.artifact_attempt }}",
+                "serea-android-formal-api35-provisional-attempt-${{ needs.android-emulator-api35.outputs.artifact_attempt }}",
+            ],
+        )
         verification = next(step for step in aggregate["steps"] if step.get("id") == "instrumentation")["run"]
         self.assertIn("verify_android_formal_aggregate.py", verification)
         module = (ROOT / "tools/verify_android_formal_aggregate.py").read_text(encoding="utf-8")
@@ -1633,6 +1756,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn(required, module)
         self.assertIn("result=PASS", module)
         self.assertIn("result=FAIL", module)
+        gate = jobs["android-emulator-required-gate"]
+        self.assertIn("android-host-probe", gate["needs"])
+        self.assertEqual(gate["steps"][2]["env"]["HOST_PROBE_RESULT"], "${{ needs.android-host-probe.result }}")
+        self.assertIn('"host-probe:$HOST_PROBE_RESULT"', gate["steps"][2]["run"])
 
     def test_wrong_emulator_api_level_fails_closed_as_not_run(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"

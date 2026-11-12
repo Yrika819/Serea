@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/assert_disposable_android_emulator.sh"
+source "$(dirname "$0")/android_emulator_lifecycle.sh"
 
 : "${EXPECTED_API_LEVEL:=${SEREA_EXPECTED_ANDROID_API:-}}"
 : "${SEREA_CONSENT_DEATH_RUN_ID:?Set a unique host run ID.}"
@@ -136,10 +137,9 @@ printf 'no-ActivityResult-callback-before-kill\n' >> "$evidence/provenance.txt"
 # contains the visible relay. On this disposable userdebug AVD, restart adbd as root and SIGKILL
 # only the target PID. This preserves OS task/result records and leaves the sender Activity and
 # its separate process alive, allowing Android's saved ActivityResult route to be exercised.
-"${adb_cmd[@]}" root > "$evidence/adb-root.txt" 2>&1 || fail 'could not obtain root shell on disposable emulator'
-grep -Fq 'restarting adbd as root' "$evidence/adb-root.txt" || grep -Fq 'already running as root' "$evidence/adb-root.txt" || fail 'adb root did not confirm root shell'
-"${adb_cmd[@]}" shell id > "$evidence/adb-root-id.txt" 2>&1
-grep -Fq 'uid=0(root)' "$evidence/adb-root-id.txt" || fail 'adb shell is not root on disposable emulator'
+if ! serea_restart_adbd_and_require_root "$ANDROID_SERIAL" "$evidence/adb-root.txt"; then
+  fail 'could not verify root shell on disposable emulator after bounded ADB reconnect attempts'
+fi
 target_process_record="$("${adb_cmd[@]}" shell ps -A -o PID,NAME | awk -v pid="$target_pid_before" 'NR > 1 && $1 == pid { print $1 " " $2 }' | tr -d '\r')"
 [[ "$target_process_record" == "$target_pid_before $package" ]] || fail 'target PID or process name changed immediately before SIGKILL'
 printf 'SIGKILL_PRECHECK:%s:pid=%s:process=%s\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_before" "$package" > "$evidence/target-sigkill-precheck.txt"

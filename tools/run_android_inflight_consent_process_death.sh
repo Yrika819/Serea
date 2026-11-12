@@ -250,6 +250,7 @@ if [[ -n "$callback_line" ]]; then
   grep -Fq 'authorize=1:result=0:cancel=0:token=0' "$evidence/result-delivery-logcat.txt" || fail 'old Activity Result caused unexpected authorization, cancellation, result, or token calls'
   delivery=DELIVERED_REJECTED
   printf 'DELIVERED_REJECTED\n' > "$evidence/activity-result-callback.txt"
+  printf '%s\n' "$delivery" > "$evidence/activity-result-delivery.txt"
 else
   # Only classify non-delivery when the saved A harness was actually restored and resumed after
   # the Sender finished; absence of a callback without that lifecycle proof is unknown.
@@ -259,6 +260,7 @@ else
   if [[ -n "$completion_line" && -n "$recreated_line" && -n "$resumed_line" && "$recreated_line" -gt "$completion_line" && "$resumed_line" -gt "$completion_line" ]]; then
     delivery=NOT_DELIVERED
     printf 'NOT_DELIVERED: A harness restored and resumed after Sender completion; no callback in 30s while target PID %s remained alive\n' "$target_pid_after_restart" > "$evidence/activity-result-callback.txt"
+    printf '%s\n' "$delivery" > "$evidence/activity-result-delivery.txt"
   else
     delivery=DELIVERY_UNKNOWN
     printf 'DELIVERY_UNKNOWN: no callback in 30s, but A restore/resume after Sender completion was not proven\n' > "$evidence/activity-result-callback.txt"

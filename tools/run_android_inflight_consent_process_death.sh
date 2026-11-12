@@ -22,7 +22,8 @@ fail() {
   printf 'FAIL\n' > "$evidence/status.txt"
   if [[ -f "$evidence/result-delivery-logcat.txt" ]] &&
       grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" &&
-      [[ "$(cat "$evidence/activity-result-delivery.txt")" == NOT_RUN ]]; then
+      [[ "$(cat "$evidence/activity-result-delivery.txt")" == NOT_RUN ||
+         "$(cat "$evidence/activity-result-delivery.txt")" == DELIVERY_UNKNOWN ]]; then
     printf 'FAIL\n' > "$evidence/activity-result-delivery.txt"
   fi
   printf 'FAIL: %s\n' "$*" >&2
@@ -238,6 +239,7 @@ grep -F "COMPLETION_BROADCAST_ACCEPTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid
 grep -F "SENDER_COMPLETION_REQUESTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
+printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
 "${adb_cmd[@]}" shell am task move-to-front "$original_a_task_id" > "$evidence/restore-original-A-task.txt" 2>&1 || {
   printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
   fail 'could not restore the original Consent A task after completing its sender'

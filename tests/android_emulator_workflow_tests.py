@@ -1325,6 +1325,17 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('"$original_a_task_id" != "$request_b_task_id"', script)
         self.assertIn('shell am task move-to-front "$original_a_task_id"', script)
         self.assertIn("TARGET_A_TASK_RESTORED:", script)
+        sender_completion_assertion = script.index(
+            'grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"'
+        )
+        unresolved_delivery_marker = script.index(
+            "printf 'DELIVERY_UNKNOWN\\n' > \"$evidence/activity-result-delivery.txt\"",
+            sender_completion_assertion,
+        )
+        original_task_restore = script.index('shell am task move-to-front "$original_a_task_id"')
+        self.assertLess(sender_completion_assertion, unresolved_delivery_marker)
+        self.assertLess(unresolved_delivery_marker, original_task_restore)
+        self.assertIn('== NOT_RUN ||', script)
         self.assertNotIn('am start -W -f 0x04000000 -n "$sender_component"', script)
         self.assertIn("generation=1:session=session-A", script)
         self.assertNotIn("generation=41:session=session-A", script)

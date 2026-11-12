@@ -139,6 +139,9 @@ printf 'no-ActivityResult-callback-before-kill\n' >> "$evidence/provenance.txt"
 grep -Fq 'restarting adbd as root' "$evidence/adb-root.txt" || grep -Fq 'already running as root' "$evidence/adb-root.txt" || fail 'adb root did not confirm root shell'
 "${adb_cmd[@]}" shell id > "$evidence/adb-root-id.txt" 2>&1
 grep -Fq 'uid=0(root)' "$evidence/adb-root-id.txt" || fail 'adb shell is not root on disposable emulator'
+target_process_record="$("${adb_cmd[@]}" shell ps -A -o PID,NAME | awk -v pid="$target_pid_before" 'NR > 1 && $1 == pid { print $1 " " $2 }' | tr -d '\r')"
+[[ "$target_process_record" == "$target_pid_before $package" ]] || fail 'target PID or process name changed immediately before SIGKILL'
+printf 'SIGKILL_PRECHECK:%s:pid=%s:process=%s\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_before" "$package" > "$evidence/target-sigkill-precheck.txt"
 "${adb_cmd[@]}" shell kill -9 "$target_pid_before" > "$evidence/target-sigkill.txt" 2>&1 || fail 'OS SIGKILL failed for the target PID'
 printf 'target_termination_method=adb root then kill -9 %s\n' "$target_pid_before" >> "$evidence/provenance.txt"
 target_pid_after='pending'

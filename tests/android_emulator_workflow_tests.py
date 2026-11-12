@@ -1341,6 +1341,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("synthetic-consent-result-A", script)
         self.assertIn("duplicate-sender-completion.txt", script)
         self.assertIn("SENDER_COMPLETION_REJECTED", script)
+        self.assertIn("SIGKILL_PRECHECK", script)
+        self.assertIn('NR > 1 && $1 == pid', script)
         self.assertIn("STALE_REPLAY_REJECTED", script)
         self.assertIn("complete-B", script)
         self.assertIn("B_VALID_RESULT_DELIVERED", script)

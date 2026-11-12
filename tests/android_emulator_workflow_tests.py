@@ -1325,10 +1325,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('/Task\\{.*#[0-9]+/', script)
         self.assertIn('/Task id #[0-9]+/', script)
         self.assertIn('"$original_a_task_id" != "$request_b_task_id"', script)
-        self.assertIn('if (( sdk >= 29 )); then', script)
-        self.assertIn('shell am task move-to-front "$original_a_task_id"', script)
-        self.assertIn('shell am stack move-task "$original_a_task_id" "$original_a_stack_id" true', script)
-        self.assertIn('match($0, /StackId=[0-9]+/)', script)
+        self.assertIn('shell am task focus "$original_a_task_id"', script)
+        self.assertNotIn('shell am task move-to-front', script)
+        self.assertNotIn('shell am stack move-task', script)
         self.assertIn("TARGET_A_TASK_RESTORED:", script)
         sender_completion_assertion = script.index(
             'grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"'

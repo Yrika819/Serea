@@ -6,6 +6,7 @@ import app.serea.android.calendar.CalendarAuthorizationStatus
 import app.serea.android.calendar.CalendarPermissionPolicy
 import app.serea.android.calendar.transport.CalendarAccessToken
 import app.serea.android.calendar.transport.CalendarAccessTokenPort
+import app.serea.android.calendar.transport.CalendarAccessBoundary
 
 /**
  * Bridges the shared Google authorization foundation to Calendar's read-only ports.
@@ -14,8 +15,8 @@ import app.serea.android.calendar.transport.CalendarAccessTokenPort
  */
 class GoogleCalendarAuthorizationAdapter(
     private val gateway: GoogleAuthorizationGateway,
-    private val primaryOnly: Boolean = false,
-) : CalendarAuthorizationPort, CalendarAccessTokenPort {
+    override val primaryOnly: Boolean = false,
+) : CalendarAuthorizationPort, CalendarAccessTokenPort, CalendarAccessBoundary {
     private val authorizationSessionId = gateway.authorizationSessionId
     private val eventScope = PrivatePrimaryCalendarScopeContract.scopes.single()
 

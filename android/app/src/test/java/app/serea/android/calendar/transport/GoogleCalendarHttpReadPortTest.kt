@@ -122,6 +122,46 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun primaryOnlyAuthorizationCannotBeDowngradedByDefaultTransportMode() = runBlocking {
+        var statusCalls = 0
+        var gatewayTokenCalls = 0
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "primary-only-session"
+            override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+                statusCalls++
+                return AuthorizationStatus(GoogleServiceState.AVAILABLE, scopes.associateWith { ScopePermission.GRANTED })
+            }
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                gatewayTokenCalls++
+                return TokenSupplyResult.Available(AccessTokenLease("never-used", scopes, null))
+            }
+        }
+        val primaryOnlyAuthorization = GoogleCalendarAuthorizationAdapter(gateway, primaryOnly = true)
+        // Deliberately omit accessMode: a directly constructed transport must inherit the
+        // authorization boundary instead of silently falling back to the generic mode.
+        val directTransport = GoogleCalendarHttpReadPort(
+            primaryOnlyAuthorization,
+            primaryOnlyAuthorization,
+            OkHttpClient(),
+            server.url("/calendar/v3/"),
+        )
+        val range = range()
+        val primary = CalendarId("primary")
+        listOf<suspend () -> Unit>(
+            { directTransport.getEvent(CalendarEventKey(calendarId, EventId("event"))); Unit },
+            { directTransport.listEventsPage(calendarId, range, null); Unit },
+            { directTransport.listCalendars(); Unit },
+            { directTransport.getCalendar(primary); Unit },
+        ).forEach { operation ->
+            try { operation(); fail("Expected primary-only direct transport rejection") }
+            catch (failure: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code) }
+        }
+        assertEquals(0, statusCalls)
+        assertEquals(0, gatewayTokenCalls)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun primaryOnlyAlwaysBlocksCalendarListEvenWhenListScopeIsGranted() = runBlocking {
         status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
         val port = primaryPort()

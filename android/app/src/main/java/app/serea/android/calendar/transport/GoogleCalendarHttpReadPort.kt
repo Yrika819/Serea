@@ -46,6 +46,9 @@ class GoogleCalendarHttpReadPort internal constructor(
 ) : CalendarReadPort {
     /** The private primary boundary is enforced here even when callers bypass the UI/provider factory. */
     enum class AccessMode { GENERAL_READ_ONLY, PRIMARY_ONLY }
+    private val primaryOnly = accessMode == AccessMode.PRIMARY_ONLY ||
+        (authorization as? CalendarAccessBoundary)?.primaryOnly == true ||
+        (tokens as? CalendarAccessBoundary)?.primaryOnly == true
     private val safeClient = client.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -134,13 +137,13 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     private fun rejectCalendarListInPrimaryMode() {
-        if (accessMode == AccessMode.PRIMARY_ONLY) {
+        if (primaryOnly) {
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "CalendarList access is disabled for the primary-only transport.")
         }
     }
 
     private fun requirePrimaryCalendarIfRestricted(calendarId: CalendarId) {
-        if (accessMode == AccessMode.PRIMARY_ONLY && calendarId.value != PRIMARY_CALENDAR_ID) {
+        if (primaryOnly && calendarId.value != PRIMARY_CALENDAR_ID) {
             // This check deliberately precedes status, token, and HTTP work.
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Only the primary calendar is available.")
         }

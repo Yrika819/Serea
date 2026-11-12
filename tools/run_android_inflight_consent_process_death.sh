@@ -70,7 +70,7 @@ grep -Fxq 'Status: ok' "$evidence/start-A.txt" || fail 'ActivityManager did not 
 
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I > "$evidence/in-flight-logcat.txt"
-  if grep -F "IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=41:session=session-A:pid=" "$evidence/in-flight-logcat.txt" >/dev/null; then break; fi
+  if grep -F "IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=1:session=session-A:pid=" "$evidence/in-flight-logcat.txt" >/dev/null; then break; fi
   sleep 1
 done
 grep -Fq "IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=1:session=session-A:pid=" "$evidence/in-flight-logcat.txt" || fail 'A did not enter the Private Google ViewModel in-flight Consent state'
@@ -82,7 +82,15 @@ done
 grep -Fq "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/sender-logcat.txt" || fail 'external synthetic Consent sender did not become active'
 test_pid_before="$(pid_for "$test_package")"
 [[ -n "$test_pid_before" ]] || fail 'external sender/test package process PID was missing'
+sender_lifecycle_line="$(grep -F "SENDER_CREATED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=" "$evidence/sender-logcat.txt" | tail -n 1 || true)"
+[[ -n "$sender_lifecycle_line" ]] || fail 'sender creation event with its PID and instance nonce was missing'
+sender_instance_nonce="${sender_lifecycle_line##*:instance=}"
+[[ "$sender_instance_nonce" =~ ^[A-Fa-f0-9-]{36}$ ]] || fail 'sender instance nonce was invalid'
+sender_created_count="$(grep -Fc "SENDER_CREATED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/sender-logcat.txt" || true)"
+[[ "$sender_created_count" == 1 ]] || fail "synthetic sender was created $sender_created_count times before target kill"
 printf 'external_sender_pid_before_target_kill=%s\n' "$test_pid_before" >> "$evidence/provenance.txt"
+printf 'sender_instance_nonce=%s\n' "$sender_instance_nonce" >> "$evidence/provenance.txt"
+grep -E "SENDER_(CREATED|RESUMED|IN_FLIGHT):$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/sender-logcat.txt" > "$evidence/lifecycle-events.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-in-flight.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-in-flight.txt"
 grep -Fq "$sender_component" "$evidence/activities-in-flight.txt" || fail 'synthetic Consent sender was not the active Activity'
@@ -138,6 +146,7 @@ test_pid_after_kill="$(pid_for "$test_package")"
 [[ "$test_pid_before" == "$test_pid_after_kill" ]] || fail 'external sender/instrumentation package process was terminated with the target'
 printf 'target_pid_after_SIGKILL=%s\n' "${target_pid_after:-absent}" >> "$evidence/provenance.txt"
 printf 'external_sender_pid_after_target_death=%s\n' "$test_pid_after_kill" >> "$evidence/provenance.txt"
+printf 'TARGET_SIGKILL:%s:pid=%s:sender_pid=%s:instance=%s\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_before" "$test_pid_after_kill" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-kill.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-kill.txt"
 
@@ -155,44 +164,100 @@ for _ in $(seq 1 30); do
 done
 grep -Fq "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not enter its fresh pending authorization state'
 grep -Fq "RECOVERED_DISCONNECTED:$SEREA_CONSENT_DEATH_RUN_ID:status=DISCONNECTED:pending=null:calendarSession=null:" "$evidence/recovery-logcat.txt" || fail 'authorization state was restored after process death instead of starting disconnected'
+grep -Fq "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" || fail 'request B identity or pending state was not recorded'
+grep -Fq 'factory=1:authorize=1:result=0:cancel=0:token=0' "$evidence/recovery-logcat.txt" || fail 'request B had unexpected pre-result gateway operations'
+grep -F "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:" "$evidence/recovery-logcat.txt" >> "$evidence/lifecycle-events.txt"
+target_pid_after_restart="$(pid_for "$package")"
+[[ -n "$target_pid_after_restart" && "$target_pid_after_restart" != "$target_pid_before" ]] || fail 'request B did not run in a new target process'
+printf 'target_pid_after_restart=%s\n' "$target_pid_after_restart" >> "$evidence/provenance.txt"
+printf 'TARGET_RESTARTED:%s:pid=%s:sender_pid=%s:instance=%s\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_after_restart" "$test_pid_after_kill" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
+printf 'B_READY:%s:pid=%s:sender_pid=%s:instance=%s:request=request-B:generation=1:session=session-B\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_after_restart" "$test_pid_after_kill" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
 # Complete the original sender only after B is pending, allowing the OS to exercise A's saved
 # ActivityResult route against the new request.
-"${adb_cmd[@]}" shell am start -W -f 0x04000000 -n "$sender_component" \
-  --es token "$SEREA_CONSENT_DEATH_RUN_ID" --es action complete > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not complete external Consent A after B started'
-grep -Fxq 'Status: ok' "$evidence/complete-old-sender.txt" || fail 'ActivityManager did not reactivate the external Consent sender'
+printf 'SENDER_COMPLETION_REQUESTED:%s:pid=%s:instance=%s\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$test_pid_before" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
+"${adb_cmd[@]}" shell am broadcast --receiver-foreground \
+  -n "$test_package/app.serea.android.googleauth.SyntheticConsentSenderCompletionReceiver" \
+  -a app.serea.android.test.action.COMPLETE_SYNTHETIC_CONSENT \
+  --es token "$SEREA_CONSENT_DEATH_RUN_ID" --ei targetPid "$test_pid_before" \
+  --es instanceNonce "$sender_instance_nonce" > "$evidence/complete-old-sender.txt" 2>&1 || fail 'could not request completion of the original external Consent A'
+grep -Fq 'Broadcast completed' "$evidence/complete-old-sender.txt" || fail 'Android did not dispatch the sender completion broadcast'
+grep -Fq "COMPLETION_BROADCAST_ACCEPTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" <("${adb_cmd[@]}" logcat -d -s SereaSyntheticConsent:I) || fail 'test-only completion receiver did not accept the verified original sender'
+"${adb_cmd[@]}" shell am broadcast --receiver-foreground \
+  -n "$test_package/app.serea.android.googleauth.SyntheticConsentSenderCompletionReceiver" \
+  -a app.serea.android.test.action.COMPLETE_SYNTHETIC_CONSENT \
+  --es token "$SEREA_CONSENT_DEATH_RUN_ID" --ei targetPid "$test_pid_before" \
+  --es instanceNonce "$sender_instance_nonce" > "$evidence/duplicate-sender-completion.txt" 2>&1 || fail 'duplicate sender completion probe could not be dispatched'
+for _ in $(seq 1 10); do
+  "${adb_cmd[@]}" logcat -d -s SereaSyntheticConsent:I > "$evidence/duplicate-completion-logcat.txt"
+  grep -Fq "SENDER_COMPLETION_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/duplicate-completion-logcat.txt" && break
+  sleep 1
+done
+grep -Fq "SENDER_COMPLETION_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/duplicate-completion-logcat.txt" || fail 'duplicate completion request was not rejected'
+grep -F "SENDER_COMPLETION_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/duplicate-completion-logcat.txt" >> "$evidence/lifecycle-events.txt"
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
   grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" && break
+  current_target_pid="$(pid_for "$package")"
+  [[ "$current_target_pid" == "$target_pid_after_restart" ]] || fail 'B target process did not remain observable during the Activity Result window'
   sleep 1
 done
 sender_launch_count="$(grep -Fc "SENDER_IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:pid=" "$evidence/result-delivery-logcat.txt" || true)"
 [[ "$sender_launch_count" == 1 ]] || fail "synthetic Consent sender launched $sender_launch_count times"
+relay_launch_count="$(grep -Fc "IN_FLIGHT:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=1:session=session-A:" "$evidence/result-delivery-logcat.txt" || true)"
+[[ "$relay_launch_count" == 1 ]] || fail "Consent Relay pending IntentSender was launched $relay_launch_count times"
+if grep -Fq "SENDER_UNEXPECTED_NEW_INTENT:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"; then
+  fail 'original Sender received an unexpected ActivityManager reactivation Intent'
+fi
+sender_created_count="$(grep -Fc "SENDER_CREATED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || true)"
+[[ "$sender_created_count" == 1 ]] || fail "synthetic Consent sender onCreate ran $sender_created_count times"
 sender_completion_count="$(grep -Fc "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || true)"
 [[ "$sender_completion_count" == 1 ]] || fail "synthetic Consent sender completed $sender_completion_count times"
+grep -Fq "SENDER_COMPLETION_REQUESTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" || fail 'original sender instance did not accept the authenticated completion request'
+grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce:code=-1:payload=synthetic-consent-result-A" "$evidence/result-delivery-logcat.txt" || fail 'original sender did not preserve A result code and payload'
+grep -F "COMPLETION_BROADCAST_ACCEPTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
+grep -F "SENDER_COMPLETION_REQUESTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
+grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
   if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi
+  current_target_pid="$(pid_for "$package")"
+  [[ "$current_target_pid" == "$target_pid_after_restart" ]] || fail 'B target process did not remain alive during the Activity Result callback observation window'
   sleep 1
 done
 callback_line="$(grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" | tail -n 1 || true)"
 callback_count="$(grep -Fc "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || true)"
 [[ "$callback_count" -le 1 ]] || fail "Activity Result callback was delivered $callback_count times"
-valid_a_result=false
-callback_status=none-observed-within-30s
+grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt" || true
+grep -F "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt" || true
 if [[ -n "$callback_line" ]]; then
-  grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:" "$evidence/result-delivery-logcat.txt" || fail 'delivered Activity Result did not leave B unchanged'
-  if grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=1:session=session-A:code=-1:" <<< "$callback_line"; then
-    callback_status=valid-A-RESULT_OK-delivered-after-kill-and-sender-completion
-    valid_a_result=true
+  printf 'RESULT_DELIVERED:%s:target_pid=%s:sender_pid=%s:instance=%s:identity=request-A/generation-1/session-A/code-OK/payload-A\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_after_restart" "$test_pid_before" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
+  printf 'STALE_REJECTED:%s:target_pid=%s:sender_pid=%s:instance=%s:B=request-B/generation-1/session-B/status=CONSENT_PENDING\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_after_restart" "$test_pid_before" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
+fi
+delivery=DELIVERY_UNKNOWN
+if [[ -n "$callback_line" ]]; then
+  grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-A:generation=1:session=session-A:code=-1:payload=synthetic-consent-result-A:" <<< "$callback_line" || fail 'delivered Activity Result did not preserve original A identity, result code, and payload'
+  grep -Fq "STALE_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/result-delivery-logcat.txt" || fail 'delivered Activity Result did not leave B pending and unchanged'
+  grep -Fq 'authorize=1:result=0:cancel=0:token=0' "$evidence/result-delivery-logcat.txt" || fail 'old Activity Result caused unexpected authorization, cancellation, result, or token calls'
+  delivery=DELIVERED_REJECTED
+  printf 'DELIVERED_REJECTED\n' > "$evidence/activity-result-callback.txt"
+else
+  # Only classify non-delivery when the saved A harness was actually restored and resumed after
+  # the Sender finished; absence of a callback without that lifecycle proof is unknown.
+  completion_line="$(grep -Fn "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" | tail -n 1 | cut -d: -f1)"
+  recreated_line="$(grep -Fn "A_RECREATED_NO_RELAUNCH:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" | tail -n 1 | cut -d: -f1 || true)"
+  resumed_line="$(grep -Fn "HARNESS_RESUMED:$SEREA_CONSENT_DEATH_RUN_ID:phase=in-flight-A:" "$evidence/result-delivery-logcat.txt" | tail -n 1 | cut -d: -f1 || true)"
+  if [[ -n "$completion_line" && -n "$recreated_line" && -n "$resumed_line" && "$recreated_line" -gt "$completion_line" && "$resumed_line" -gt "$completion_line" ]]; then
+    delivery=NOT_DELIVERED
+    printf 'NOT_DELIVERED: A harness restored and resumed after Sender completion; no callback in 30s while target PID %s remained alive\n' "$target_pid_after_restart" > "$evidence/activity-result-callback.txt"
   else
-    callback_status=callback-delivered-with-nonmatching-identity-or-result-code
+    delivery=DELIVERY_UNKNOWN
+    printf 'DELIVERY_UNKNOWN: no callback in 30s, but A restore/resume after Sender completion was not proven\n' > "$evidence/activity-result-callback.txt"
+    printf '%s\n' "$delivery" > "$evidence/activity-result-delivery.txt"
+    fail 'Activity Result delivery remained unknown after the bounded observation window'
   fi
 fi
-printf '%s\n' "$callback_status" > "$evidence/activity-result-callback.txt"
-if [[ "$valid_a_result" == true ]]; then
-  delivery=delivered-valid-A-result-after-kill-and-sender-completion
-else
+if [[ "$delivery" == NOT_DELIVERED ]]; then
   # No valid A Activity Result was observed. Exercise B's stale-result guard through a separate
   # test-only host injection after the sender is known to have completed; preserve callback status.
   "${adb_cmd[@]}" shell am broadcast --receiver-include-background \
@@ -205,18 +270,32 @@ else
     sleep 1
   done
   grep -Fq "STALE_REPLAY_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:" "$evidence/recovery-logcat.txt" || fail 'request B did not reject the post-completion stale A replay'
-  delivery="$callback_status; post-completion-old-identity-replay-rejected"
+  grep -Fq "STALE_REPLAY_REJECTED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" || fail 'old identity replay changed B pending state'
+  grep -Fq 'authorize=1:result=0:cancel=0:token=0' "$evidence/recovery-logcat.txt" || fail 'old identity replay caused unexpected authorization, cancellation, result, or token calls'
+  printf 'synthetic_old_identity_replay=REJECTED;activity_result_delivery=NOT_DELIVERED\n' > "$evidence/stale-replay-classification.txt"
 fi
 printf '%s\n' "$delivery" > "$evidence/activity-result-delivery.txt"
+"${adb_cmd[@]}" shell am start -W -f 0x18000000 -n "$component" \
+  --es phase complete-B --es token "$SEREA_CONSENT_DEATH_RUN_ID" > "$evidence/complete-B-synthetic-result.txt" 2>&1 || fail 'could not reactivate request B harness for its independent synthetic Consent result'
+grep -Fxq 'Status: ok' "$evidence/complete-B-synthetic-result.txt" || fail 'ActivityManager did not start the request B result verifier'
+for _ in $(seq 1 30); do
+  "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/B-valid-result-logcat.txt"
+  grep -Fq "B_VALID_RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=AUTHORIZED:" "$evidence/B-valid-result-logcat.txt" && break
+  sleep 1
+done
+grep -Fq "B_SYNTHETIC_RESULT_CREATED:$SEREA_CONSENT_DEATH_RUN_ID-B:" "$evidence/B-valid-result-logcat.txt" || fail 'independent B Synthetic Result Activity was not created'
+grep -Fq "B_VALID_RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=AUTHORIZED:" "$evidence/B-valid-result-logcat.txt" || fail 'request B did not accept its own synthetic result through the Android Activity Result route'
+grep -Fq 'resultCalls=1:cancel=0:token=0:googleTransport=not-constructed:calendarSession=absent' "$evidence/B-valid-result-logcat.txt" || fail 'B synthetic result accessed a token or Calendar session, or had unexpected gateway operations'
+grep -F "B_VALID_RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/B-valid-result-logcat.txt" >> "$evidence/lifecycle-events.txt"
+printf 'B_VALID_RESULT_DELIVERED:%s:target_pid=%s:sender_pid=%s:instance=%s:B=request-B/generation-1/session-B/status=AUTHORIZED\n' "$SEREA_CONSENT_DEATH_RUN_ID" "$target_pid_after_restart" "$test_pid_before" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-restart.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-restart.txt"
 
 test_pid_after="$(pid_for "$test_package")"
 printf 'external_sender_pid_after_result=%s\n' "${test_pid_after:-absent}" >> "$evidence/provenance.txt"
 [[ "$test_pid_before" == "$test_pid_after" ]] || fail 'external sender/instrumentation package process changed during target process death check'
-target_pid_after_restart="$(pid_for "$package")"
-[[ -n "$target_pid_after_restart" && "$target_pid_after_restart" != "$target_pid_before" ]] || fail 'target process did not return with a new PID'
-printf 'target_pid_after_restart=%s\n' "$target_pid_after_restart" >> "$evidence/provenance.txt"
+target_pid_final="$(pid_for "$package")"
+[[ "$target_pid_final" == "$target_pid_after_restart" ]] || fail 'target process changed after B request verification'
 printf 'PASS\n' > "$evidence/status.txt"
 printf 'PASS: API %s target-process SIGKILL during real Private Consent Relay; ActivityResult=%s; stale result protected against B. Evidence: %s\n' \
   "$sdk" "$delivery" "$evidence"

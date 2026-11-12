@@ -21,18 +21,31 @@ import kotlinx.coroutines.withTimeout
 class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
     private var authorizationViewModel: PrivateGoogleAuthorizationViewModel? = null
     private var runTokenForResult: String = ""
+    private var phaseForLifecycle: String = "unknown"
     private val relay = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { activityResult ->
         val result = PrivateGoogleConsentRelayProtocol.parseResult(activityResult.resultCode, activityResult.data)
         val identity = result.identity
-        Log.i(TAG, "RESULT_DELIVERED:$runTokenForResult:request=${identity?.requestId}:generation=${identity?.generation}:session=${identity?.authorizationSessionId}:code=${result.resultCode}:pid=${Process.myPid()}")
-        applyOldResultToB(result, runTokenForResult)
-        authorizationViewModel?.completeRealConsentResult(result)
+        val syntheticPayload = result.resultData?.getStringExtra("synthetic-consent-payload")
+        Log.i(TAG, "RESULT_DELIVERED:$runTokenForResult:request=${identity?.requestId}:generation=${identity?.generation}:session=${identity?.authorizationSessionId}:code=${result.resultCode}:payload=${syntheticPayload.orEmpty()}:pid=${Process.myPid()}")
+        if (identity != null && identity == identityB()) {
+            val bViewModel = checkNotNull(activeBViewModel) { "request B ViewModel is unavailable" }
+            bViewModel.completeRealConsentResult(result)
+            val state = bViewModel.state.value
+            check(state.status == PrivateGoogleAuthStatus.AUTHORIZED) { "B's own synthetic Consent result did not authorize B" }
+            check(activeBStats?.resultCalls == 1) { "B's own result did not reach the fake provider exactly once" }
+            check(bViewModel.calendarSession.value == null) { "B's synthetic result opened a Calendar session" }
+            Log.i(TAG, "B_VALID_RESULT_DELIVERED:$runTokenForResult:request=${identity.requestId}:generation=${identity.generation}:session=${identity.authorizationSessionId}:status=${state.status}:pid=${Process.myPid()}:resultCalls=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}:googleTransport=not-constructed:calendarSession=absent")
+        } else {
+            applyOldResultToB(result, runTokenForResult)
+            authorizationViewModel?.completeRealConsentResult(result)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(TextView(this).apply { text = "Private Google in-flight death harness" })
         val phase = intent.getStringExtra(EXTRA_PHASE)
+        phaseForLifecycle = phase.orEmpty()
         val runToken = token()
         runTokenForResult = runToken
         if (!runToken.matches(Regex("[A-Za-z0-9-]{1,120}"))) error("invalid run token")
@@ -43,11 +56,28 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
                 Log.i(TAG, "A_RECREATED_NO_RELAUNCH:$runToken:pid=${Process.myPid()}")
             }
             PHASE_VERIFY_B -> lifecycleScope.launch { verifyFreshRequest(runToken) }
+            PHASE_COMPLETE_B -> {
+                activeBActivity = this
+                lifecycleScope.launch { launchBValidSyntheticResult(runToken) }
+            }
             else -> error("invalid phase")
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        Log.i(TAG, "HARNESS_RESUMED:$runTokenForResult:phase=$phaseForLifecycle:pid=${Process.myPid()}")
+    }
+
     private fun startInFlightSender(runToken: String) {
+        val launchState = getSharedPreferences("serea-inflight-consent-harness", MODE_PRIVATE)
+        if (launchState.getString("activeRunToken", null) == runToken) {
+            Log.i(TAG, "A_RECREATED_NO_RELAUNCH:$runToken:pid=${Process.myPid()}:reason=persisted-launch-marker")
+            return
+        }
+        check(launchState.edit().putString("activeRunToken", runToken).commit()) {
+            "could not persist the in-flight IntentSender one-shot marker"
+        }
         val stats = ConsentHarnessGatewayStats()
         val viewModel = newViewModel(stats, "request-A", "session-A", runToken)
         authorizationViewModel = viewModel
@@ -118,6 +148,8 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         withTimeout(5_000) {
             viewModel.state.first { it.status == PrivateGoogleAuthStatus.CONSENT_PENDING }
         }
+        activeBPendingConsent = withTimeout(5_000) { viewModel.pendingConsentLaunches.first() }
+        activeBActivity = this
         val stateBeforeStaleConsent = viewModel.state.value
         check(stateBeforeStaleConsent.pendingRealConsentRequestId == "request-B")
         check(viewModel.calendarSession.value == null)
@@ -126,7 +158,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         check(fakeGatewayStats.cancelCalls == 0)
         check(fakeGatewayStats.tokenCalls == 0)
         check(fakeGatewayStats.gatewayMode == GoogleAuthorizationMode.MOCK_ONLY)
-        Log.i(TAG, "B_READY:$runToken:request=${viewModel.state.value.pendingRealConsentRequestId}:generation=${viewModel.state.value.pendingRealConsentGeneration}:session=${viewModel.state.value.pendingRealConsentSessionId}:pid=${Process.myPid()}:provider=Fake:gateway=${fakeGatewayStats.gatewayMode}:realTokens=${fakeGatewayStats.tokenCalls}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:factory=${fakeGatewayStats.factoryCalls}:authorize=${fakeGatewayStats.authorizeCalls}:result=${fakeGatewayStats.resultCalls}:cancel=${fakeGatewayStats.cancelCalls}:token=${fakeGatewayStats.tokenCalls}")
+        Log.i(TAG, "B_READY:$runToken:request=${viewModel.state.value.pendingRealConsentRequestId}:generation=${viewModel.state.value.pendingRealConsentGeneration}:session=${viewModel.state.value.pendingRealConsentSessionId}:status=${viewModel.state.value.status}:pid=${Process.myPid()}:provider=Fake:gateway=${fakeGatewayStats.gatewayMode}:calendarSession=absent:realTokens=${fakeGatewayStats.tokenCalls}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:factory=${fakeGatewayStats.factoryCalls}:authorize=${fakeGatewayStats.authorizeCalls}:result=${fakeGatewayStats.resultCalls}:cancel=${fakeGatewayStats.cancelCalls}:token=${fakeGatewayStats.tokenCalls}")
     }
 
     private fun newViewModel(stats: ConsentHarnessGatewayStats, requestId: String, sessionId: String, runToken: String) =
@@ -150,7 +182,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         check(activeBStats?.resultCalls == 0) { "old result reached the fake provider" }
         check(activeBStats?.cancelCalls == 0) { "old result cancelled the new authorization" }
         check(activeBStats?.tokenCalls == 0)
-        Log.i(TAG, "STALE_REJECTED:$runToken:request=${before.pendingRealConsentRequestId}:generation=${before.pendingRealConsentGeneration}:session=${before.pendingRealConsentSessionId}:pid=${Process.myPid()}:provider=Fake:resultCode=${result.resultCode}:gateway=${activeBStats?.gatewayMode}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:authorize=${activeBStats?.authorizeCalls}:result=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}")
+        Log.i(TAG, "STALE_REJECTED:$runToken:request=${before.pendingRealConsentRequestId}:generation=${before.pendingRealConsentGeneration}:session=${before.pendingRealConsentSessionId}:status=${before.status}:pid=${Process.myPid()}:provider=Fake:calendarSession=absent:resultCode=${result.resultCode}:gateway=${activeBStats?.gatewayMode}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:authorize=${activeBStats?.authorizeCalls}:result=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}")
     }
 
     private fun identityA() = PrivateGoogleConsentIdentity("request-A", 1L, "session-A")
@@ -162,9 +194,25 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         const val EXTRA_PHASE = "phase"
         const val PHASE_IN_FLIGHT = "in-flight-A"
         const val PHASE_VERIFY_B = "verify-B"
+        const val PHASE_COMPLETE_B = "complete-B"
         const val TAG = "SereaConsentDeath"
         @Volatile private var activeBViewModel: PrivateGoogleAuthorizationViewModel? = null
         @Volatile private var activeBStats: ConsentHarnessGatewayStats? = null
+        @Volatile private var activeBActivity: PrivateGoogleInFlightDeathHarnessActivity? = null
+        @Volatile private var activeBPendingConsent: PendingGoogleConsentActivityResult? = null
+
+        private fun identityB() = PrivateGoogleConsentIdentity("request-B", 1L, "session-B")
+
+        fun launchBValidSyntheticResult(runToken: String) {
+            val activity = checkNotNull(activeBActivity) { "request B Activity is not active" }
+            check(activity.token() == runToken) { "request B run token mismatch" }
+            val pending = checkNotNull(activeBPendingConsent) { "request B Consent is not pending" }
+            check(pending.identity == identityB()) { "request B pending Consent identity mismatch" }
+            val relayIntent = PrivateGoogleConsentRelayContract().createIntent(activity, pending)
+                .setClass(activity, PrivateGoogleConsentRelayTestActivity::class.java)
+            activity.relay.launch(relayIntent)
+            Log.i(TAG, "B_VALID_RESULT_REQUESTED:$runToken:request=${pending.identity.requestId}:generation=${pending.identity.generation}:session=${pending.identity.authorizationSessionId}:pid=${Process.myPid()}")
+        }
 
         fun replayOldResult(runToken: String) {
             val viewModel = checkNotNull(activeBViewModel) { "request B is not active" }
@@ -181,7 +229,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
             check(activeBStats?.resultCalls == 0) { "old replay reached the fake provider" }
             check(activeBStats?.cancelCalls == 0) { "old replay cancelled the new authorization" }
             check(activeBStats?.tokenCalls == 0)
-            Log.i(TAG, "STALE_REPLAY_REJECTED:$runToken:request=${before.pendingRealConsentRequestId}:generation=${before.pendingRealConsentGeneration}:session=${before.pendingRealConsentSessionId}:pid=${Process.myPid()}:provider=Fake:gateway=${activeBStats?.gatewayMode}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:authorize=${activeBStats?.authorizeCalls}:result=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}")
+            Log.i(TAG, "STALE_REPLAY_REJECTED:$runToken:request=${before.pendingRealConsentRequestId}:generation=${before.pendingRealConsentGeneration}:session=${before.pendingRealConsentSessionId}:status=${before.status}:pid=${Process.myPid()}:provider=Fake:calendarSession=absent:gateway=${activeBStats?.gatewayMode}:googleTransport=not-constructed:gmailClient=absent:calendarListClient=absent:authorize=${activeBStats?.authorizeCalls}:result=${activeBStats?.resultCalls}:cancel=${activeBStats?.cancelCalls}:token=${activeBStats?.tokenCalls}")
         }
     }
 
@@ -209,9 +257,12 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         }
         private val pendingIntent = PendingIntent.getActivity(
             context,
-            991,
-            Intent().setComponent(ComponentName("${context.packageName}.test", "app.serea.android.googleauth.SyntheticConsentSenderActivity"))
-                .putExtra(EXTRA_TOKEN, runToken),
+            if (requestId == "request-B") 992 else 991,
+            Intent().setComponent(ComponentName(
+                if (requestId == "request-B") context.packageName else "${context.packageName}.test",
+                if (requestId == "request-B") "app.serea.android.googleauth.SyntheticConsentBResultActivity"
+                else "app.serea.android.googleauth.SyntheticConsentSenderActivity",
+            )).putExtra(EXTRA_TOKEN, if (requestId == "request-B") "$runToken-B" else runToken),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
@@ -222,7 +273,7 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
 
         override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
             GoogleServiceState.AVAILABLE,
-            scopes.associateWith { ScopePermission.NEEDS_CONSENT },
+            scopes.associateWith { if (requestId == "request-B" && stats.resultCalls == 1) ScopePermission.GRANTED else ScopePermission.NEEDS_CONSENT },
         )
 
         override suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
@@ -232,6 +283,16 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
 
         override fun completeConsentResult(requestId: String, data: Intent?): AuthorizationOutcome {
             stats.resultCalls++
+            if (this.requestId == "request-B" && requestId == this.requestId &&
+                data?.getStringExtra("synthetic-consent-payload") == "synthetic-consent-result-B"
+            ) {
+                return AuthorizationOutcome.Authorized(AccessTokenLease(
+                    "fake-test-only-credential",
+                    setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+                    null,
+                    authorizationSessionId,
+                ))
+            }
             return AuthorizationOutcome.Rejected(AuthorizationFailure.STALE_CONSENT_RESULT)
         }
 
@@ -252,6 +313,11 @@ class PrivateGoogleInFlightDeathReplayReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val token = intent.getStringExtra(PrivateGoogleInFlightDeathHarnessActivity.EXTRA_TOKEN).orEmpty()
         check(token.matches(Regex("[A-Za-z0-9-]{1,120}"))) { "invalid replay token" }
+        check(intent.action == ACTION_REPLAY_OLD) { "invalid replay token action" }
         PrivateGoogleInFlightDeathHarnessActivity.replayOldResult(token)
+    }
+
+    companion object {
+        const val ACTION_REPLAY_OLD = "app.serea.android.action.REPLAY_OLD_CONSENT_RESULT"
     }
 }

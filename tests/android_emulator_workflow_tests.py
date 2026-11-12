@@ -1321,6 +1321,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
 
         self.assertIn("SyntheticConsentSenderCompletionReceiver", script)
         self.assertIn("am broadcast --receiver-foreground", script)
+        self.assertIn('original_a_task_id="$(awk -v sender="$sender_component"', script)
+        self.assertIn('"$original_a_task_id" != "$request_b_task_id"', script)
+        self.assertIn('shell am task move-to-front "$original_a_task_id"', script)
+        self.assertIn("TARGET_A_TASK_RESTORED:", script)
         self.assertNotIn('am start -W -f 0x04000000 -n "$sender_component"', script)
         self.assertIn("generation=1:session=session-A", script)
         self.assertNotIn("generation=41:session=session-A", script)

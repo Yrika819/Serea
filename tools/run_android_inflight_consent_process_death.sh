@@ -166,6 +166,17 @@ grep -Fq "Activity: $component" "$evidence/start-B.txt" || fail 'request B did n
 "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-B-before-result.txt"
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-B-before-result.txt"
 grep -Fq "$sender_component" "$evidence/activities-after-B-before-result.txt" || fail 'external Consent A was not preserved while request B was active'
+original_a_task_id="$(awk -v sender="$sender_component" '
+  /^    Task id #/ { task = $3; sub(/^#/, "", task) }
+  index($0, sender) && task ~ /^[0-9]+$/ { print task; exit }
+' "$evidence/activities-after-B-before-result.txt")"
+request_b_task_id="$(grep -E '(mResumedActivity:|topResumedActivity=).*PrivateGoogleInFlightDeathHarnessActivity' \
+  "$evidence/activities-after-B-before-result.txt" | tail -n 1 | sed -E 's/.* t([0-9]+).*/\1/' || true)"
+[[ "$original_a_task_id" =~ ^[0-9]+$ && "$request_b_task_id" =~ ^[0-9]+$ && "$original_a_task_id" != "$request_b_task_id" ]] || \
+  fail 'could not prove the original Consent task and fresh B task are distinct'
+printf 'original_a_task_id=%s\nrequest_b_task_id=%s\n' "$original_a_task_id" "$request_b_task_id" >> "$evidence/provenance.txt"
+printf 'CONSENT_TASKS_DISTINCT:%s:request-A-task=%s:request-B-task=%s\n' \
+  "$SEREA_CONSENT_DEATH_RUN_ID" "$original_a_task_id" "$request_b_task_id" >> "$evidence/lifecycle-events.txt"
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I > "$evidence/recovery-logcat.txt"
   if grep -F "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" >/dev/null; then break; fi
@@ -227,6 +238,26 @@ grep -F "COMPLETION_BROADCAST_ACCEPTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid
 grep -F "SENDER_COMPLETION_REQUESTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
+"${adb_cmd[@]}" shell am task move-to-front "$original_a_task_id" > "$evidence/restore-original-A-task.txt" 2>&1 || {
+  printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
+  fail 'could not restore the original Consent A task after completing its sender'
+}
+for _ in $(seq 1 30); do
+  "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-original-A-task-restore.txt"
+  if grep -Eq "(mResumedActivity:|topResumedActivity=).* t${original_a_task_id}([^0-9]|$)" \
+    "$evidence/activities-after-original-A-task-restore.txt"; then break; fi
+  current_target_pid="$(pid_for "$package")"
+  [[ "$current_target_pid" == "$target_pid_after_restart" ]] || fail 'B target process changed while restoring the original Consent task'
+  sleep 1
+done
+if ! grep -Eq "(mResumedActivity:|topResumedActivity=).* t${original_a_task_id}([^0-9]|$)" \
+  "$evidence/activities-after-original-A-task-restore.txt"; then
+  printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
+  fail 'original Consent A task did not become resumed after the Sender completed'
+fi
+printf 'TARGET_A_TASK_RESTORED:%s:task=%s:b_task=%s:target_pid=%s:sender_pid=%s:instance=%s\n' \
+  "$SEREA_CONSENT_DEATH_RUN_ID" "$original_a_task_id" "$request_b_task_id" \
+  "$target_pid_after_restart" "$test_pid_before" "$sender_instance_nonce" >> "$evidence/lifecycle-events.txt"
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I SereaSyntheticConsent:I > "$evidence/result-delivery-logcat.txt"
   if grep -F "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" >/dev/null; then break; fi

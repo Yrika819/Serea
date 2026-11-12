@@ -168,7 +168,16 @@ grep -Fq "Activity: $component" "$evidence/start-B.txt" || fail 'request B did n
 "${adb_cmd[@]}" shell dumpsys window windows > "$evidence/windows-after-B-before-result.txt"
 grep -Fq "$sender_component" "$evidence/activities-after-B-before-result.txt" || fail 'external Consent A was not preserved while request B was active'
 original_a_task_id="$(awk -v sender="$sender_component" '
-  /^    Task id #/ { task = $3; sub(/^#/, "", task) }
+  /Task id #[0-9]+/ && !/TaskRecord/ {
+    task = $0
+    sub(/^.*Task id #/, "", task)
+    sub(/[^0-9].*$/, "", task)
+  }
+  /Task\{.*#[0-9]+/ {
+    task = $0
+    sub(/^.*#[[:space:]]*/, "", task)
+    sub(/[^0-9].*$/, "", task)
+  }
   index($0, sender) && task ~ /^[0-9]+$/ { print task; exit }
 ' "$evidence/activities-after-B-before-result.txt")"
 request_b_task_id="$(grep -E '(mResumedActivity:|topResumedActivity=).*PrivateGoogleInFlightDeathHarnessActivity' \
@@ -240,10 +249,28 @@ grep -F "SENDER_COMPLETION_REQUESTED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_b
 grep -F "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:pid=$test_pid_before:instance=$sender_instance_nonce" "$evidence/result-delivery-logcat.txt" >> "$evidence/lifecycle-events.txt"
 grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" || fail 'external Consent A did not complete through its original Activity instance'
 printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
-"${adb_cmd[@]}" shell am task move-to-front "$original_a_task_id" > "$evidence/restore-original-A-task.txt" 2>&1 || {
-  printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
-  fail 'could not restore the original Consent A task after completing its sender'
-}
+restore_task_output="$evidence/restore-original-A-task.txt"
+if (( sdk >= 29 )); then
+  "${adb_cmd[@]}" shell am task move-to-front "$original_a_task_id" > "$restore_task_output" 2>&1 || {
+    printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
+    fail 'could not restore the original Consent A task after completing its sender'
+  }
+else
+  original_a_stack_id="$(awk -v task="#${original_a_task_id}" '
+    /TaskRecord/ && index($0, task) {
+      if (match($0, /StackId=[0-9]+/)) {
+        print substr($0, RSTART + 8, RLENGTH - 8)
+        exit
+      }
+    }
+  ' "$evidence/activities-after-B-before-result.txt")"
+  [[ "$original_a_stack_id" =~ ^[0-9]+$ ]] || fail 'could not verify the original Consent A task stack'
+  printf 'original_a_stack_id=%s\n' "$original_a_stack_id" >> "$evidence/provenance.txt"
+  "${adb_cmd[@]}" shell am stack move-task "$original_a_task_id" "$original_a_stack_id" true > "$restore_task_output" 2>&1 || {
+    printf 'DELIVERY_UNKNOWN\n' > "$evidence/activity-result-delivery.txt"
+    fail 'could not restore the original Consent A task after completing its sender'
+  }
+fi
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" shell dumpsys activity activities > "$evidence/activities-after-original-A-task-restore.txt"
   if grep -Eq "(mResumedActivity:|topResumedActivity=).* t${original_a_task_id}([^0-9]|$)" \

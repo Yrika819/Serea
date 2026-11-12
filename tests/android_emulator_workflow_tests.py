@@ -1322,8 +1322,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SyntheticConsentSenderCompletionReceiver", script)
         self.assertIn("am broadcast --receiver-foreground", script)
         self.assertIn('original_a_task_id="$(awk -v sender="$sender_component"', script)
+        self.assertIn('/Task\\{.*#[0-9]+/', script)
+        self.assertIn('/Task id #[0-9]+/', script)
         self.assertIn('"$original_a_task_id" != "$request_b_task_id"', script)
+        self.assertIn('if (( sdk >= 29 )); then', script)
         self.assertIn('shell am task move-to-front "$original_a_task_id"', script)
+        self.assertIn('shell am stack move-task "$original_a_task_id" "$original_a_stack_id" true', script)
+        self.assertIn('match($0, /StackId=[0-9]+/)', script)
         self.assertIn("TARGET_A_TASK_RESTORED:", script)
         sender_completion_assertion = script.index(
             'grep -Fq "SENDER_COMPLETED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt"'
@@ -1332,7 +1337,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "printf 'DELIVERY_UNKNOWN\\n' > \"$evidence/activity-result-delivery.txt\"",
             sender_completion_assertion,
         )
-        original_task_restore = script.index('shell am task move-to-front "$original_a_task_id"')
+        original_task_restore = script.index('restore_task_output="$evidence/restore-original-A-task.txt"')
         self.assertLess(sender_completion_assertion, unresolved_delivery_marker)
         self.assertLess(unresolved_delivery_marker, original_task_restore)
         self.assertIn('== NOT_RUN ||', script)

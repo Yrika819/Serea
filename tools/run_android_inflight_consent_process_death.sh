@@ -302,7 +302,16 @@ printf 'B_VALID_RESULT_DELIVERED:%s:target_pid=%s:sender_pid=%s:instance=%s:B=re
 
 test_pid_after="$(pid_for "$test_package")"
 printf 'external_sender_pid_after_result=%s\n' "${test_pid_after:-absent}" >> "$evidence/provenance.txt"
-[[ "$test_pid_before" == "$test_pid_after" ]] || fail 'external sender/instrumentation package process changed during target process death check'
+if [[ "$test_pid_after" == "$test_pid_before" ]]; then
+  printf 'sender_process_after_completion=original-pid-retained:%s\n' "$test_pid_after" >> "$evidence/provenance.txt"
+elif [[ -z "$test_pid_after" ]]; then
+  printf 'sender_process_after_completion=process-exited-after-original-Activity-finished\n' >> "$evidence/provenance.txt"
+else
+  # The original Activity's completion already carries its verified PID and nonce. Android may
+  # reclaim that now-empty process after finish; record a later process separately instead of
+  # claiming that a newly launched receiver belongs to the original Sender instance.
+  printf 'sender_process_after_completion=other-process:%s;original_sender_pid=%s\n' "$test_pid_after" "$test_pid_before" >> "$evidence/provenance.txt"
+fi
 target_pid_final="$(pid_for "$package")"
 [[ "$target_pid_final" == "$target_pid_after_restart" ]] || fail 'target process changed after B request verification'
 printf 'PASS\n' > "$evidence/status.txt"

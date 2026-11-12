@@ -84,6 +84,17 @@ class AndroidCiHostTests(unittest.TestCase):
         self.assertNotIn("--reinstall", host.runtime_install_args("NOT_INSTALLED (exit=1)"))
         self.assertIn("--reinstall", host.runtime_install_args("libpulse0 16.1+dfsg1-2ubuntu10.1"))
 
+    def test_package_installed_requires_dpkg_installed_state(self) -> None:
+        self.assertTrue(host.package_installed(
+            runner=lambda _args, **_kwargs: subprocess.CompletedProcess([], 0, "installed\n")
+        ))
+        self.assertFalse(host.package_installed(
+            runner=lambda _args, **_kwargs: subprocess.CompletedProcess([], 0, "unpacked\n")
+        ))
+        self.assertFalse(host.package_installed(
+            runner=lambda _args, **_kwargs: subprocess.CompletedProcess([], 1, "")
+        ))
+
     def test_source_host_extraction_redacts_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -231,6 +242,35 @@ class AndroidCiHostTests(unittest.TestCase):
             content = evidence.read_text(encoding="utf-8")
             self.assertIn("result=HOST_INFRA", content)
             self.assertIn("failure_cause=NETWORK_FAILURE", content)
+
+    def test_apt_install_timeout_is_accepted_only_when_package_and_loader_are_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
+            ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED (exit=1)", "libpulse0 1.0"]), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "probe_official_mirrors", return_value=(True, "noble", "amd64", ["official source"], ["HTTPS PASS"])
+            ), patch.object(
+                host, "official_fallback", return_value=(Path(temporary) / "sources.list", ["-o", "source-options"])
+            ), patch.object(
+                host,
+                "apt_invocation",
+                side_effect=[subprocess.CompletedProcess([], 0, "official update ok"), subprocess.CompletedProcess([], 124, "COMMAND TIMED OUT after 45s\\nSetting up libpulse0")],
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "26"), 0)
+            self.assertEqual(apt.call_count, 2)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("apt_install_timeout_recovered=yes", content)
+            self.assertIn("libpulse0_status_after=installed", content)
+            self.assertIn("result=HOST_READY", content)
+            self.assertIn("apt_result=INSTALL_TIMED_OUT_BUT_RUNTIME_VERIFIED", content)
 
     def test_pre_udev_kvm_inaccessibility_is_recorded_not_failed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

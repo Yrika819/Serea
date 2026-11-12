@@ -273,6 +273,11 @@ def package_state(runner: RUN = subprocess.run) -> str:
     return result.stdout.strip() if result.returncode == 0 else f"NOT_INSTALLED (exit={result.returncode})"
 
 
+def package_installed(runner: RUN = subprocess.run) -> bool:
+    result = command(("dpkg-query", "-W", "-f=${db:Status-Status}\\n", "libpulse0"), timeout=5, runner=runner)
+    return result.returncode == 0 and result.stdout.strip() == "installed"
+
+
 def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     lines = [
         f"phase=HOST_PREFLIGHT api={api}",
@@ -438,10 +443,16 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     install = apt_invocation((*source_options, *runtime_install_args(package)), timeout=APT_TIMEOUT_SECONDS, runner=runner)
     append(path, f"official apt-get install exit={install.returncode}\n{install.stdout}")
     after, still_missing = library_report(sdk, runner)
+    package_after = package_state(runner)
+    package_after_installed = package_installed(runner)
     final_sources_hash = apt_source_snapshot()
-    append(path, f"apt_sources_sha256_after={final_sources_hash}\napt_sources_after=system sources unchanged; temporary source was {source_file}\nlibpulse0_package_after={package_state(runner)}\nldd_after:\n" + "\n".join(after))
+    append(path, f"apt_sources_sha256_after={final_sources_hash}\napt_sources_after=system sources unchanged; temporary source was {source_file}\nlibpulse0_package_after={package_after}\nlibpulse0_status_after={'installed' if package_after_installed else 'not-installed'}\nldd_after:\n" + "\n".join(after))
     if final_sources_hash != original_sources_hash:
         return record_failure(path, "HOST_INFRA", "system APT source configuration changed during temporary package installation")
+    if install.returncode == 124 and "command timed out after" in install.stdout.lower() and not still_missing and package_after_installed:
+        append(path, "apt_install_timeout_recovered=yes; dpkg confirms libpulse0 installed and all QEMU dynamic libraries resolve\nresult=HOST_READY\napt_result=INSTALL_TIMED_OUT_BUT_RUNTIME_VERIFIED\napt_signature_validation=enabled; tls_validation=enabled; third_party_repositories=none")
+        print("APT install timed out after the signed package transaction; dpkg and QEMU loader checks verify the runtime is ready.")
+        return 0
     if install.returncode != 0 or still_missing:
         cause = "NETWORK_FAILURE" if is_network_failure(install.stdout) or "command timed out after" in install.stdout.lower() else "DEPENDENCY_FAILURE"
         category = "HOST_INFRA" if cause == "NETWORK_FAILURE" else "DEPENDENCY_FAILURE"

@@ -1341,6 +1341,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("NOT_RUN", script)
         self.assertIn("printf 'FAIL\\n' > \"$evidence/activity-result-delivery.txt\"", script)
         self.assertIn("status=CONSENT_PENDING", script)
+        self.assertIn(
+            'B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:',
+            script,
+        )
+        self.assertNotIn(
+            'B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:pid=',
+            script,
+        )
         self.assertIn("synthetic-consent-result-A", script)
         self.assertIn("duplicate-sender-completion.txt", script)
         self.assertIn("SENDER_COMPLETION_REJECTED", script)

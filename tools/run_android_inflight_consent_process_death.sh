@@ -168,10 +168,10 @@ grep -Fq "Activity: $component" "$evidence/start-B.txt" || fail 'request B did n
 grep -Fq "$sender_component" "$evidence/activities-after-B-before-result.txt" || fail 'external Consent A was not preserved while request B was active'
 for _ in $(seq 1 30); do
   "${adb_cmd[@]}" logcat -d -s SereaConsentDeath:I > "$evidence/recovery-logcat.txt"
-  if grep -F "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:pid=" "$evidence/recovery-logcat.txt" >/dev/null; then break; fi
+  if grep -F "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" >/dev/null; then break; fi
   sleep 1
 done
-grep -Fq "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:pid=" "$evidence/recovery-logcat.txt" || fail 'request B did not enter its fresh pending authorization state'
+grep -Fq "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" || fail 'request B did not enter its fresh pending authorization state'
 grep -Fq "RECOVERED_DISCONNECTED:$SEREA_CONSENT_DEATH_RUN_ID:status=DISCONNECTED:pending=null:calendarSession=null:" "$evidence/recovery-logcat.txt" || fail 'authorization state was restored after process death instead of starting disconnected'
 grep -Fq "B_READY:$SEREA_CONSENT_DEATH_RUN_ID:request=request-B:generation=1:session=session-B:status=CONSENT_PENDING:" "$evidence/recovery-logcat.txt" || fail 'request B identity or pending state was not recorded'
 grep -Fq 'factory=1:authorize=1:result=0:cancel=0:token=0' "$evidence/recovery-logcat.txt" || fail 'request B had unexpected pre-result gateway operations'

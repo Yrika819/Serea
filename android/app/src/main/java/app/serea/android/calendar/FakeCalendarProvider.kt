@@ -163,5 +163,14 @@ class FakeCalendarProvider(
             val index = event.key.eventId.value.removePrefix("bulk-").toIntOrNull()
             index == null || index < 72
         }
+
+        /** Private Preview fixture uses Google's `primary` alias without exposing demo calendars. */
+        fun privatePrimaryProvider(): FakeCalendarProvider {
+            val primaryId = CalendarId("primary")
+            val primaryCalendar = calendars.single { it.id.value == "demo-primary" }.copy(id = primaryId)
+            val primaryEvents = appShellEvents.filter { it.key.calendarId.value == "demo-primary" }
+                .map { it.copy(key = it.key.copy(calendarId = primaryId)) }
+            return FakeCalendarProvider(calendars = listOf(primaryCalendar), events = primaryEvents)
+        }
     }
 }

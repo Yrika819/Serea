@@ -35,6 +35,17 @@ class CalendarProviderSessions(
         return replace(CalendarProviderKind.FAKE, provider, provider)
     }
 
+    /** Opens a provider session that can only expose a single synthetic primary calendar. */
+    fun openPrimaryFake(): CalendarProviderSession {
+        val provider = fakeProvider()
+        return replace(
+            CalendarProviderKind.FAKE,
+            PrimaryOnlyCalendarReadPort(provider),
+            provider,
+            primaryCalendarOnly = true,
+        )
+    }
+
     /**
      * Only constructs the Google transport when the build's owner activation switch is on and
      * the injected authorization gateway is a real Play Services gateway. Otherwise this opens
@@ -46,17 +57,45 @@ class CalendarProviderSessions(
         baseUrl: HttpUrl? = null,
     ): CalendarProviderSession {
         if (!googleHttpEnabledByOwner || gateway.mode != GoogleAuthorizationMode.PLAY_SERVICES) return openFake()
-        val authorization = GoogleCalendarAuthorizationAdapter(gateway)
+        return openGoogleReadOnly(gateway, client, baseUrl, primaryOnly = false)
+    }
+
+    /** Defense-in-depth Google path; direct transport calls also enforce this same mode. */
+    fun openPrimaryGoogleReadOnly(
+        gateway: GoogleAuthorizationGateway,
+        client: OkHttpClient = OkHttpClient(),
+        baseUrl: HttpUrl? = null,
+    ): CalendarProviderSession {
+        if (!googleHttpEnabledByOwner || gateway.mode != GoogleAuthorizationMode.PLAY_SERVICES) return openPrimaryFake()
+        return openGoogleReadOnly(gateway, client, baseUrl, primaryOnly = true)
+    }
+
+    private fun openGoogleReadOnly(
+        gateway: GoogleAuthorizationGateway,
+        client: OkHttpClient,
+        baseUrl: HttpUrl?,
+        primaryOnly: Boolean,
+    ): CalendarProviderSession {
+        val authorization = GoogleCalendarAuthorizationAdapter(gateway, primaryOnly = primaryOnly)
         val port = if (baseUrl == null) {
-            GoogleCalendarHttpReadPort(authorization, authorization, client)
+            GoogleCalendarHttpReadPort(
+                authorization, authorization, client,
+                accessMode = if (primaryOnly) GoogleCalendarHttpReadPort.AccessMode.PRIMARY_ONLY
+                    else GoogleCalendarHttpReadPort.AccessMode.GENERAL_READ_ONLY,
+            )
         } else {
-            GoogleCalendarHttpReadPort(authorization, authorization, client, baseUrl)
+            GoogleCalendarHttpReadPort(
+                authorization, authorization, client, baseUrl,
+                if (primaryOnly) GoogleCalendarHttpReadPort.AccessMode.PRIMARY_ONLY
+                    else GoogleCalendarHttpReadPort.AccessMode.GENERAL_READ_ONLY,
+            )
         }
         val session = replace(
             CalendarProviderKind.GOOGLE_READ_ONLY,
             port,
             authorization,
             currentGrantInvalidationGeneration = { gateway.googleGrantInvalidationGeneration },
+            primaryCalendarOnly = primaryOnly,
         )
         session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
             session.cancelInFlightReadsForGrantInvalidation()
@@ -69,6 +108,7 @@ class CalendarProviderSessions(
         delegate: CalendarReadPort,
         authorization: CalendarAuthorizationPort,
         currentGrantInvalidationGeneration: () -> Long = { 0L },
+        primaryCalendarOnly: Boolean = false,
     ): CalendarProviderSession = synchronized(lock) {
         current?.invalidateFromController()
         val id = nextId.incrementAndGet()
@@ -77,6 +117,7 @@ class CalendarProviderSessions(
             kind = kind,
             delegate = delegate,
             authorizationDelegate = authorization,
+            primaryCalendarOnly = primaryCalendarOnly,
             currentGrantInvalidationGeneration = currentGrantInvalidationGeneration,
             isCurrent = { synchronized(lock) { current?.id == id } },
             onClose = { closeIfCurrent(id) },
@@ -93,6 +134,7 @@ class CalendarProviderSession internal constructor(
     val kind: CalendarProviderKind,
     private val delegate: CalendarReadPort,
     private val authorizationDelegate: CalendarAuthorizationPort,
+    val primaryCalendarOnly: Boolean = false,
     private val currentGrantInvalidationGeneration: () -> Long = { 0L },
     private val isCurrent: () -> Boolean,
     private val onClose: () -> Unit,
@@ -195,5 +237,27 @@ class CalendarProviderSession internal constructor(
     private fun inactiveSession() = CalendarReadFailure(
         CalendarApiFailureCode.PERMISSION_DENIED,
         "Calendar provider session is no longer active.",
+    )
+}
+
+/** Provider-layer guard used for private synthetic previews and as a second Google boundary. */
+private class PrimaryOnlyCalendarReadPort(private val delegate: CalendarReadPort) : CalendarReadPort {
+    override suspend fun listCalendars(): List<CalendarDescriptor> = delegate.listCalendars()
+        .filter { it.id.value == "primary" }
+        .take(1)
+    override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor = reject()
+    override suspend fun getEvent(key: CalendarEventKey): CalendarEvent {
+        requirePrimary(key.calendarId)
+        return delegate.getEvent(key)
+    }
+    override suspend fun listEventsPage(calendarId: CalendarId, range: CalendarDateRange, pageToken: String?): CalendarEventPage {
+        requirePrimary(calendarId)
+        return delegate.listEventsPage(calendarId, range, pageToken)
+    }
+    private fun requirePrimary(calendarId: CalendarId) {
+        if (calendarId.value != "primary") reject()
+    }
+    private fun reject(): Nothing = throw CalendarReadFailure(
+        CalendarApiFailureCode.PERMISSION_DENIED, "Only the primary calendar is available.",
     )
 }

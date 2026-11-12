@@ -367,8 +367,26 @@ class PrivateGoogleAuthorizationViewModelTest {
             val session = PrivateGoogleCalendarComposition().openAuthorizedPreview(gateway)
 
             assertEquals(CalendarProviderKind.FAKE, session.kind)
+            assertTrue(session.primaryCalendarOnly)
             assertEquals(CalendarAuthorizationState.MOCK_ONLY, session.status().state)
-            session.listCalendars()
+            val calendars = session.listCalendars()
+            assertEquals(listOf("primary"), calendars.map { it.id.value })
+            assertTrue(session.listEventsPage(
+                app.serea.android.calendar.CalendarId("primary"),
+                app.serea.android.calendar.CalendarDateRange(
+                    java.time.Instant.parse("2026-10-20T00:00:00Z"),
+                    java.time.Instant.parse("2026-10-21T00:00:00Z"),
+                ), null,
+            ).events.all { it.key.calendarId.value == "primary" })
+            assertTrue(runCatching {
+                session.listEventsPage(
+                    app.serea.android.calendar.CalendarId("demo-work"),
+                    app.serea.android.calendar.CalendarDateRange(
+                        java.time.Instant.parse("2026-10-20T00:00:00Z"),
+                        java.time.Instant.parse("2026-10-21T00:00:00Z"),
+                    ), null,
+                )
+            }.isFailure)
             assertEquals(listOf(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)), statusScopes)
             assertEquals(0, tokenRequests)
             session.close()

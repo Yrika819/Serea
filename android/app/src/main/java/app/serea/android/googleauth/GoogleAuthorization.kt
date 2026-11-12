@@ -30,6 +30,11 @@ enum class GoogleScope(val value: String) {
     CALENDAR_LIST_READ_ONLY("https://www.googleapis.com/auth/calendar.calendarlist.readonly"),
 }
 
+/** Private Primary consent and token requests are bound to this exact least-privilege set. */
+internal object PrivatePrimaryCalendarScopeContract {
+    val scopes: Set<GoogleScope> = setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)
+}
+
 /** App-local feature gate. These gates never revoke Google's shared grant. */
 enum class GoogleFeature(val scopes: Set<GoogleScope>) {
     GMAIL(setOf(GoogleScope.GMAIL_READ_ONLY)),

@@ -42,7 +42,10 @@ class GoogleCalendarHttpReadPort internal constructor(
     private val tokens: CalendarAccessTokenPort,
     private val client: OkHttpClient = productionClient(),
     private val baseUrl: HttpUrl = GOOGLE_API_BASE,
+    private val accessMode: AccessMode = AccessMode.GENERAL_READ_ONLY,
 ) : CalendarReadPort {
+    /** The private primary boundary is enforced here even when callers bypass the UI/provider factory. */
+    enum class AccessMode { GENERAL_READ_ONLY, PRIMARY_ONLY }
     private val safeClient = client.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -59,6 +62,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     override suspend fun listCalendars(): List<CalendarDescriptor> {
+        rejectCalendarListInPrimaryMode()
         requireAuthorized(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY)
         val calendars = ArrayList<CalendarDescriptor>()
         val seen = HashSet<String>()
@@ -85,6 +89,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor {
+        rejectCalendarListInPrimaryMode()
         requireAuthorized(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY)
         val url = baseUrl.newBuilder().addPathSegment("users").addPathSegment("me")
             .addPathSegment("calendarList").addPathSegment(calendarId.value).build()
@@ -92,6 +97,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     override suspend fun getEvent(key: CalendarEventKey): CalendarEvent {
+        requirePrimaryCalendarIfRestricted(key.calendarId)
         requireAuthorized(CalendarPermissionPolicy.EVENTS_READ_ONLY)
         val url = baseUrl.newBuilder().addPathSegment("calendars").addPathSegment(key.calendarId.value)
             .addPathSegment("events").addPathSegment(key.eventId.value).build()
@@ -103,6 +109,7 @@ class GoogleCalendarHttpReadPort internal constructor(
         range: CalendarDateRange,
         pageToken: String?,
     ): CalendarEventPage {
+        requirePrimaryCalendarIfRestricted(calendarId)
         requireAuthorized(CalendarPermissionPolicy.EVENTS_READ_ONLY)
         pageToken?.let(::validatePageToken)
         val url = baseUrl.newBuilder().addPathSegment("calendars").addPathSegment(calendarId.value)
@@ -124,6 +131,19 @@ class GoogleCalendarHttpReadPort internal constructor(
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
         }
         if (scope in status.missingScopes) throw failure(CalendarApiFailureCode.MISSING_SCOPE, "Required Calendar read scope is missing.")
+    }
+
+    private fun rejectCalendarListInPrimaryMode() {
+        if (accessMode == AccessMode.PRIMARY_ONLY) {
+            throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "CalendarList access is disabled for the primary-only transport.")
+        }
+    }
+
+    private fun requirePrimaryCalendarIfRestricted(calendarId: CalendarId) {
+        if (accessMode == AccessMode.PRIMARY_ONLY && calendarId.value != PRIMARY_CALENDAR_ID) {
+            // This check deliberately precedes status, token, and HTTP work.
+            throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Only the primary calendar is available.")
+        }
     }
 
     private suspend fun get(url: HttpUrl, scope: String): String {

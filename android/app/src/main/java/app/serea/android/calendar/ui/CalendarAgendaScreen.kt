@@ -121,6 +121,7 @@ fun CalendarAgendaScreen(
     onCreateHandoffPreview: (suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>)? = null,
     onHandoffConfirmed: (suspend (GoogleHandoffPreview) -> Boolean)? = null,
     onCancelHandoffPreview: ((GoogleHandoffPreview) -> Unit)? = null,
+    primaryCalendarOnly: Boolean = (provider as? app.serea.android.calendar.CalendarProviderSession)?.primaryCalendarOnly == true,
 ) {
     val configuration = LocalConfiguration.current
     val compactControls = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -200,6 +201,7 @@ fun CalendarAgendaScreen(
             initialQuery = query,
             initialCalendarId = savedCalendarId,
             initialDetailKey = detailKey,
+            primaryCalendarOnly = primaryCalendarOnly,
         )
     }
     DisposableEffect(controller) {

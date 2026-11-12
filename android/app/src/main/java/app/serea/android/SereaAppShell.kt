@@ -263,6 +263,7 @@ internal fun SereaAppShell(
                         androidx.compose.runtime.key(demoSession) {
                             CalendarAuthorizationDemoDestination(
                                 session = demoSession,
+                                primaryCalendarOnly = demoSession.primaryCalendarOnly,
                                 coordinator = demoCoordinator,
                                 onBack = { showGoogleDemoCalendar = false },
                                 conversationId = chatState.conversation.id,
@@ -342,6 +343,7 @@ internal fun SereaAppShell(
 @Composable
 private fun CalendarAuthorizationDemoDestination(
     session: CalendarProviderSession,
+    primaryCalendarOnly: Boolean,
     coordinator: GoogleTrustedHandoffCoordinator,
     onBack: () -> Unit,
     conversationId: String,
@@ -353,6 +355,7 @@ private fun CalendarAuthorizationDemoDestination(
     CalendarAgendaScreen(
         onBack = onBack,
         provider = session,
+        primaryCalendarOnly = primaryCalendarOnly,
         authorizationPort = session,
         clock = Clock.systemUTC(),
         displayZone = displayZone,

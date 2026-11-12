@@ -14,13 +14,17 @@ import app.serea.android.calendar.transport.CalendarAccessTokenPort
  */
 class GoogleCalendarAuthorizationAdapter(
     private val gateway: GoogleAuthorizationGateway,
+    private val primaryOnly: Boolean = false,
 ) : CalendarAuthorizationPort, CalendarAccessTokenPort {
     private val authorizationSessionId = gateway.authorizationSessionId
-    private val eventScope = GoogleScope.CALENDAR_EVENTS_READ_ONLY
+    private val eventScope = PrivatePrimaryCalendarScopeContract.scopes.single()
 
     override suspend fun status(): CalendarAuthorizationStatus = status(setOf(eventScope.value))
 
     override suspend fun status(requiredScopes: Set<String>): CalendarAuthorizationStatus {
+        if (primaryOnly && requiredScopes != CalendarPermissionPolicy.privatePrimaryRequiredScopes()) {
+            return CalendarAuthorizationStatus(CalendarAuthorizationState.FEATURE_DISABLED, requiredScopes)
+        }
         val requestedScopes = buildSet {
             add(eventScope)
             if (CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY in requiredScopes) {
@@ -54,6 +58,7 @@ class GoogleCalendarAuthorizationAdapter(
     }
 
     override suspend fun accessToken(scope: String): CalendarAccessToken? {
+        if (primaryOnly && scope != CalendarPermissionPolicy.EVENTS_READ_ONLY) return null
         if (gateway.mode != GoogleAuthorizationMode.PLAY_SERVICES || authorizationSessionId == null ||
             gateway.authorizationSessionId != authorizationSessionId || !gateway.isEnabledInApp(GoogleFeature.CALENDAR)
         ) return null

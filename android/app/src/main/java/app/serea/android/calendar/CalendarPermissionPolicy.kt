@@ -7,6 +7,10 @@ import app.serea.android.DataOrigin
 object CalendarPermissionPolicy {
     const val EVENTS_READ_ONLY = "https://www.googleapis.com/auth/calendar.events.readonly"
     const val CALENDAR_LIST_READ_ONLY = "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+    const val PRIVATE_PRIMARY_EVENTS_READ_ONLY = EVENTS_READ_ONLY
+
+    /** Private Primary may ask for this exact scope and no CalendarList authority. */
+    fun privatePrimaryRequiredScopes(): Set<String> = setOf(PRIVATE_PRIMARY_EVENTS_READ_ONLY)
 
     fun requiredScopes(listCalendars: Boolean): Set<String> = buildSet {
         add(EVENTS_READ_ONLY)

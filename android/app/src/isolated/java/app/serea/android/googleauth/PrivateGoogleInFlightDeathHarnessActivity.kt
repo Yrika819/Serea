@@ -321,3 +321,15 @@ class PrivateGoogleInFlightDeathReplayReceiver : BroadcastReceiver() {
         const val ACTION_REPLAY_OLD = "app.serea.android.action.REPLAY_OLD_CONSENT_RESULT"
     }
 }
+
+/** Isolated-flavor-only one-shot successful result for request B after stale A checks finish. */
+class SyntheticConsentBResultActivity : android.app.Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val token = intent.getStringExtra("token").orEmpty()
+        check(token.matches(Regex("[A-Za-z0-9-]{1,120}-B"))) { "invalid B synthetic result token" }
+        Log.i("SereaSyntheticConsent", "B_SYNTHETIC_RESULT_CREATED:$token:pid=${Process.myPid()}")
+        setResult(android.app.Activity.RESULT_OK, Intent().putExtra("synthetic-consent-payload", "synthetic-consent-result-B"))
+        finish()
+    }
+}

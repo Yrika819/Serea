@@ -14,11 +14,17 @@ test_apk="app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.ap
 evidence="${SEREA_CONSENT_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/inflight-consent-process-death}"
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
+printf 'NOT_RUN\n' > "$evidence/activity-result-delivery.txt"
 printf 'PrivateGoogleConsentRelayTestActivity.StartIntentSenderForResult -> SyntheticConsentSenderActivity -> PrivateGoogleInFlightDeathHarnessActivity.ActivityResultLauncher\n' > "$evidence/activity-result-route.txt"
 adb_cmd=(adb -s "$ANDROID_SERIAL")
 
 fail() {
   printf 'FAIL\n' > "$evidence/status.txt"
+  if [[ -f "$evidence/result-delivery-logcat.txt" ]] &&
+      grep -Fq "RESULT_DELIVERED:$SEREA_CONSENT_DEATH_RUN_ID:" "$evidence/result-delivery-logcat.txt" &&
+      [[ "$(cat "$evidence/activity-result-delivery.txt")" == NOT_RUN ]]; then
+    printf 'FAIL\n' > "$evidence/activity-result-delivery.txt"
+  fi
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }

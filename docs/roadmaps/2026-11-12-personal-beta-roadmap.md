@@ -9,14 +9,16 @@
 
 | 項目 | 現在状態・証拠 |
 |---|---|
-| canonical main | HEAD `eaa8f7cefb608d846c336a972f33b0812f269f57`; Tree `4cb69b2c6bec8ed60dd90bc3e03d5415d71226b0` |
-| H4-A / PR #234 | **統合完了**。Merge SHAはmain HEAD `eaa8f7cefb608d846c336a972f33b0812f269f57`。Primary-only境界の修正とidentity/adb root検証を含む |
-| PR #232 | **OPEN・未統合・Draftではない（Ready for review）**。Primary-only実装は#234経由でmainへ統合済み。PR #232の未統合差分や状態を、main上のH4-A状態と混同しない |
-| H4-B | Owner指示により独立実装を開始。対象は認可Session失効・再認可・HTTP 401/403/429・切断・アカウント切替・Process Deathの安全性。成果物は独立Draft PRまで |
+| canonical main (2026-11-13 UTC) | HEAD `8c137c538135d66fb2dab16bd74c10cc56146da4`; Tree `792287a6b359c547f7a2026e7c3d2054be541176` |
+| H4-A / PR #234 | **統合完了**。#234はClosed/MERGED。統合時main HEADは `eaa8f7cefb608d846c336a972f33b0812f269f57`。Primary-only境界の修正とidentity/adb root検証を含む。これは統合時の過去SHA |
+| PR #232 | **OPEN・未統合・Ready for review**。最新確認時も変更しない。Primary-only実装は#234経由でmainへ統合済み。PR #232の未統合差分や状態を、main上のH4-A状態と混同しない |
+| PR #237 | **Closed/MERGED**。mainへ `8c137c538135d66fb2dab16bd74c10cc56146da4` として統合。Release Fault Exclusion A/B/C/Dを維持しCargo 1.100のartifact layoutに対応、`types.rs`にrustfmtのみ反映。PR記載の正式検証はAPI26/35各105/105、Fast/Full/Android Gate/MSRVを含む |
+| PR #233 | Draft。同期前HEAD `07b297836c7e78a98419d6dca330268f544f80e2` は過去スナップショット。AGENTS.mdと本ロードマップだけの文書差分を維持 |
+| H4-B / PR #236 | Draft。同期前HEAD `2d6ef6bb45f076679ff26fe40b547cd475ebdb9b` は過去スナップショット。401/403/429、失効世代、retry/cancel、account/process death、Primary-only/Fake-only等の実装と追加テストを含む。新main同期後のCIは別途確認する |
 | 実Google OAuth / Google API | 未有効化。実アカウント・外部API・実Revokeを使用しない。`googleHttpEnabledByOwner=false`を維持 |
-| CIスナップショット | main HEADの取得時点でAndroid Formal API26/35、Unit、Integration、Security、Identity Isolation等は成功。Linux stable full validationとLinux fast checksは失敗、combined statusはpending。H4-Bの正式CI結果ではない |
+| CI / 安全境界 | #237の検証結果は同PR HEADに対する証跡で、#233/#236の同期後HEADのCI結果ではない。`googleHttpEnabledByOwner=false`を維持し、実OAuth/API/AIを有効化しない |
 
-以降の作業ではGitHubから最新値を再取得する。次の節「0. 現在地 — 2026-11-12」は**当時の履歴スナップショット**であり、現在状態を表すものではない。
+以降の作業ではGitHubから最新値を再取得する。次の節「0. 現在地 — 2026-11-12」は**当時の履歴スナップショット**であり、現在状態を表すものではない。上表の同期前HEAD値も同期作業開始時点のスナップショットであり、同期後SHAとは区別する。
 
 ## 0. 現在地 — 2026-11-12
 

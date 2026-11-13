@@ -12,12 +12,13 @@ This file is the repository entry point for coding assistants and review agents.
 
 At session start, **fetch main and target PR status from GitHub**. SHA values and dated check results in documents are snapshots, not evergreen facts.
 
-## Current handoff snapshot (2026-11-13 JST)
+## Current handoff snapshot (2026-11-13 UTC)
 
-- Canonical main `eaa8f7cefb608d846c336a972f33b0812f269f57`; Tree `4cb69b2c6bec8ed60dd90bc3e03d5415d71226b0`. PR [#234](https://github.com/Yrika819/Serea/pull/234) merged H4-A on this SHA.
-- PR [#232](https://github.com/Yrika819/Serea/pull/232) remains **OPEN, not merged, and ready for review (not Draft)**. Its Primary-only implementation is on main through #234. The open PR is retained at the latest observed HEAD; do not treat its state as the state of the integrated implementation.
-- PR [#231](https://github.com/Yrika819/Serea/pull/231) already merged. Synthetic in-flight Consent Process Death E2E passed on Android API 26 and 35; this does **not** establish success of real Google OAuth.
-- H4-B authorization/session/error hardening is the next implementation phase. Only the specifically instructed independent Draft PR scope is authorized; real Google OAuth, Cloud configuration, and later H4-C work remain separately gated.
+- Canonical main `8c137c538135d66fb2dab16bd74c10cc56146da4`; Tree `792287a6b359c547f7a2026e7c3d2054be541176`. This includes merged PR #237 (Cargo 1.100 release artifact support and rustfmt-only formatting in `types.rs`).
+- H4-A is complete through merged PR #234 (`eaa8f7cefb608d846c336a972f33b0812f269f57` was the prior main HEAD). PR #232 remains **OPEN, not merged, and ready for review (not Draft)**; its Primary-only implementation is on main through #234. Do not change PR #232.
+- PR #231 already merged. Synthetic in-flight Consent Process Death E2E passed on Android API 26 and 35; this does **not** establish success of real Google OAuth.
+- H4-B implementation is in PR #236, still Draft at its recorded pre-sync HEAD pending main synchronization and fresh validation. Private Google HTTP remains disabled; no real Google connection is authorized.
+- PR #233 is the documentation-only roadmap handoff. Its recorded pre-sync HEAD is a historical snapshot; current branch state and checks must be fetched from GitHub.
 - This is a dated handoff snapshot. Fetch GitHub before acting and distinguish current state from historical snapshots in the roadmap.
 
 ## Hard boundaries

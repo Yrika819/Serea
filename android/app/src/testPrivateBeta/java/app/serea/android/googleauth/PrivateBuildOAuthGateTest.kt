@@ -3,6 +3,7 @@ package app.serea.android.googleauth
 import app.serea.android.BuildConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PrivateBuildOAuthGateTest {
@@ -13,7 +14,7 @@ class PrivateBuildOAuthGateTest {
         assertFalse(ownerPrivateGoogleOAuthEnabled(requestedByLocalPrivateBuild = false))
         if (BuildConfig.BUILD_TYPE == "privateBeta") {
             assertEquals("app.serea.android.beta", BuildConfig.APPLICATION_ID)
-            assertEquals(2, BuildConfig.VERSION_CODE)
+            assertTrue(BuildConfig.VERSION_CODE >= 2)
         }
     }
 }

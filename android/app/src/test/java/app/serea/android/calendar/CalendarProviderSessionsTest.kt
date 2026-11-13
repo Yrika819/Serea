@@ -15,10 +15,15 @@ import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import app.serea.android.googleauth.awaitGoogleIdentityTaskToTerminal
 import app.serea.android.googleauth.invalidateGoogleGrantAtRevokeStart
+import app.serea.android.calendar.transport.CalendarAccessToken
+import app.serea.android.calendar.transport.CalendarAccessTokenPort
+import app.serea.android.calendar.transport.CalendarHttpRetryPolicy
+import app.serea.android.calendar.transport.GoogleCalendarHttpReadPort
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -738,6 +743,46 @@ class CalendarProviderSessionsTest {
             session.close()
         }
         assertEquals(0L, observerNotified.count)
+    }
+
+    @Test fun disconnectDuringRateLimitBackoffPreventsAnotherHttpAttempt() = runBlocking {
+        val backoffStarted = CompletableDeferred<Unit>()
+        server.enqueue(MockResponse().setResponseCode(429))
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status() = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
+        }
+        val transport = GoogleCalendarHttpReadPort(
+            authorization = authorization,
+            tokens = CalendarAccessTokenPort {
+                CalendarAccessToken(AccessTokenLease("fixture-only", setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY), null))
+            },
+            client = OkHttpClient(),
+            baseUrl = server.url("/calendar/v3/"),
+            retryPolicy = CalendarHttpRetryPolicy(wait = {
+                backoffStarted.complete(Unit)
+                awaitCancellation()
+            }),
+        )
+        val session = CalendarProviderSession(
+            id = 91,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = transport,
+            authorizationDelegate = authorization,
+            isCurrent = { true },
+            onClose = {},
+        )
+        val read = async { runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("event"))) } }
+        try {
+            backoffStarted.await()
+            session.close()
+            val result = read.await()
+            assertFalse(result.isSuccess)
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, (result.exceptionOrNull() as CalendarReadFailure).code)
+            assertEquals(1, server.requestCount)
+        } finally {
+            session.close()
+            read.cancelAndJoin()
+        }
     }
 
     private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {

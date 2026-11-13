@@ -20,6 +20,7 @@ import app.serea.android.calendar.GoogleCalendarEventParser
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -33,8 +34,30 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
+
+/** Small, injectable retry budget for rate-limit responses only. */
+internal class CalendarHttpRetryPolicy(
+    val maximumRetries: Int = 2,
+    val baseDelayMillis: Long = 250,
+    val maximumDelayMillis: Long = 4_000,
+    val nowMillis: () -> Long = System::currentTimeMillis,
+    val wait: suspend (Long) -> Unit = { delay(it) },
+) {
+    init {
+        require(maximumRetries in 0..5)
+        require(baseDelayMillis in 1..60_000)
+        require(maximumDelayMillis in baseDelayMillis..60_000)
+    }
+
+    fun backoffMillis(retryIndex: Int): Long {
+        val factor = 1L shl retryIndex.coerceIn(0, 20)
+        return (baseDelayMillis * factor).coerceAtMost(maximumDelayMillis)
+    }
+}
 
 /** Google Calendar v3 read-only transport. It has no write verb and never follows redirects. */
 class GoogleCalendarHttpReadPort internal constructor(
@@ -43,6 +66,7 @@ class GoogleCalendarHttpReadPort internal constructor(
     private val client: OkHttpClient = productionClient(),
     private val baseUrl: HttpUrl = GOOGLE_API_BASE,
     private val accessMode: AccessMode = AccessMode.GENERAL_READ_ONLY,
+    private val retryPolicy: CalendarHttpRetryPolicy = CalendarHttpRetryPolicy(),
 ) : CalendarReadPort {
     /** The private primary boundary is enforced here even when callers bypass the UI/provider factory. */
     enum class AccessMode { GENERAL_READ_ONLY, PRIMARY_ONLY }
@@ -131,7 +155,10 @@ class GoogleCalendarHttpReadPort internal constructor(
     private suspend fun requireAuthorized(scope: String) {
         val status = authorization.status(setOf(scope))
         if (status.state != CalendarAuthorizationState.AUTHORIZED) {
-            throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
+            val code = if (status.state in setOf(CalendarAuthorizationState.EXPIRED, CalendarAuthorizationState.REVOKED)) {
+                CalendarApiFailureCode.AUTHENTICATION_EXPIRED
+            } else CalendarApiFailureCode.PERMISSION_DENIED
+            throw failure(code, "Calendar read authorization is unavailable.")
         }
         if (scope in status.missingScopes) throw failure(CalendarApiFailureCode.MISSING_SCOPE, "Required Calendar read scope is missing.")
     }
@@ -152,7 +179,10 @@ class GoogleCalendarHttpReadPort internal constructor(
     private suspend fun get(url: HttpUrl, scope: String): String {
         val status = authorization.status(setOf(scope))
         if (status.state != CalendarAuthorizationState.AUTHORIZED) {
-            throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
+            val code = if (status.state in setOf(CalendarAuthorizationState.EXPIRED, CalendarAuthorizationState.REVOKED)) {
+                CalendarApiFailureCode.AUTHENTICATION_EXPIRED
+            } else CalendarApiFailureCode.PERMISSION_DENIED
+            throw failure(code, "Calendar read authorization is unavailable.")
         }
         if (scope in status.missingScopes) throw failure(CalendarApiFailureCode.MISSING_SCOPE, "Required Calendar read scope is missing.")
         val token = try { tokens.accessToken(scope) }
@@ -160,14 +190,27 @@ class GoogleCalendarHttpReadPort internal constructor(
         catch (_: Exception) { throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.") }
         if (token == null) throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.")
         try {
-            currentCoroutineContext().ensureActive()
-            val request = token.useToken { value ->
-                Request.Builder().url(url).header("Authorization", "Bearer $value")
-                    .header("Accept", "application/json").get().build()
-            }
-            currentCoroutineContext().ensureActive()
-            val response = execute(safeClient.newCall(request))
+            var attempt = 0
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                token.ensureValid()
+                val request = token.useToken { value ->
+                    Request.Builder().url(url).header("Authorization", "Bearer $value")
+                        .header("Accept", "application/json").get().build()
+                }
+                currentCoroutineContext().ensureActive()
+                val response = execute(safeClient.newCall(request))
+                val retryDelayMillis = retryDelay(response, attempt)
+                if (retryDelayMillis != null) {
+                    response.close()
+                    attempt++
+                    retryPolicy.wait(retryDelayMillis)
+                    currentCoroutineContext().ensureActive()
+                    token.ensureValid()
+                    continue
+                }
             response.use {
+            if (it.code == 401) token.markAuthenticationRejected()
             if (it.code !in 200..299) throw responseFailure(it)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")
             val bytes = try { body.byteStream().use { stream -> readBoundedResponse(stream, MAX_RESPONSE_BYTES) } }
@@ -178,6 +221,7 @@ class GoogleCalendarHttpReadPort internal constructor(
             currentCoroutineContext().ensureActive()
             token.ensureValid()
             return bytes.toString(Charsets.UTF_8)
+            }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -208,9 +252,10 @@ class GoogleCalendarHttpReadPort internal constructor(
 
     private fun responseFailure(response: Response): CalendarReadFailure {
         val code = when (response.code) {
-            401 -> CalendarApiFailureCode.PERMISSION_DENIED
+            401 -> CalendarApiFailureCode.AUTHENTICATION_EXPIRED
             403 -> when (errorReason(response)) {
-                "insufficientPermissions", "forbidden" -> CalendarApiFailureCode.MISSING_SCOPE
+                "insufficientPermissions", "scopeNotGranted" -> CalendarApiFailureCode.MISSING_SCOPE
+                "domainPolicy", "userPolicy", "accessNotConfigured" -> CalendarApiFailureCode.POLICY_DENIED
                 "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded" -> CalendarApiFailureCode.RATE_LIMITED
                 else -> CalendarApiFailureCode.PERMISSION_DENIED
             }
@@ -221,6 +266,28 @@ class GoogleCalendarHttpReadPort internal constructor(
             else -> CalendarApiFailureCode.INVALID_RESPONSE
         }
         return failure(code, "Calendar API returned HTTP ${response.code}.")
+    }
+
+    private fun retryDelay(response: Response, attempt: Int): Long? {
+        if (attempt >= retryPolicy.maximumRetries) return null
+        val rateLimited = response.code == 429 ||
+            (response.code == 403 && errorReason(response) in RATE_LIMIT_REASONS)
+        if (!rateLimited) return null
+        val retryAfter = response.header("Retry-After")?.let(::parseRetryAfterMillis)
+        return (retryAfter ?: retryPolicy.backoffMillis(attempt)).coerceAtMost(retryPolicy.maximumDelayMillis)
+    }
+
+    private fun parseRetryAfterMillis(value: String): Long? {
+        val trimmed = value.trim()
+        val seconds = trimmed.toLongOrNull()
+        if (seconds != null) {
+            if (seconds < 0) return null
+            return runCatching { Math.multiplyExact(seconds, 1_000L) }.getOrNull()
+        }
+        return runCatching {
+            (ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() - retryPolicy.nowMillis())
+                .takeIf { it >= 0 }
+        }.getOrNull()
     }
 
     private fun errorReason(response: Response): String? = try {
@@ -329,6 +396,7 @@ class GoogleCalendarHttpReadPort internal constructor(
         private val GOOGLE_API_BASE = "https://www.googleapis.com/calendar/v3/".toHttpUrl()
         private const val MAX_RESPONSE_BYTES = GoogleCalendarEventParser.MAX_PAYLOAD_BYTES
         private const val MAX_ERROR_BYTES = 16 * 1024
+        private val RATE_LIMIT_REASONS = setOf("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded")
         private const val MAX_PAGES = 20
         private const val CALENDAR_PAGE_SIZE = 250
         private const val EVENT_PAGE_SIZE = 100

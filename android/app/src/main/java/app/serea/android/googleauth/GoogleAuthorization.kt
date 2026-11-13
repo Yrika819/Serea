@@ -70,6 +70,7 @@ class AccessTokenLease internal constructor(
     /** Opaque in-memory binding to one selected-account authorization session. */
     val authorizationSessionId: String? = null,
     private val validityCheck: () -> Boolean = { true },
+    private val onAuthenticationRejected: () -> Unit = {},
 ) : AutoCloseable {
     private var tokenValue: String? = token
 
@@ -87,6 +88,9 @@ class AccessTokenLease internal constructor(
         }
         check(tokenValue != null) { "Authorization lease is no longer valid." }
     }
+
+    /** Invalidates the exact credential generation which received HTTP 401, if still current. */
+    internal fun markAuthenticationRejected() = onAuthenticationRejected()
 
     override fun close() { tokenValue = null }
 
@@ -130,6 +134,22 @@ internal class GoogleGrantLeaseState {
 
     fun isLeaseCurrent(versions: Map<GoogleFeature, Long>): Boolean = versions.all { (feature, version) ->
         feature !in disabledFeatures && featureVersions[feature] == version
+    }
+
+    fun invalidateFeatureLeases(feature: GoogleFeature) {
+        featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
+
+    /** HTTP authentication failures only invalidate the lease generation that made that call. */
+    fun invalidateAfterAuthenticationFailure(
+        leaseVersions: Map<GoogleFeature, Long>,
+        scopes: Set<GoogleScope>,
+        knownPermissions: MutableMap<GoogleScope, ScopePermission>,
+    ): Boolean {
+        if (!isLeaseCurrent(leaseVersions)) return false
+        scopes.forEach { knownPermissions[it] = ScopePermission.EXPIRED }
+        leaseVersions.keys.forEach(::invalidateFeatureLeases)
+        return true
     }
 
     fun version(feature: GoogleFeature): Long = featureVersions.getValue(feature)
@@ -595,6 +615,11 @@ internal class PlayServicesGoogleAuthorizationGateway(
                 synchronized(consentLock) { grantState.isLeaseCurrent(featureVersions) }
             },
             authorizationSessionId = authorizationSessionId,
+            onAuthenticationRejected = {
+                synchronized(consentLock) {
+                    grantState.invalidateAfterAuthenticationFailure(featureVersions, scopes, knownPermissions)
+                }
+            },
         )
         AuthorizationOutcome.Authorized(lease).also { cacheOutcome(requested, it) }
     }

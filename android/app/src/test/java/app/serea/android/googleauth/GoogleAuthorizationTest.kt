@@ -29,6 +29,20 @@ import org.junit.Test
 class GoogleAuthorizationTest {
     private val both = setOf(GMAIL_READ_ONLY, CALENDAR_EVENTS_READ_ONLY)
 
+    @Test fun http401ExpiresOnlyTheAuthorizationLeaseGenerationThatMadeTheRequest() {
+        val state = GoogleGrantLeaseState()
+        val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)
+        val oldLease = state.leaseVersions(setOf(CALENDAR))
+        assertTrue(state.invalidateAfterAuthenticationFailure(oldLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions))
+        assertEquals(ScopePermission.EXPIRED, permissions[CALENDAR_EVENTS_READ_ONLY])
+        val freshLease = state.leaseVersions(setOf(CALENDAR))
+        permissions[CALENDAR_EVENTS_READ_ONLY] = ScopePermission.GRANTED
+        assertFalse(state.invalidateAfterAuthenticationFailure(oldLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions))
+        assertEquals("a stale 401 cannot expire the newer authorization", ScopePermission.GRANTED,
+            permissions[CALENDAR_EVENTS_READ_ONLY])
+        assertTrue(state.isLeaseCurrent(freshLease))
+    }
+
     @Test fun googleScopesMatchTheGmailAndCalendarDomainPolicies() {
         assertEquals(setOf(GMAIL_READ_ONLY.value), GmailPermissionPolicy.requiredScopes())
         assertEquals(

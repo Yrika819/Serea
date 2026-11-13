@@ -467,6 +467,8 @@ class CalendarAgendaUiControllerTest {
             CalendarApiFailureCode.PARTIAL_FAILURE to CalendarAgendaFailure.PARTIAL_FAILURE,
             CalendarApiFailureCode.RATE_LIMITED to CalendarAgendaFailure.RATE_LIMITED,
             CalendarApiFailureCode.TIME_ZONE_UNKNOWN to CalendarAgendaFailure.TIME_ZONE_UNKNOWN,
+            CalendarApiFailureCode.AUTHENTICATION_EXPIRED to CalendarAgendaFailure.EXPIRED,
+            CalendarApiFailureCode.POLICY_DENIED to CalendarAgendaFailure.POLICY_DENIED,
         )
         cases.forEach { (code, expected) ->
             val uiFake = CalendarAgendaUiFake(provider, firstFailure = code)

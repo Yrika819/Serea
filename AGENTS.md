@@ -12,16 +12,17 @@ This file is the repository entry point for coding assistants and review agents.
 
 At session start, **fetch main and target PR status from GitHub**. SHA values and dated check results in documents are snapshots, not evergreen facts.
 
-## Current handoff snapshot (2026-11-12 JST)
+## Current handoff snapshot (2026-11-13 JST)
 
-- Canonical main `27f56e972a6f8f0b9406b6054c1637fdfb3c587f`.
-- PR [#232](https://github.com/Yrika819/Serea/pull/232) is **Draft / OPEN**, with Primary-only Calendar security hardening and passing Required CI at recorded HEAD `71caa1b9ab6434f0fabfc287b4316add8317af03`. **Not merged.**
+- Canonical main `eaa8f7cefb608d846c336a972f33b0812f269f57`; Tree `4cb69b2c6bec8ed60dd90bc3e03d5415d71226b0`. PR [#234](https://github.com/Yrika819/Serea/pull/234) merged H4-A on this SHA.
+- PR [#232](https://github.com/Yrika819/Serea/pull/232) remains **OPEN, not merged, and ready for review (not Draft)**. Its Primary-only implementation is on main through #234. The open PR is retained at the latest observed HEAD; do not treat its state as the state of the integrated implementation.
 - PR [#231](https://github.com/Yrika819/Serea/pull/231) already merged. Synthetic in-flight Consent Process Death E2E passed on Android API 26 and 35; this does **not** establish success of real Google OAuth.
-- Next work, if expressly authorized: Owner review of #232, then H4-B authorization/session/error hardening. Separately plan application ID / certificate / OAuth configuration. See roadmap for gates.
+- H4-B authorization/session/error hardening is the next implementation phase. Only the specifically instructed independent Draft PR scope is authorized; real Google OAuth, Cloud configuration, and later H4-C work remain separately gated.
+- This is a dated handoff snapshot. Fetch GitHub before acting and distinguish current state from historical snapshots in the roadmap.
 
 ## Hard boundaries
 
-- **Never** infer approval from a roadmap milestone, issue, previous PR, or passing CI. Require a fresh, explicit Owner instruction for Draft→Ready, Merge, real OAuth/Google Cloud changes, real AI activation, Google or external-network data access, production signing, APK distribution or Pixel/device operations.
+- **Never** infer approval from a roadmap milestone, issue, previous PR, or passing CI. Require a fresh, explicit Owner instruction for Draft→Ready, Merge, real OAuth/Google Cloud changes, real AI activation, Google or external-network data access, production signing, APK distribution or Pixel/device operations. This file itself grants no such approval.
 - Do not bypass GitHub branch protection, disable Required checks, force-push or overwrite the Owner's working tree. Favor isolated branches and **Draft PRs**.
 - **Public remains safe and Fake-first**. Google OAuth is allowed only in the Owner-controlled Private build after approval. Private Preview currently uses Fake Calendar even with a real-OAuth build flag. Do not treat a compiled code path as activated.
 - Primary Calendar real reads (once separately authorized) must use `calendarId=primary`, events-read-only scope only, and reject nonprimary/CalendarList access **before** authorization, token acquisition and HTTP. Keep normal Demo multi-calendar fixtures working.

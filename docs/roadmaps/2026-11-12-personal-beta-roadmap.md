@@ -1,9 +1,22 @@
 # Serea Personal Beta — 2026年11〜12月 統合ロードマップ
 
-> **状態:** Owner向け提案・実装ガイド（2026-11-12 JST時点）。目標日は保証ではない。
+> **状態:** Owner向け提案・実装ガイド。2026-11-12の記録は履歴として保持し、現在状態は下記の2026-11-13同期欄を参照。目標日は保証ではない。
 > **対象:** [Yrika819/Serea](https://github.com/Yrika819/Serea) / Android Personal Beta / 2026-12-31 GO/NO-GO
 > **根拠:** [既存G10–G15計画](../g9/g10-execution-plan.md)、[Beta機能スコープ](../g9/beta-scope.md)、[Owner decision ledger](../plans/2026-10-26-personal-beta-owner-decision-ledger.md)。
 > **ガバナンス:** このロードマップ自体は、Merge、実OAuth、Google Cloud変更、実AI API使用、Owner署名、配布、実機操作の許可ではない。各ゲートでOwnerの明示承認を得ること。
+
+## 0.1 現在状態への同期 — 2026-11-13
+
+| 項目 | 現在状態・証拠 |
+|---|---|
+| canonical main | HEAD `eaa8f7cefb608d846c336a972f33b0812f269f57`; Tree `4cb69b2c6bec8ed60dd90bc3e03d5415d71226b0` |
+| H4-A / PR #234 | **統合完了**。Merge SHAはmain HEAD `eaa8f7cefb608d846c336a972f33b0812f269f57`。Primary-only境界の修正とidentity/adb root検証を含む |
+| PR #232 | **OPEN・未統合・Draftではない（Ready for review）**。Primary-only実装は#234経由でmainへ統合済み。PR #232の未統合差分や状態を、main上のH4-A状態と混同しない |
+| H4-B | Owner指示により独立実装を開始。対象は認可Session失効・再認可・HTTP 401/403/429・切断・アカウント切替・Process Deathの安全性。成果物は独立Draft PRまで |
+| 実Google OAuth / Google API | 未有効化。実アカウント・外部API・実Revokeを使用しない。`googleHttpEnabledByOwner=false`を維持 |
+| CIスナップショット | main HEADの取得時点でAndroid Formal API26/35、Unit、Integration、Security、Identity Isolation等は成功。Linux stable full validationとLinux fast checksは失敗、combined statusはpending。H4-Bの正式CI結果ではない |
+
+以降の作業ではGitHubから最新値を再取得する。次の節「0. 現在地 — 2026-11-12」は**当時の履歴スナップショット**であり、現在状態を表すものではない。
 
 ## 0. 現在地 — 2026-11-12
 
@@ -31,8 +44,8 @@
 
 | 期間（JST） | フェーズ | 完了の根拠 / 停止条件 | Owner承認 |
 |---|---|---|---|
-| 11/13–16 | **H4-A** PR #232最終監査・通常Merge候補 | 最終HEADに対する独立レビュー、Primary以外/CalendarListのToken・HTTP 0、Required CI 4件成功。変更後mainでCI再確認 | Draft解除・Mergeは個別承認。保護回避禁止 |
-| 11/16–22 | **H4-B** Google認可失効・切断・再認可 | HTTP 401→Session invalidationと明示的再認可; 403/429分類とbounded retry; local disconnectとprovider-wide revokeの区別; account switch / stale result / cancellation / process death回帰 | 新Draft PRまで。実Google接続不可 |
+| 11/13 | **H4-A** PR #234統合 | main HEAD `eaa8f7cefb608d846c336a972f33b0812f269f57`。H4-A統合完了。PR #232はOPENのまま維持（Ready for review、未統合） | #234の統合済み事実。#232の状態変更・統合とは別 |
+| 11/13–22 | **H4-B** Google認可失効・切断・再認可 | HTTP 401→Session invalidationと明示的再認可; 403/429分類とbounded retry; local disconnectとprovider-wide revokeの区別; account switch / stale result / cancellation / process death回帰 | 独立Draft PR作成まで明示指示済み。Draft解除・Merge・実Google接続不可 |
 | 11/20–26 | **H4-C** PrivateアプリID・署名・配布モデル確定 | `app.serea.android.beta`共有維持 vs Private独立IDを比較。移行/データ/更新、証明書SHA-1/256照合手順、安全な配布・漏えいリスクを文書化 | Application ID変更はOwner決定。鍵の取扱い・署名はOwnerのみ |
 | 11/23–12/04 | **H4-D/E/F** OAuth条件確認→限定実接続→Primary Calendar E2E | Android OAuth Clientのpackage/SHA-1一致、Scope `calendar.events.readonly`のみ、`calendarId=primary`以外を拒否、Google HTTP読取・権限取消・アカウント変更・再認可を限定実証。**実操作は事前承認後** | External/Testing・Cloud・アカウント・実機操作を別々に明示承認 |
 | 11/16–12/08 | **G10/AIレーン** 実AI選定と安全な統合 | Provider/APIまたは端末ローカル推論のライセンス・利用条件、料金上限、保持/学習・機密情報保護、Egress→Usage→Dispatch順序、失敗時UNKNOWNと失効、ARM64安定性を検証 | モデル、予算、資格情報、外部送信許可はOwner判断 |
@@ -71,18 +84,21 @@
 - 独立レビューで未解決Critical/Highを残したままMerge/GOにしない。正式GitHub APPROVEDレビューとは別に管理。
 - PRは原則Draftで作成。Draft解除・通常Merge・実OAuth・AI活性化・Google Cloud変更・署名・APK配布・Pixel実機操作はそれぞれOwnerの明示承認を要求。Force Push/保護回避禁止。
 
-## 5. Owner Decision Register（更新予定）
+## 5. Owner Decision Register（2026-11-13同期）
 
-| ID | 判断 | 期限目標 | 承認前の状態 |
-|---|---|---|---|
-| OD-H4-01 | PR #232 Draft解除・通常Merge | 11/16 | OPEN/Draft |
-| OD-H4-02 | BetaとPrivate Betaの共通Application ID維持か分離か | 11/22 | 現行 `app.serea.android.beta`を維持 |
-| OD-H4-03 | Google External/Testing・テスト用プロジェクト・Ownerアカウント | 11/24 | Cloud/実認証には触れない |
-| OD-H4-04 | 実AI Provider/モデル/予算上限/データ利用 | 11/22 | Fake/Demoのまま |
-| OD-H4-05 | 実Primary Calendar接続の許可 | 12月初旬 | Fake固定 |
-| OD-H4-06 | Gmail restricted scopeの実接続許可 | 条件が整い次第 | OFF |
-| OD-H4-07 | Owner署名・配布・端末受入れ | 12/24 | 未実施 |
+以下は確認できた履歴と今回の明示指示を反映する。記録がない判断を承認済みと推定しない。
+
+| ID | 実際の判断・履歴 | 現在の扱い |
+|---|---|---|
+| OD-H4-01 | PR #232をReady for reviewへ変更（2026-11-13）。PR #234を統合しH4-Aをmainへ反映 | 完了した履歴。#232はOPEN・未統合のまま維持。#234統合を#232統合と扱わない |
+| OD-H4-02 | BetaとPrivate Betaの共通Application ID維持か分離か | 11/22 | 未決定。現行設定を変更しない |
+| OD-H4-03 | Google External/Testing・テスト用プロジェクト・Ownerアカウント | 11/24 | 未決定。Cloud/実認証には触れない |
+| OD-H4-04 | 実AI Provider/モデル/予算上限/データ利用 | 11/22 | 未決定。Fake/Demoのまま |
+| OD-H4-05 | 実Primary Calendar接続の許可 | 12月初旬 | 未承認。Fake固定 |
+| OD-H4-06 | Gmail restricted scopeの実接続許可 | 条件が整い次第 | 未承認。OFF |
+| OD-H4-07 | Owner署名・配布・端末受入れ | 12/24 | 未承認・未実施 |
 | OD-H4-08 | Personal Beta / Demo Beta / NO-GO | 12/31 | 未決定 |
+| OD-H4-09 | H4-Bの実装と独立Draft PR作成 | 2026-11-13指示 | 承認済み。Draft解除・Merge・実Google接続は含まない |
 
 ## 6. エージェント運用
 

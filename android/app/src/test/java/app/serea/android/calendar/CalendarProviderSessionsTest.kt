@@ -815,7 +815,7 @@ class CalendarProviderSessionsTest {
                     "fixture-only",
                     setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
                     null,
-                    onAuthenticationRejected = { sourceJob ->
+                    onAuthenticationRejected = { sourceJob, _ ->
                         invalidationEpoch.incrementAndGet()
                         observers.notifyAuthenticationInvalidationStarted(sourceJob)
                         true

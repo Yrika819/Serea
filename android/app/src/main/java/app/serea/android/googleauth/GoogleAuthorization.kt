@@ -71,7 +71,7 @@ class AccessTokenLease internal constructor(
     /** Opaque in-memory binding to one selected-account authorization session. */
     val authorizationSessionId: String? = null,
     private val validityCheck: () -> Boolean = { true },
-    private val onAuthenticationRejected: (Job?) -> Boolean = { false },
+    private val onAuthenticationRejected: (Job?, String) -> Boolean = { _, _ -> false },
 ) : AutoCloseable {
     private var tokenValue: String? = token
 
@@ -91,7 +91,8 @@ class AccessTokenLease internal constructor(
     }
 
     /** Invalidates the exact credential generation which received HTTP 401, if still current. */
-    internal fun markAuthenticationRejected(sourceJob: Job?): Boolean = onAuthenticationRejected(sourceJob)
+    internal fun markAuthenticationRejected(sourceJob: Job?, scope: String): Boolean =
+        onAuthenticationRejected(sourceJob, scope)
 
     override fun close() { tokenValue = null }
 
@@ -103,7 +104,7 @@ internal class GoogleGrantLeaseState {
     private val disabledFeatures = mutableSetOf<GoogleFeature>()
     private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
     private var authorizationOperationInFlight = false
-    private var credentialGeneration = 0L
+    private val credentialGenerations = GoogleScope.entries.associateWith { 0L }.toMutableMap()
 
     /** Gateway calls this while holding its consent lock. */
     fun tryBeginAuthorizationOperation(): Boolean {
@@ -149,19 +150,29 @@ internal class GoogleGrantLeaseState {
     }
 
     /** Identifies one successful AccessTokenLease issuance independently of feature gating. */
-    fun issueCredentialGeneration(): Long = ++credentialGeneration
+    fun issueCredentialGenerations(scopes: Set<GoogleScope>): Map<GoogleScope, Long> =
+        scopes.associateWith { scope ->
+            (credentialGenerations.getValue(scope) + 1L).also { credentialGenerations[scope] = it }
+        }
 
     /** HTTP authentication failures only invalidate the lease generation that made that call. */
     fun invalidateAfterAuthenticationFailure(
-        rejectedCredentialGeneration: Long,
+        rejectedCredentialGenerations: Map<GoogleScope, Long>,
+        rejectedScope: GoogleScope,
         leaseVersions: Map<GoogleFeature, Long>,
         scopes: Set<GoogleScope>,
         knownPermissions: MutableMap<GoogleScope, ScopePermission>,
     ): Boolean {
-        if (rejectedCredentialGeneration != credentialGeneration || !isLeaseCurrent(leaseVersions)) return false
+        if (rejectedCredentialGenerations.isEmpty() ||
+            rejectedCredentialGenerations[rejectedScope] == null ||
+            credentialGenerations[rejectedScope] != rejectedCredentialGenerations[rejectedScope] ||
+            !isLeaseCurrent(leaseVersions)
+        ) return false
         scopes.forEach { knownPermissions[it] = ScopePermission.EXPIRED }
         leaseVersions.keys.forEach(::invalidateFeatureLeases)
-        credentialGeneration++
+        rejectedCredentialGenerations.keys.forEach { scope ->
+            credentialGenerations[scope] = credentialGenerations.getValue(scope) + 1L
+        }
         return true
     }
 
@@ -651,7 +662,7 @@ internal class PlayServicesGoogleAuthorizationGateway(
         val leaseFeatureVersions = if (advanceGenerationOnSuccess) {
             grantState.advanceLeaseGeneration(featureVersions.keys)
         } else featureVersions
-        val credentialGeneration = grantState.issueCredentialGeneration()
+        val credentialGenerations = grantState.issueCredentialGenerations(requested)
         val lease = AccessTokenLease(
             token,
             granted,
@@ -660,25 +671,31 @@ internal class PlayServicesGoogleAuthorizationGateway(
                 synchronized(consentLock) { grantState.isLeaseCurrent(leaseFeatureVersions) }
             },
             authorizationSessionId = authorizationSessionId,
-            onAuthenticationRejected = { sourceJob ->
-                val invalidated = synchronized(consentLock) {
-                    if (!grantState.invalidateAfterAuthenticationFailure(
-                            credentialGeneration,
-                            leaseFeatureVersions,
-                            requested,
-                            knownPermissions,
-                        )
-                    ) {
-                        false
-                    } else {
-                        // This generation is also the provider's result-delivery barrier. Advance
-                        // it before notifying observers, matching provider-wide revoke ordering.
-                        googleGrantGeneration.incrementAndGet()
-                        true
+            onAuthenticationRejected = { sourceJob, rawScope ->
+                val rejectedScope = GoogleScope.entries.firstOrNull { it.value == rawScope }
+                if (rejectedScope == null) {
+                    false
+                } else {
+                    val invalidated = synchronized(consentLock) {
+                        if (!grantState.invalidateAfterAuthenticationFailure(
+                                credentialGenerations,
+                                rejectedScope,
+                                leaseFeatureVersions,
+                                requested,
+                                knownPermissions,
+                            )
+                        ) {
+                            false
+                        } else {
+                            // This generation is also the provider's result-delivery barrier. Advance
+                            // it before notifying observers, matching provider-wide revoke ordering.
+                            googleGrantGeneration.incrementAndGet()
+                            true
+                        }
                     }
+                    if (invalidated) grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob)
+                    invalidated
                 }
-                if (invalidated) grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob)
-                invalidated
             },
         )
         AuthorizationOutcome.Authorized(lease).also { cacheOutcome(requested, it) }

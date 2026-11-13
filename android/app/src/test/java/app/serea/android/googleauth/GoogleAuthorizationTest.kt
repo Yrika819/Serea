@@ -33,18 +33,18 @@ class GoogleAuthorizationTest {
         val state = GoogleGrantLeaseState()
         val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)
         val oldLease = state.leaseVersions(setOf(CALENDAR))
-        val oldCredential = state.issueCredentialGeneration()
+        val oldCredential = state.issueCredentialGenerations(setOf(CALENDAR_EVENTS_READ_ONLY))
         val freshLease = state.advanceLeaseGeneration(setOf(CALENDAR))
-        val freshCredential = state.issueCredentialGeneration()
+        val freshCredential = state.issueCredentialGenerations(setOf(CALENDAR_EVENTS_READ_ONLY))
         permissions[CALENDAR_EVENTS_READ_ONLY] = ScopePermission.GRANTED
         assertFalse(state.invalidateAfterAuthenticationFailure(
-            oldCredential, oldLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
+            oldCredential, CALENDAR_EVENTS_READ_ONLY, oldLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
         ))
         assertEquals("a stale 401 cannot expire a newer authorization", ScopePermission.GRANTED,
             permissions[CALENDAR_EVENTS_READ_ONLY])
         assertTrue(state.isLeaseCurrent(freshLease))
         assertTrue(state.invalidateAfterAuthenticationFailure(
-            freshCredential, freshLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
+            freshCredential, CALENDAR_EVENTS_READ_ONLY, freshLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
         ))
         assertEquals(ScopePermission.EXPIRED, permissions[CALENDAR_EVENTS_READ_ONLY])
     }
@@ -53,19 +53,33 @@ class GoogleAuthorizationTest {
         val state = GoogleGrantLeaseState()
         val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)
         val firstLease = state.leaseVersions(setOf(CALENDAR))
-        val firstCredential = state.issueCredentialGeneration()
-        val refreshedCredential = state.issueCredentialGeneration()
+        val firstCredential = state.issueCredentialGenerations(setOf(CALENDAR_EVENTS_READ_ONLY))
+        val refreshedCredential = state.issueCredentialGenerations(setOf(CALENDAR_EVENTS_READ_ONLY))
 
         assertFalse(state.invalidateAfterAuthenticationFailure(
-            firstCredential, firstLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
+            firstCredential, CALENDAR_EVENTS_READ_ONLY, firstLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
         ))
         assertTrue(state.isLeaseCurrent(firstLease))
         assertEquals(ScopePermission.GRANTED, permissions[CALENDAR_EVENTS_READ_ONLY])
         assertTrue(state.invalidateAfterAuthenticationFailure(
-            refreshedCredential, firstLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
+            refreshedCredential, CALENDAR_EVENTS_READ_ONLY, firstLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
         ))
         assertEquals(ScopePermission.EXPIRED, permissions[CALENDAR_EVENTS_READ_ONLY])
         assertFalse(state.isLeaseCurrent(firstLease))
+    }
+
+    @Test fun unrelatedGmailOrCalendarListTokenDoesNotHideCalendarEvents401() {
+        val state = GoogleGrantLeaseState()
+        val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)
+        val calendarLease = state.leaseVersions(setOf(CALENDAR))
+        val calendarCredential = state.issueCredentialGenerations(setOf(CALENDAR_EVENTS_READ_ONLY))
+        state.issueCredentialGenerations(setOf(GMAIL_READ_ONLY))
+        state.issueCredentialGenerations(setOf(CALENDAR_LIST_READ_ONLY))
+
+        assertTrue(state.invalidateAfterAuthenticationFailure(
+            calendarCredential, CALENDAR_EVENTS_READ_ONLY, calendarLease, setOf(CALENDAR_EVENTS_READ_ONLY), permissions,
+        ))
+        assertEquals(ScopePermission.EXPIRED, permissions[CALENDAR_EVENTS_READ_ONLY])
     }
 
     @Test fun googleScopesMatchTheGmailAndCalendarDomainPolicies() {

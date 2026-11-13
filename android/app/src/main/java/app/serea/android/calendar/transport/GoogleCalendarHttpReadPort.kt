@@ -211,7 +211,7 @@ class GoogleCalendarHttpReadPort internal constructor(
                 }
             response.use {
             val authenticationExpired = if (it.code == 401) {
-                token.markAuthenticationRejected(currentCoroutineContext()[kotlinx.coroutines.Job])
+                token.markAuthenticationRejected(currentCoroutineContext()[kotlinx.coroutines.Job], scope)
             } else false
             if (it.code !in 200..299) throw responseFailure(it, authenticationExpired)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")
@@ -283,10 +283,10 @@ class GoogleCalendarHttpReadPort internal constructor(
 
     private fun parseRetryAfterMillis(value: String): Long? {
         val trimmed = value.trim()
-        val seconds = trimmed.toLongOrNull()
-        if (seconds != null) {
-            if (seconds < 0) return null
-            return runCatching { Math.multiplyExact(seconds, 1_000L) }.getOrNull()
+        if (trimmed.isNotEmpty() && trimmed.all { it in '0'..'9' }) {
+            val seconds = trimmed.toLongOrNull() ?: return Long.MAX_VALUE
+            if (seconds > retryPolicy.maximumDelayMillis / 1_000L) return Long.MAX_VALUE
+            return seconds * 1_000L
         }
         return runCatching {
             Math.subtractExact(

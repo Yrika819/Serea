@@ -47,7 +47,7 @@ class GoogleCalendarHttpReadPortTest {
     private val calendarId = CalendarId("fixture+calendar@example.test")
     private fun freshToken(onRejected: () -> Boolean = { false }) = CalendarAccessToken(
         AccessTokenLease("fixture-token-never-valid", setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY), null,
-            onAuthenticationRejected = { onRejected() }),
+            onAuthenticationRejected = { _, _ -> onRejected() }),
     )
     private var status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
     private var tokenRequests = 0
@@ -408,6 +408,21 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(1, server.requestCount)
     }
 
+    @Test fun overflowingNumericRetryAfterIsTreatedAsOverBudget() = runBlocking {
+        val waits = mutableListOf<Long>()
+        server.enqueue(MockResponse().setResponseCode(429)
+            .setHeader("Retry-After", "9223372036854776"))
+        try {
+            port(retryPolicy = CalendarHttpRetryPolicy(wait = { waits += it }))
+                .getEvent(CalendarEventKey(calendarId, EventId("x")))
+            fail("Expected oversized Retry-After to stop retries")
+        } catch (e: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.RATE_LIMITED, e.code)
+        }
+        assertTrue(waits.isEmpty())
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun retryAfterHttpDateUsesInjectedClock() = runBlocking {
         val waits = mutableListOf<Long>()
         server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "Thu, 01 Jan 1970 00:00:02 GMT"))
@@ -447,7 +462,7 @@ class GoogleCalendarHttpReadPortTest {
         // A late 401 callback tied to generation 1 must not invalidate generation 2.
         generation = 2
         authorizationState = CalendarAuthorizationState.AUTHORIZED
-        assertFalse(oldToken.markAuthenticationRejected(null))
+        assertFalse(oldToken.markAuthenticationRejected(null, CalendarPermissionPolicy.EVENTS_READ_ONLY))
         assertEquals(CalendarAuthorizationState.AUTHORIZED, authorizationState)
     }
 

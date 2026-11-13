@@ -57,9 +57,12 @@ class GmailHttpReadPortTest {
         GmailAccessTokenPort { scope ->
             tokenRequests++
             if (scope != GMAIL_SCOPE) return@GmailAccessTokenPort null
-            val lease = AccessTokenLease("fixture-token-never-valid", setOf(GoogleScope.GMAIL_READ_ONLY), null) {
-                !invalidatedToken
-            }
+            val lease = AccessTokenLease(
+                "fixture-token-never-valid",
+                setOf(GoogleScope.GMAIL_READ_ONLY),
+                null,
+                validityCheck = { !invalidatedToken },
+            )
             GmailAccessToken(lease)
         },
         client,

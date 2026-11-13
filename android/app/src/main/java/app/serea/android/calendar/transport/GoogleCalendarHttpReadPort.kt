@@ -210,8 +210,10 @@ class GoogleCalendarHttpReadPort internal constructor(
                     continue
                 }
             response.use {
-            if (it.code == 401) token.markAuthenticationRejected()
-            if (it.code !in 200..299) throw responseFailure(it)
+            val authenticationExpired = if (it.code == 401) {
+                token.markAuthenticationRejected(currentCoroutineContext()[kotlinx.coroutines.Job])
+            } else false
+            if (it.code !in 200..299) throw responseFailure(it, authenticationExpired)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")
             val bytes = try { body.byteStream().use { stream -> readBoundedResponse(stream, MAX_RESPONSE_BYTES) } }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -250,9 +252,10 @@ class GoogleCalendarHttpReadPort internal constructor(
         })
     }
 
-    private fun responseFailure(response: Response): CalendarReadFailure {
+    private fun responseFailure(response: Response, authenticationExpired: Boolean = false): CalendarReadFailure {
         val code = when (response.code) {
-            401 -> CalendarApiFailureCode.AUTHENTICATION_EXPIRED
+            401 -> if (authenticationExpired) CalendarApiFailureCode.AUTHENTICATION_EXPIRED
+                else CalendarApiFailureCode.PERMISSION_DENIED
             403 -> when (errorReason(response)) {
                 "insufficientPermissions", "scopeNotGranted" -> CalendarApiFailureCode.MISSING_SCOPE
                 "domainPolicy", "userPolicy", "accessNotConfigured" -> CalendarApiFailureCode.POLICY_DENIED
@@ -274,7 +277,8 @@ class GoogleCalendarHttpReadPort internal constructor(
             (response.code == 403 && errorReason(response) in RATE_LIMIT_REASONS)
         if (!rateLimited) return null
         val retryAfter = response.header("Retry-After")?.let(::parseRetryAfterMillis)
-        return (retryAfter ?: retryPolicy.backoffMillis(attempt)).coerceAtMost(retryPolicy.maximumDelayMillis)
+        if (retryAfter != null && retryAfter > retryPolicy.maximumDelayMillis) return null
+        return retryAfter ?: retryPolicy.backoffMillis(attempt)
     }
 
     private fun parseRetryAfterMillis(value: String): Long? {

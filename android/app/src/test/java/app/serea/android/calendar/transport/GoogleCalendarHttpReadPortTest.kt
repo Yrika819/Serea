@@ -45,9 +45,9 @@ import java.util.concurrent.TimeUnit
 class GoogleCalendarHttpReadPortTest {
     private lateinit var server: MockWebServer
     private val calendarId = CalendarId("fixture+calendar@example.test")
-    private fun freshToken(onRejected: () -> Unit = {}) = CalendarAccessToken(
+    private fun freshToken(onRejected: () -> Boolean = { false }) = CalendarAccessToken(
         AccessTokenLease("fixture-token-never-valid", setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY), null,
-            onAuthenticationRejected = onRejected),
+            onAuthenticationRejected = { onRejected() }),
     )
     private var status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
     private var tokenRequests = 0
@@ -352,7 +352,7 @@ class GoogleCalendarHttpReadPortTest {
 
     @Test fun apiFailuresAreMappedWithoutLeakingResponseBody() = runBlocking {
         val cases = listOf(
-            401 to CalendarApiFailureCode.AUTHENTICATION_EXPIRED,
+            401 to CalendarApiFailureCode.PERMISSION_DENIED,
             403 to CalendarApiFailureCode.MISSING_SCOPE,
             404 to CalendarApiFailureCode.NOT_FOUND,
             410 to CalendarApiFailureCode.SYNC_TOKEN_EXPIRED,
@@ -384,15 +384,28 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(2, server.requestCount)
     }
 
-    @Test fun retriesHonorCappedRetryAfterAndMalformedValuesFallBackToBoundedBackoff() = runBlocking {
+    @Test fun malformedRetryAfterFallsBackToBoundedBackoff() = runBlocking {
         val waits = mutableListOf<Long>()
-        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "999999"))
         server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "not-a-date"))
         server.enqueue(MockResponse().setBody(eventObjectJson("x")))
         val result = port(retryPolicy = CalendarHttpRetryPolicy(wait = { waits += it })).getEvent(CalendarEventKey(calendarId, EventId("x")))
         assertEquals("x", result.key.eventId.value)
-        assertEquals(listOf(4_000L, 500L), waits)
-        assertEquals(3, server.requestCount)
+        assertEquals(listOf(250L), waits)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun retryAfterBeyondBudgetDoesNotRetryBeforeServerAllowsIt() = runBlocking {
+        val waits = mutableListOf<Long>()
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "60"))
+        try {
+            port(retryPolicy = CalendarHttpRetryPolicy(wait = { waits += it }))
+                .getEvent(CalendarEventKey(calendarId, EventId("x")))
+            fail("Expected over-budget Retry-After to stop retries")
+        } catch (e: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.RATE_LIMITED, e.code)
+        }
+        assertTrue(waits.isEmpty())
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun retryAfterHttpDateUsesInjectedClock() = runBlocking {
@@ -415,6 +428,9 @@ class GoogleCalendarHttpReadPortTest {
             if (generation == 1) {
                 rejectedGeneration = generation
                 authorizationState = CalendarAuthorizationState.EXPIRED
+                true
+            } else {
+                false
             }
         }
         server.enqueue(MockResponse().setResponseCode(401))
@@ -431,7 +447,7 @@ class GoogleCalendarHttpReadPortTest {
         // A late 401 callback tied to generation 1 must not invalidate generation 2.
         generation = 2
         authorizationState = CalendarAuthorizationState.AUTHORIZED
-        oldToken.markAuthenticationRejected()
+        assertFalse(oldToken.markAuthenticationRejected(null))
         assertEquals(CalendarAuthorizationState.AUTHORIZED, authorizationState)
     }
 

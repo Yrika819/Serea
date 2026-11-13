@@ -100,6 +100,9 @@ class CalendarProviderSessions(
         session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
             session.cancelInFlightReadsForGrantInvalidation()
         })
+        session.attachAuthenticationInvalidationObserver(gateway.observeGoogleAuthenticationInvalidation { sourceJob ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob)
+        })
         return session
     }
 
@@ -143,6 +146,7 @@ class CalendarProviderSession internal constructor(
     private var closed = false
     private val activeJobs = linkedSetOf<Job>()
     private var grantInvalidationObserver: AutoCloseable? = null
+    private var authenticationInvalidationObserver: AutoCloseable? = null
     private var grantInvalidationGeneration = 0L
 
     override suspend fun status(): CalendarAuthorizationStatus = withActiveSession {
@@ -176,6 +180,16 @@ class CalendarProviderSession internal constructor(
         if (closeImmediately) observer.close()
     }
 
+    internal fun attachAuthenticationInvalidationObserver(observer: AutoCloseable) {
+        val closeImmediately = synchronized(lock) {
+            if (closed) true else {
+                authenticationInvalidationObserver = observer
+                false
+            }
+        }
+        if (closeImmediately) observer.close()
+    }
+
     internal fun cancelInFlightReadsForGrantInvalidation() {
         val jobs = synchronized(lock) {
             if (closed) return
@@ -185,14 +199,27 @@ class CalendarProviderSession internal constructor(
         jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
     }
 
+    internal fun cancelInFlightReadsForAuthenticationInvalidation(sourceJob: Job?) {
+        val jobs = synchronized(lock) {
+            if (closed) return
+            activeJobs.filter { it !== sourceJob }
+        }
+        jobs.forEach { it.cancel(CancellationException("Google authorization expired.")) }
+    }
+
     private fun invalidate() {
-        val (jobs, observer) = synchronized(lock) {
+        val (jobs, grantObserver, authenticationObserver) = synchronized(lock) {
             if (closed) return
             closed = true
             val active = activeJobs.toList().also { activeJobs.clear() }
-            active to grantInvalidationObserver.also { grantInvalidationObserver = null }
+            Triple(
+                active,
+                grantInvalidationObserver.also { grantInvalidationObserver = null },
+                authenticationInvalidationObserver.also { authenticationInvalidationObserver = null },
+            )
         }
-        observer?.close()
+        grantObserver?.close()
+        authenticationObserver?.close()
         jobs.forEach { it.cancel(CancellationException("Calendar provider session ended.")) }
     }
 

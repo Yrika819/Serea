@@ -40,6 +40,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -782,6 +783,80 @@ class CalendarProviderSessionsTest {
         } finally {
             session.close()
             read.cancelAndJoin()
+        }
+    }
+
+    @Test fun http401AdvancesDeliveryEpochCancelsSiblingReadsAndPreservesItsOwnFailure() = runBlocking {
+        val sourceRequestFinished = CountDownLatch(1)
+        val siblingRequestStarted = CountDownLatch(1)
+        val invalidationEpoch = AtomicLong(0)
+        val observers = GoogleGrantInvalidationObservers()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.requestUrl?.encodedPath?.endsWith("/events/source-401") == true -> {
+                    check(siblingRequestStarted.await(5, TimeUnit.SECONDS))
+                    sourceRequestFinished.countDown()
+                    MockResponse().setResponseCode(401)
+                }
+                request.requestUrl?.encodedPath?.endsWith("/events/sibling") == true -> {
+                    siblingRequestStarted.countDown()
+                    MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
+                }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status() = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
+        }
+        val transport = GoogleCalendarHttpReadPort(
+            authorization = authorization,
+            tokens = CalendarAccessTokenPort {
+                CalendarAccessToken(AccessTokenLease(
+                    "fixture-only",
+                    setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+                    null,
+                    onAuthenticationRejected = { sourceJob ->
+                        invalidationEpoch.incrementAndGet()
+                        observers.notifyAuthenticationInvalidationStarted(sourceJob)
+                        true
+                    },
+                ))
+            },
+            client = OkHttpClient(),
+            baseUrl = server.url("/calendar/v3/"),
+        )
+        val session = CalendarProviderSession(
+            id = 92,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = transport,
+            authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = { invalidationEpoch.get() },
+            isCurrent = { true },
+            onClose = {},
+        )
+        session.attachAuthenticationInvalidationObserver(observers.observeAuthenticationInvalidation { sourceJob ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob)
+        })
+        val source = async {
+            runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("source-401"))) }
+        }
+        val sibling = async {
+            runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("sibling"))) }
+        }
+        try {
+            val sourceResult = source.await()
+            val siblingResult = sibling.await()
+            assertFalse(sourceResult.isSuccess)
+            assertEquals(CalendarApiFailureCode.AUTHENTICATION_EXPIRED,
+                (sourceResult.exceptionOrNull() as CalendarReadFailure).code)
+            assertFalse("401 invalidation cancels sibling in-flight reads", siblingResult.isSuccess)
+            assertEquals(1L, invalidationEpoch.get())
+            assertTrue(sourceRequestFinished.await(5, TimeUnit.SECONDS))
+            assertEquals(2, server.requestCount)
+        } finally {
+            session.close()
+            source.cancelAndJoin()
+            sibling.cancelAndJoin()
         }
     }
 

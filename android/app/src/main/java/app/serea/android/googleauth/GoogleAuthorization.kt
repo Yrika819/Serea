@@ -17,6 +17,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -70,7 +71,7 @@ class AccessTokenLease internal constructor(
     /** Opaque in-memory binding to one selected-account authorization session. */
     val authorizationSessionId: String? = null,
     private val validityCheck: () -> Boolean = { true },
-    private val onAuthenticationRejected: () -> Unit = {},
+    private val onAuthenticationRejected: (Job?) -> Boolean = { false },
 ) : AutoCloseable {
     private var tokenValue: String? = token
 
@@ -90,7 +91,7 @@ class AccessTokenLease internal constructor(
     }
 
     /** Invalidates the exact credential generation which received HTTP 401, if still current. */
-    internal fun markAuthenticationRejected() = onAuthenticationRejected()
+    internal fun markAuthenticationRejected(sourceJob: Job?): Boolean = onAuthenticationRejected(sourceJob)
 
     override fun close() { tokenValue = null }
 
@@ -102,6 +103,7 @@ internal class GoogleGrantLeaseState {
     private val disabledFeatures = mutableSetOf<GoogleFeature>()
     private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
     private var authorizationOperationInFlight = false
+    private var credentialGeneration = 0L
 
     /** Gateway calls this while holding its consent lock. */
     fun tryBeginAuthorizationOperation(): Boolean {
@@ -140,15 +142,26 @@ internal class GoogleGrantLeaseState {
         featureVersions[feature] = featureVersions.getValue(feature) + 1
     }
 
+    /** A successful explicit authorize/consent creates a new credential generation. */
+    fun advanceLeaseGeneration(features: Set<GoogleFeature>): Map<GoogleFeature, Long> {
+        features.forEach(::invalidateFeatureLeases)
+        return leaseVersions(features)
+    }
+
+    /** Identifies one successful AccessTokenLease issuance independently of feature gating. */
+    fun issueCredentialGeneration(): Long = ++credentialGeneration
+
     /** HTTP authentication failures only invalidate the lease generation that made that call. */
     fun invalidateAfterAuthenticationFailure(
+        rejectedCredentialGeneration: Long,
         leaseVersions: Map<GoogleFeature, Long>,
         scopes: Set<GoogleScope>,
         knownPermissions: MutableMap<GoogleScope, ScopePermission>,
     ): Boolean {
-        if (!isLeaseCurrent(leaseVersions)) return false
+        if (rejectedCredentialGeneration != credentialGeneration || !isLeaseCurrent(leaseVersions)) return false
         scopes.forEach { knownPermissions[it] = ScopePermission.EXPIRED }
         leaseVersions.keys.forEach(::invalidateFeatureLeases)
+        credentialGeneration++
         return true
     }
 
@@ -228,6 +241,8 @@ interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthoriz
     fun isEnabledInApp(feature: GoogleFeature): Boolean = true
     /** Subscribe to synchronous local invalidation when a shared Google grant revoke starts. */
     fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable = AutoCloseable { }
+    /** 401 invalidation cancels sibling reads while preserving the request that received the 401. */
+    fun observeGoogleAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable = AutoCloseable { }
 }
 
 /** Private UI surface for foreground consent operations; never exposed to Public composition. */
@@ -242,6 +257,7 @@ internal interface PrivateGoogleRealAuthorizationGateway : GoogleAuthorizationGa
 /** Thread-safe synchronous notifications used to stop provider requests at grant invalidation. */
 internal class GoogleGrantInvalidationObservers {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    private val authenticationListeners = CopyOnWriteArrayList<(Job?) -> Unit>()
 
     fun observe(listener: () -> Unit): AutoCloseable {
         listeners += listener
@@ -250,6 +266,15 @@ internal class GoogleGrantInvalidationObservers {
 
     fun notifyInvalidationStarted() {
         listeners.forEach { listener -> runCatching(listener) }
+    }
+
+    fun observeAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable {
+        authenticationListeners += listener
+        return AutoCloseable { authenticationListeners.remove(listener) }
+    }
+
+    fun notifyAuthenticationInvalidationStarted(sourceJob: Job?) {
+        authenticationListeners.forEach { listener -> runCatching { listener(sourceJob) } }
     }
 }
 
@@ -368,6 +393,9 @@ internal class PlayServicesGoogleAuthorizationGateway(
     override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
         grantInvalidationObservers.observe(listener)
 
+    override fun observeGoogleAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable =
+        grantInvalidationObservers.observeAuthenticationInvalidation(listener)
+
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
         if (!realOAuthEnabledForBuild) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return TokenSupplyResult.Unavailable(AuthorizationFailure.ACCOUNT_REQUIRED)
@@ -431,7 +459,13 @@ internal class PlayServicesGoogleAuthorizationGateway(
                 await { Identity.getAuthorizationClient(context).authorize(request) }
             }
             currentCoroutineContext().ensureActive()
-            mapResult(result, scopes, allowConsent, featureVersions)
+            mapResult(
+                result,
+                scopes,
+                allowConsent,
+                featureVersions,
+                advanceGenerationOnSuccess = allowConsent,
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (exception: Exception) {
@@ -458,7 +492,13 @@ internal class PlayServicesGoogleAuthorizationGateway(
         }
         return try {
             val result = Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(data)
-            mapResult(result, pending.scopes, allowConsent = false, pending.featureVersions)
+            mapResult(
+                result,
+                pending.scopes,
+                allowConsent = false,
+                featureVersions = pending.featureVersions,
+                advanceGenerationOnSuccess = true,
+            )
         } catch (exception: Exception) {
             synchronized(consentLock) {
                 val operationFailure = googleAuthorizationOperationFailure(
@@ -573,6 +613,7 @@ internal class PlayServicesGoogleAuthorizationGateway(
         requested: Set<GoogleScope>,
         allowConsent: Boolean,
         featureVersions: Map<GoogleFeature, Long>,
+        advanceGenerationOnSuccess: Boolean = false,
     ): AuthorizationOutcome = synchronized(consentLock) {
         googleAuthorizationOperationFailure(grantState, requested, featureVersions)?.let { failure ->
             return@synchronized AuthorizationOutcome.Rejected(failure)
@@ -607,18 +648,37 @@ internal class PlayServicesGoogleAuthorizationGateway(
             return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED)
                 .also { cacheOutcome(requested, it) }
         }
+        val leaseFeatureVersions = if (advanceGenerationOnSuccess) {
+            grantState.advanceLeaseGeneration(featureVersions.keys)
+        } else featureVersions
+        val credentialGeneration = grantState.issueCredentialGeneration()
         val lease = AccessTokenLease(
             token,
             granted,
             android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000L,
             validityCheck = {
-                synchronized(consentLock) { grantState.isLeaseCurrent(featureVersions) }
+                synchronized(consentLock) { grantState.isLeaseCurrent(leaseFeatureVersions) }
             },
             authorizationSessionId = authorizationSessionId,
-            onAuthenticationRejected = {
-                synchronized(consentLock) {
-                    grantState.invalidateAfterAuthenticationFailure(featureVersions, requested, knownPermissions)
+            onAuthenticationRejected = { sourceJob ->
+                val invalidated = synchronized(consentLock) {
+                    if (!grantState.invalidateAfterAuthenticationFailure(
+                            credentialGeneration,
+                            leaseFeatureVersions,
+                            requested,
+                            knownPermissions,
+                        )
+                    ) {
+                        false
+                    } else {
+                        // This generation is also the provider's result-delivery barrier. Advance
+                        // it before notifying observers, matching provider-wide revoke ordering.
+                        googleGrantGeneration.incrementAndGet()
+                        true
+                    }
                 }
+                if (invalidated) grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob)
+                invalidated
             },
         )
         AuthorizationOutcome.Authorized(lease).also { cacheOutcome(requested, it) }

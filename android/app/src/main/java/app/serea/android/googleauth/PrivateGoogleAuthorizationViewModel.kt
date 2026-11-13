@@ -236,7 +236,7 @@ internal class PrivateGoogleAuthorizationViewModel(
             mutableState.value.status == PrivateGoogleAuthStatus.CONSENT_PENDING
         ) return
         val currentGeneration = generation
-        val requestedScopes = setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)
+        val requestedScopes = PrivatePrimaryCalendarScopeContract.scopes
         // Claim the one authorization slot synchronously before scheduling gateway work.
         mutableState.value = mutableState.value.copy(
             status = PrivateGoogleAuthStatus.AUTHORIZING,
@@ -329,7 +329,7 @@ internal class PrivateGoogleAuthorizationViewModel(
         )
         fakeGateway.grant(*preview.scopes.toTypedArray())
         viewModelScope.launch {
-            when (val outcome = fakeGateway.authorize(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY))) {
+            when (val outcome = fakeGateway.authorize(PrivatePrimaryCalendarScopeContract.scopes)) {
                 is AuthorizationOutcome.Authorized -> {
                     outcome.lease.close()
                     markAuthorized(fakeGateway, preview.generation)
@@ -349,7 +349,7 @@ internal class PrivateGoogleAuthorizationViewModel(
         )
         fakeGateway.denyNext(AuthorizationFailure.DENIED)
         viewModelScope.launch {
-            val outcome = fakeGateway.authorize(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY))
+            val outcome = fakeGateway.authorize(PrivatePrimaryCalendarScopeContract.scopes)
             if (outcome is AuthorizationOutcome.Authorized) outcome.lease.close()
             if (preview.generation == generation) {
                 mutableState.value = mutableState.value.copy(
@@ -460,7 +460,7 @@ internal class PrivateGoogleAuthorizationViewModel(
     private fun markAuthorized(gateway: GoogleAuthorizationGateway, requestGeneration: Long) {
         if (requestGeneration != generation) return
         // Provider session is deliberately not opened until the user asks for the Mock preview.
-        val scopes = setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)
+        val scopes = PrivatePrimaryCalendarScopeContract.scopes
         val status = gateway.status(scopes)
         if (!status.permits(scopes)) {
             setFailure("必要なCalendar read-only Scopeを確認できません。", requestGeneration)

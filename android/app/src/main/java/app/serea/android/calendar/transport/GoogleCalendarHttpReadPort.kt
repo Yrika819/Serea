@@ -10,6 +10,7 @@ import app.serea.android.calendar.CalendarEventKey
 import app.serea.android.calendar.CalendarEventPage
 import app.serea.android.calendar.CalendarId
 import app.serea.android.calendar.CalendarReadFailure
+import app.serea.android.calendar.CalendarSessionRequestJob
 import app.serea.android.calendar.CalendarReadPort
 import app.serea.android.calendar.CalendarPermissionPolicy
 import app.serea.android.calendar.CalendarReadLimits
@@ -211,7 +212,11 @@ class GoogleCalendarHttpReadPort internal constructor(
                 }
             response.use {
             val authenticationExpired = if (it.code == 401) {
-                token.markAuthenticationRejected(currentCoroutineContext()[kotlinx.coroutines.Job], scope)
+                val requestContext = currentCoroutineContext()
+                token.markAuthenticationRejected(
+                    requestContext[CalendarSessionRequestJob]?.job ?: requestContext[kotlinx.coroutines.Job],
+                    scope,
+                )
             } else false
             if (it.code !in 200..299) throw responseFailure(it, authenticationExpired)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")

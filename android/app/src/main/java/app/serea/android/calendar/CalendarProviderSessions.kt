@@ -7,6 +7,8 @@ import app.serea.android.googleauth.GoogleCalendarAuthorizationAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -14,6 +16,11 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicLong
 
 enum class CalendarProviderKind { FAKE, GOOGLE_READ_ONLY }
+
+/** Stable identity for one tracked provider request across nested withContext scopes. */
+internal class CalendarSessionRequestJob(val job: Job) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<CalendarSessionRequestJob>
+}
 
 /**
  * Read-only provider session for future composition roots. The constructor gate is deliberately
@@ -239,7 +246,7 @@ class CalendarProviderSession internal constructor(
         }
         try {
             if (!isCurrent()) throw inactiveSession()
-            val value = withContext(requestJob) { block() }
+            val value = withContext(requestJob + CalendarSessionRequestJob(requestJob)) { block() }
             if (!isCurrent()) throw inactiveSession()
             // invalidate() closes this session under the same lock before replacement, so a
             // response racing account/session replacement cannot cross this delivery gate.

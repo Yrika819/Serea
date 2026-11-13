@@ -195,7 +195,21 @@ class CalendarProviderSessionsTest {
             .openGoogleReadOnly(mockGateway, baseUrl = server.url("/calendar/v3/"))
         assertEquals(CalendarProviderKind.FAKE, alsoFake.kind)
         assertEquals(0, server.requestCount)
-        assertTrue(alsoFake.listCalendars().isNotEmpty())
+        assertEquals(3, alsoFake.listCalendars().size)
+
+        val privatePrimary = CalendarProviderSessions(
+            fakeProvider = { FakeCalendarProvider.Fixtures.privatePrimaryProvider() },
+        ).openPrimaryFake()
+        assertTrue(privatePrimary.primaryCalendarOnly)
+        assertEquals(listOf("primary"), privatePrimary.listCalendars().map { it.id.value })
+        assertTrue(privatePrimary.listEventsPage(
+            CalendarId("primary"),
+            CalendarDateRange(
+                java.time.Instant.parse("2026-10-20T00:00:00Z"),
+                java.time.Instant.parse("2026-10-21T00:00:00Z"),
+            ), null,
+        ).events.all { it.key.calendarId.value == "primary" })
+        privatePrimary.close()
     }
 
     @Test fun ownerEnabledPlayServicesSessionUsesOnlyMockServerAndRevokesOldSession() = runBlocking {

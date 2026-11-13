@@ -7,7 +7,7 @@ import app.serea.android.calendar.FakeCalendarProvider
 /** Private authorization preview composition. Live Google HTTP is intentionally not selectable. */
 internal class PrivateGoogleCalendarComposition : AutoCloseable {
     private val sessions = CalendarProviderSessions(
-        fakeProvider = { FakeCalendarProvider(events = FakeCalendarProvider.Fixtures.appShellEvents) },
+        fakeProvider = { FakeCalendarProvider.Fixtures.privatePrimaryProvider() },
         googleHttpEnabledByOwner = false,
     )
     private var current: CalendarProviderSession? = null
@@ -18,10 +18,11 @@ internal class PrivateGoogleCalendarComposition : AutoCloseable {
             "Primary Calendar read-only authorization is not active."
         }
         current?.close()
-        return sessions.openGoogleReadOnly(gateway).also { session ->
+        return sessions.openPrimaryFake().also { session ->
             check(session.kind == app.serea.android.calendar.CalendarProviderKind.FAKE) {
                 "Private preview must stay on the Fake Calendar provider."
             }
+            check(session.primaryCalendarOnly) { "Private preview must be primary-only." }
             current = session
         }
     }

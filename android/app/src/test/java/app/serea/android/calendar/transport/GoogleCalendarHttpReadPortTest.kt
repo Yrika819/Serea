@@ -71,6 +71,111 @@ class GoogleCalendarHttpReadPortTest {
         tokenProvider()
     }, client, server.url("/calendar/v3/"))
 
+    private fun primaryPort(
+        tokenProvider: () -> CalendarAccessToken? = { freshToken() },
+    ) = GoogleCalendarHttpReadPort(
+        authorization,
+        CalendarAccessTokenPort { _ -> tokenRequests++; tokenProvider() },
+        OkHttpClient(),
+        server.url("/calendar/v3/"),
+        GoogleCalendarHttpReadPort.AccessMode.PRIMARY_ONLY,
+    )
+
+    @Test fun primaryOnlyTransportAllowsPrimaryEventReadAndPaging() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"id":"event-1","summary":"Primary","start":{"dateTime":"2026-10-20T13:00:00Z"},"end":{"dateTime":"2026-10-20T14:00:00Z"}}"""))
+        server.enqueue(MockResponse().setBody("""{"items":[{"id":"event-1","summary":"Primary","start":{"dateTime":"2026-10-20T13:00:00Z"},"end":{"dateTime":"2026-10-20T14:00:00Z"}}],"nextPageToken":"page-2"}"""))
+        server.enqueue(MockResponse().setBody("""{"items":[]}"""))
+        val primary = CalendarId("primary")
+        assertEquals("primary", primaryPort().getEvent(CalendarEventKey(primary, EventId("event-1"))).key.calendarId.value)
+        assertEquals("page-2", primaryPort().listEventsPage(primary, CalendarDateRange(
+            Instant.parse("2026-10-20T00:00:00Z"), Instant.parse("2026-10-21T00:00:00Z"),
+        ), null).nextPageToken)
+        assertNull(primaryPort().listEventsPage(primary, CalendarDateRange(
+            Instant.parse("2026-10-20T00:00:00Z"), Instant.parse("2026-10-21T00:00:00Z"),
+        ), "page-2").nextPageToken)
+        assertEquals(3, server.requestCount)
+        assertEquals(3, tokenRequests)
+        repeat(3) { assertTrue(server.takeRequest().requestUrl!!.encodedPath.contains("/calendars/primary/events")) }
+    }
+
+    @Test fun primaryOnlyRejectsOtherCalendarBeforeAuthorizationTokenOrHttp() = runBlocking {
+        var statusCalls = 0
+        val countedAuthorization = object : CalendarAuthorizationPort {
+            override suspend fun status(): CalendarAuthorizationStatus { statusCalls++; return status }
+            override suspend fun status(requiredScopes: Set<String>): CalendarAuthorizationStatus { statusCalls++; return status }
+        }
+        val port = GoogleCalendarHttpReadPort(
+            countedAuthorization,
+            CalendarAccessTokenPort { tokenRequests++; freshToken() },
+            OkHttpClient(), server.url("/calendar/v3/"), GoogleCalendarHttpReadPort.AccessMode.PRIMARY_ONLY,
+        )
+        val range = CalendarDateRange(Instant.parse("2026-10-20T00:00:00Z"), Instant.parse("2026-10-21T00:00:00Z"))
+        listOf<suspend () -> Unit>(
+            { port.getEvent(CalendarEventKey(calendarId, EventId("event"))); Unit },
+            { port.listEventsPage(calendarId, range, "forged+page/token"); Unit },
+        ).forEach { operation ->
+            try { operation(); fail("Expected primary-only rejection") }
+            catch (failure: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code) }
+        }
+        assertEquals(0, statusCalls)
+        assertEquals(0, tokenRequests)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun primaryOnlyAuthorizationCannotBeDowngradedByDefaultTransportMode() = runBlocking {
+        var statusCalls = 0
+        var gatewayTokenCalls = 0
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "primary-only-session"
+            override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+                statusCalls++
+                return AuthorizationStatus(GoogleServiceState.AVAILABLE, scopes.associateWith { ScopePermission.GRANTED })
+            }
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                gatewayTokenCalls++
+                return TokenSupplyResult.Available(AccessTokenLease("never-used", scopes, null))
+            }
+        }
+        val primaryOnlyAuthorization = GoogleCalendarAuthorizationAdapter(gateway, primaryOnly = true)
+        // Deliberately omit accessMode: a directly constructed transport must inherit the
+        // authorization boundary instead of silently falling back to the generic mode.
+        val directTransport = GoogleCalendarHttpReadPort(
+            primaryOnlyAuthorization,
+            primaryOnlyAuthorization,
+            OkHttpClient(),
+            server.url("/calendar/v3/"),
+        )
+        val range = range()
+        val primary = CalendarId("primary")
+        listOf<suspend () -> Unit>(
+            { directTransport.getEvent(CalendarEventKey(calendarId, EventId("event"))); Unit },
+            { directTransport.listEventsPage(calendarId, range, null); Unit },
+            { directTransport.listCalendars(); Unit },
+            { directTransport.getCalendar(primary); Unit },
+        ).forEach { operation ->
+            try { operation(); fail("Expected primary-only direct transport rejection") }
+            catch (failure: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code) }
+        }
+        assertEquals(0, statusCalls)
+        assertEquals(0, gatewayTokenCalls)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun primaryOnlyAlwaysBlocksCalendarListEvenWhenListScopeIsGranted() = runBlocking {
+        status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
+        val port = primaryPort()
+        listOf<suspend () -> Unit>(
+            { port.listCalendars(); Unit },
+            { port.getCalendar(CalendarId("primary")); Unit },
+        ).forEach { operation ->
+            try { operation(); fail("Expected CalendarList rejection") }
+            catch (failure: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code) }
+        }
+        assertEquals(0, tokenRequests)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun listCalendarsPaginatesEncodesTokensAndParsesMultipleTimezones() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"items":[{"id":"a@example.test","summary":"Fixture","timeZone":"Asia/Tokyo","accessRole":"reader","backgroundColor":"#123456"}],"nextPageToken":"next +/="}"""))
         server.enqueue(MockResponse().setBody("""{"items":[{"id":"b@example.test","timeZone":"America/New_York","accessRole":"freeBusyReader"}]}"""))

@@ -617,7 +617,7 @@ internal class PlayServicesGoogleAuthorizationGateway(
             authorizationSessionId = authorizationSessionId,
             onAuthenticationRejected = {
                 synchronized(consentLock) {
-                    grantState.invalidateAfterAuthenticationFailure(featureVersions, scopes, knownPermissions)
+                    grantState.invalidateAfterAuthenticationFailure(featureVersions, requested, knownPermissions)
                 }
             },
         )

@@ -285,7 +285,10 @@ class GoogleCalendarHttpReadPort internal constructor(
             return runCatching { Math.multiplyExact(seconds, 1_000L) }.getOrNull()
         }
         return runCatching {
-            (ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() - retryPolicy.nowMillis())
+            Math.subtractExact(
+                ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli(),
+                retryPolicy.nowMillis(),
+            )
                 .takeIf { it >= 0 }
         }.getOrNull()
     }

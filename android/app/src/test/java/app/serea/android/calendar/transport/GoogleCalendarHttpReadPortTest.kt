@@ -395,6 +395,15 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(3, server.requestCount)
     }
 
+    @Test fun retryAfterHttpDateUsesInjectedClock() = runBlocking {
+        val waits = mutableListOf<Long>()
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "Thu, 01 Jan 1970 00:00:02 GMT"))
+        server.enqueue(MockResponse().setBody(eventObjectJson("x")))
+        val policy = CalendarHttpRetryPolicy(nowMillis = { 0L }, wait = { waits += it })
+        port(retryPolicy = policy).getEvent(CalendarEventKey(calendarId, EventId("x")))
+        assertEquals(listOf(2_000L), waits)
+    }
+
     @Test fun unauthorizedResponseInvalidatesTheTokenGenerationAndBlocksReuse() = runBlocking {
         var generation = 1
         var authorizationState = CalendarAuthorizationState.AUTHORIZED

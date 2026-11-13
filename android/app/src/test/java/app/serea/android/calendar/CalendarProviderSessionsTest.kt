@@ -15,10 +15,16 @@ import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import app.serea.android.googleauth.awaitGoogleIdentityTaskToTerminal
 import app.serea.android.googleauth.invalidateGoogleGrantAtRevokeStart
+import app.serea.android.calendar.transport.CalendarAccessToken
+import app.serea.android.calendar.transport.CalendarAccessTokenPort
+import app.serea.android.calendar.transport.CalendarHttpRetryPolicy
+import app.serea.android.calendar.transport.GoogleCalendarHttpReadPort
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -35,6 +41,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -235,26 +242,27 @@ class CalendarProviderSessionsTest {
 
     @Test fun deniedAndExpiredAuthorizationDoNotReachTheHttpServer() = runBlocking {
         val sessions = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-        for (gateway in listOf(
-            PlayServicesFixture(permission = ScopePermission.DENIED),
-            object : GoogleAuthorizationGateway {
-                override val mode = GoogleAuthorizationMode.PLAY_SERVICES
-                override val authorizationSessionId = "expired-calendar-session-fixture"
-                override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
-                    TokenSupplyResult.Unavailable(AuthorizationFailure.EXPIRED)
-                override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
-                    GoogleServiceState.AVAILABLE,
-                    scopes.associateWith { ScopePermission.EXPIRED },
-                    AuthorizationFailure.EXPIRED,
-                )
-            },
+        val expiredGateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "expired-calendar-session-fixture"
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
+                TokenSupplyResult.Unavailable(AuthorizationFailure.EXPIRED)
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.EXPIRED },
+                AuthorizationFailure.EXPIRED,
+            )
+        }
+        for ((gateway, expectedFailure) in listOf(
+            PlayServicesFixture(permission = ScopePermission.DENIED) to CalendarApiFailureCode.PERMISSION_DENIED,
+            expiredGateway to CalendarApiFailureCode.AUTHENTICATION_EXPIRED,
         )) {
             val session = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
             try {
                 session.getEvent(CalendarEventKey(CalendarId("fixture@example.test"), EventId("fixture")))
                 throw AssertionError("authorization must fail closed")
             } catch (failure: CalendarReadFailure) {
-                assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code)
+                assertEquals(expectedFailure, failure.code)
             }
             assertEquals(0, server.requestCount)
         }
@@ -738,6 +746,160 @@ class CalendarProviderSessionsTest {
             session.close()
         }
         assertEquals(0L, observerNotified.count)
+    }
+
+    @Test fun disconnectDuringRateLimitBackoffPreventsAnotherHttpAttempt() = runBlocking {
+        val backoffStarted = CompletableDeferred<Unit>()
+        server.enqueue(MockResponse().setResponseCode(429))
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status() = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
+        }
+        val transport = GoogleCalendarHttpReadPort(
+            authorization = authorization,
+            tokens = CalendarAccessTokenPort {
+                CalendarAccessToken(AccessTokenLease("fixture-only", setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY), null))
+            },
+            client = OkHttpClient(),
+            baseUrl = server.url("/calendar/v3/"),
+            retryPolicy = CalendarHttpRetryPolicy(wait = {
+                backoffStarted.complete(Unit)
+                awaitCancellation()
+            }),
+        )
+        val session = CalendarProviderSession(
+            id = 91,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = transport,
+            authorizationDelegate = authorization,
+            isCurrent = { true },
+            onClose = {},
+        )
+        val read = async { runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("event"))) } }
+        try {
+            backoffStarted.await()
+            session.close()
+            val result = read.await()
+            assertFalse(result.isSuccess)
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, (result.exceptionOrNull() as CalendarReadFailure).code)
+            assertEquals(1, server.requestCount)
+        } finally {
+            session.close()
+            read.cancelAndJoin()
+        }
+    }
+
+    @Test fun http401AdvancesDeliveryEpochCancelsSiblingReadsAndPreservesItsOwnFailure() = runBlocking {
+        val sourceRequestFinished = CountDownLatch(1)
+        val siblingRequestStarted = CountDownLatch(1)
+        val invalidationEpoch = AtomicLong(0)
+        val observers = GoogleGrantInvalidationObservers()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.requestUrl?.encodedPath?.endsWith("/events/source-401") == true -> {
+                    check(siblingRequestStarted.await(5, TimeUnit.SECONDS))
+                    sourceRequestFinished.countDown()
+                    MockResponse().setResponseCode(401)
+                }
+                request.requestUrl?.encodedPath?.endsWith("/events/sibling") == true -> {
+                    siblingRequestStarted.countDown()
+                    MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
+                }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status() = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
+        }
+        val transport = GoogleCalendarHttpReadPort(
+            authorization = authorization,
+            tokens = CalendarAccessTokenPort {
+                CalendarAccessToken(AccessTokenLease(
+                    "fixture-only",
+                    setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY),
+                    null,
+                    onAuthenticationRejected = { sourceJob, _ ->
+                        invalidationEpoch.incrementAndGet()
+                        observers.notifyAuthenticationInvalidationStarted(sourceJob, invalidationEpoch.get())
+                        true
+                    },
+                ))
+            },
+            client = OkHttpClient(),
+            baseUrl = server.url("/calendar/v3/"),
+        )
+        val session = CalendarProviderSession(
+            id = 92,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = transport,
+            authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = { invalidationEpoch.get() },
+            isCurrent = { true },
+            onClose = {},
+        )
+        session.attachAuthenticationInvalidationObserver(observers.observeAuthenticationInvalidation { sourceJob, generation ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob, generation)
+        })
+        val source = async {
+            runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("source-401"))) }
+        }
+        val sibling = async {
+            runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("sibling"))) }
+        }
+        try {
+            val sourceResult = source.await()
+            val siblingResult = sibling.await()
+            assertFalse(sourceResult.isSuccess)
+            assertEquals(CalendarApiFailureCode.AUTHENTICATION_EXPIRED,
+                (sourceResult.exceptionOrNull() as CalendarReadFailure).code)
+            assertFalse("401 invalidation cancels sibling in-flight reads", siblingResult.isSuccess)
+            assertEquals(1L, invalidationEpoch.get())
+            assertTrue(sourceRequestFinished.await(5, TimeUnit.SECONDS))
+            assertEquals(2, server.requestCount)
+        } finally {
+            session.close()
+            source.cancelAndJoin()
+            sibling.cancelAndJoin()
+        }
+    }
+
+    @Test fun late401NotificationDoesNotCancelReadsStartedAfterReauthorizationEpoch() = runBlocking {
+        val epoch = AtomicLong(0)
+        val oldReadStarted = CompletableDeferred<Unit>()
+        val newReadStarted = CompletableDeferred<Unit>()
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status(): CalendarAuthorizationStatus {
+                if (epoch.get() == 0L) oldReadStarted.complete(Unit) else newReadStarted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val session = CalendarProviderSession(
+            id = 93,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = FakeCalendarProvider(),
+            authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = { epoch.get() },
+            isCurrent = { true },
+            onClose = {},
+        )
+        val oldRead = async { runCatching { session.status() } }
+        val newRead = try {
+            oldReadStarted.await()
+            val invalidationGeneration = epoch.incrementAndGet()
+            val read = async { runCatching { session.status() } }
+            newReadStarted.await()
+
+            // Simulate the observer callback running after reauthorization and a fresh read start.
+            session.cancelInFlightReadsForAuthenticationInvalidation(null, invalidationGeneration)
+            val oldResult = oldRead.await()
+            assertFalse("the old read is cancelled", oldResult.isSuccess)
+            assertTrue("the old read reports cancellation", oldResult.exceptionOrNull() is CancellationException)
+            assertTrue("a post-reauthorization read survives the late notification", read.isActive)
+            read
+        } finally {
+            session.close()
+        }
+        newRead.cancelAndJoin()
+        oldRead.cancelAndJoin()
     }
 
     private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {

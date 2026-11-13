@@ -47,6 +47,7 @@ data class CalendarAgendaQuery(
 enum class CalendarAgendaFailure {
     PERMISSION_REQUIRED,
     DENIED,
+    POLICY_DENIED,
     EXPIRED,
     MISSING_SCOPE,
     TIME_ZONE_UNKNOWN,
@@ -382,7 +383,9 @@ internal class CalendarAgendaUiController(
         is UiCalendarFailure -> reason
         is CalendarReadFailure -> when (code) {
             CalendarApiFailureCode.PERMISSION_DENIED -> CalendarAgendaFailure.DENIED
+            CalendarApiFailureCode.POLICY_DENIED -> CalendarAgendaFailure.POLICY_DENIED
             CalendarApiFailureCode.MISSING_SCOPE -> CalendarAgendaFailure.MISSING_SCOPE
+            CalendarApiFailureCode.AUTHENTICATION_EXPIRED -> CalendarAgendaFailure.EXPIRED
             CalendarApiFailureCode.TIME_ZONE_UNKNOWN -> CalendarAgendaFailure.TIME_ZONE_UNKNOWN
             CalendarApiFailureCode.TIMEOUT -> CalendarAgendaFailure.TIMEOUT
             CalendarApiFailureCode.RATE_LIMITED -> CalendarAgendaFailure.RATE_LIMITED
@@ -470,6 +473,7 @@ object CalendarAgendaJapaneseText {
     fun safeMessage(failure: CalendarAgendaFailure): String = when (failure) {
         CalendarAgendaFailure.PERMISSION_REQUIRED -> "予定を表示する権限が必要です。"
         CalendarAgendaFailure.DENIED -> "予定を表示する権限がありません。"
+        CalendarAgendaFailure.POLICY_DENIED -> "組織またはサービスのポリシーにより予定を表示できません。"
         CalendarAgendaFailure.EXPIRED -> "予定を表示する権限の有効期限が切れています。"
         CalendarAgendaFailure.MISSING_SCOPE -> "予定の閲覧に必要な権限が不足しています。"
         CalendarAgendaFailure.TIME_ZONE_UNKNOWN -> "予定のタイムゾーンを確認できないため表示できません。"

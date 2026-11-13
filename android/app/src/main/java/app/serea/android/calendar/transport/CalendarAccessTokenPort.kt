@@ -1,6 +1,7 @@
 package app.serea.android.calendar.transport
 
 import app.serea.android.googleauth.AccessTokenLease
+import kotlinx.coroutines.Job
 
 /** Supplies a short-lived bearer token from the host's authorization layer. */
 fun interface CalendarAccessTokenPort {
@@ -17,6 +18,8 @@ interface CalendarAccessBoundary {
 class CalendarAccessToken internal constructor(private val lease: AccessTokenLease) : AutoCloseable {
     internal fun <T> useToken(block: (String) -> T): T = lease.useToken(block)
     internal fun ensureValid() = lease.ensureValid()
+    internal fun markAuthenticationRejected(sourceJob: Job?, scope: String): Boolean =
+        lease.markAuthenticationRejected(sourceJob, scope)
     override fun close() = lease.close()
     override fun toString(): String = "CalendarAccessToken(token=<redacted>)"
 }

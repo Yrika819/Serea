@@ -7,6 +7,8 @@ import app.serea.android.googleauth.GoogleCalendarAuthorizationAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -14,6 +16,11 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicLong
 
 enum class CalendarProviderKind { FAKE, GOOGLE_READ_ONLY }
+
+/** Stable identity for one tracked provider request across nested withContext scopes. */
+internal class CalendarSessionRequestJob(val job: Job) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<CalendarSessionRequestJob>
+}
 
 /**
  * Read-only provider session for future composition roots. The constructor gate is deliberately
@@ -100,6 +107,9 @@ class CalendarProviderSessions(
         session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
             session.cancelInFlightReadsForGrantInvalidation()
         })
+        session.attachAuthenticationInvalidationObserver(gateway.observeGoogleAuthenticationInvalidation { sourceJob, generation ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob, generation)
+        })
         return session
     }
 
@@ -141,8 +151,9 @@ class CalendarProviderSession internal constructor(
 ) : CalendarReadPort, CalendarAuthorizationPort, AutoCloseable {
     private val lock = Any()
     private var closed = false
-    private val activeJobs = linkedSetOf<Job>()
+    private val activeJobs = linkedMapOf<Job, Long>()
     private var grantInvalidationObserver: AutoCloseable? = null
+    private var authenticationInvalidationObserver: AutoCloseable? = null
     private var grantInvalidationGeneration = 0L
 
     override suspend fun status(): CalendarAuthorizationStatus = withActiveSession {
@@ -176,23 +187,48 @@ class CalendarProviderSession internal constructor(
         if (closeImmediately) observer.close()
     }
 
+    internal fun attachAuthenticationInvalidationObserver(observer: AutoCloseable) {
+        val closeImmediately = synchronized(lock) {
+            if (closed) true else {
+                authenticationInvalidationObserver = observer
+                false
+            }
+        }
+        if (closeImmediately) observer.close()
+    }
+
     internal fun cancelInFlightReadsForGrantInvalidation() {
         val jobs = synchronized(lock) {
             if (closed) return
             grantInvalidationGeneration++
-            activeJobs.toList()
+            activeJobs.keys.toList()
         }
         jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
     }
 
+    internal fun cancelInFlightReadsForAuthenticationInvalidation(sourceJob: Job?, invalidationGeneration: Long) {
+        val jobs = synchronized(lock) {
+            if (closed) return
+            activeJobs.filter { (job, requestGeneration) ->
+                job !== sourceJob && requestGeneration < invalidationGeneration
+            }.keys
+        }
+        jobs.forEach { it.cancel(CancellationException("Google authorization expired.")) }
+    }
+
     private fun invalidate() {
-        val (jobs, observer) = synchronized(lock) {
+        val (jobs, grantObserver, authenticationObserver) = synchronized(lock) {
             if (closed) return
             closed = true
-            val active = activeJobs.toList().also { activeJobs.clear() }
-            active to grantInvalidationObserver.also { grantInvalidationObserver = null }
+            val active = activeJobs.keys.toList().also { activeJobs.clear() }
+            Triple(
+                active,
+                grantInvalidationObserver.also { grantInvalidationObserver = null },
+                authenticationInvalidationObserver.also { authenticationInvalidationObserver = null },
+            )
         }
-        observer?.close()
+        grantObserver?.close()
+        authenticationObserver?.close()
         jobs.forEach { it.cancel(CancellationException("Calendar provider session ended.")) }
     }
 
@@ -204,12 +240,13 @@ class CalendarProviderSession internal constructor(
                 requestJob.cancel()
                 throw inactiveSession()
             }
-            activeJobs += requestJob
-            grantInvalidationGeneration to currentGrantInvalidationGeneration()
+            val gatewayGeneration = currentGrantInvalidationGeneration()
+            activeJobs[requestJob] = gatewayGeneration
+            grantInvalidationGeneration to gatewayGeneration
         }
         try {
             if (!isCurrent()) throw inactiveSession()
-            val value = withContext(requestJob) { block() }
+            val value = withContext(requestJob + CalendarSessionRequestJob(requestJob)) { block() }
             if (!isCurrent()) throw inactiveSession()
             // invalidate() closes this session under the same lock before replacement, so a
             // response racing account/session replacement cannot cross this delivery gate.

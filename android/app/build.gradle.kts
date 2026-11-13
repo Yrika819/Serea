@@ -49,6 +49,9 @@ val privateBetaUnitTestFilterArgs = setOf(
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
 )
 val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
+val privateBetaPackagingRequested = requestedTaskNames.any {
+    it.substringAfterLast(':') in setOf("assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta", "signPrivateBetaBundle")
+}
 val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&
     requestedTaskNames.isNotEmpty() &&
     requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
@@ -304,20 +307,24 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
             error(message)
         }
 
-        val required = mapOf(
+        val required = mutableMapOf(
             "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" to betaStorePath,
             "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD" to betaStorePassword,
             "SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" to betaKeyAlias,
             "SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD" to betaKeyPassword,
             "SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" to betaExpectedFingerprint,
-            "SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PATH" to privateStorePath,
-            "SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PASSWORD" to privateStorePassword,
-            "SEREA_ANDROID_PRIVATE_BETA_KEY_ALIAS" to privateKeyAlias,
-            "SEREA_ANDROID_PRIVATE_BETA_KEY_PASSWORD" to privateKeyPassword,
-            "SEREA_ANDROID_PRIVATE_BETA_CERT_SHA256" to privateExpectedFingerprint,
             "-PsereaBetaVersionCode" to betaVersionCode?.toString(),
-            "-PsereaPrivateBetaVersionCode" to privateBetaVersionCode.toString(),
         )
+        if (privateBetaPackagingRequested) {
+            required += mapOf(
+                "SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PATH" to privateStorePath,
+                "SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PASSWORD" to privateStorePassword,
+                "SEREA_ANDROID_PRIVATE_BETA_KEY_ALIAS" to privateKeyAlias,
+                "SEREA_ANDROID_PRIVATE_BETA_KEY_PASSWORD" to privateKeyPassword,
+                "SEREA_ANDROID_PRIVATE_BETA_CERT_SHA256" to privateExpectedFingerprint,
+                "-PsereaPrivateBetaVersionCode" to privateBetaVersionCode.toString(),
+            )
+        }
         val missing = required.filterValues { it.isNullOrBlank() }.keys
         if (missing.isNotEmpty()) {
             failClosed("Personal Beta APK packaging is blocked; missing required Owner signing configuration: ${missing.joinToString()}")
@@ -336,12 +343,13 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
         if (!expected.matches(Regex("[0-9A-F]{64}"))) {
             failClosed("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 must be a SHA-256 certificate fingerprint.")
         }
-        val privateExpected = checkNotNull(privateExpectedFingerprint)
-            .replace(":", "").replace(Regex("\\s"), "").uppercase(Locale.ROOT)
-        if (!privateExpected.matches(Regex("[0-9A-F]{64}"))) {
-            failClosed("SEREA_ANDROID_PRIVATE_BETA_CERT_SHA256 must be a SHA-256 certificate fingerprint.")
+        val privateExpected = if (privateBetaPackagingRequested) {
+            checkNotNull(privateExpectedFingerprint).replace(":", "").replace(Regex("\\s"), "").uppercase(Locale.ROOT)
+                .also { if (!it.matches(Regex("[0-9A-F]{64}"))) failClosed("SEREA_ANDROID_PRIVATE_BETA_CERT_SHA256 must be a SHA-256 fingerprint.") }
+        } else ""
+        if (privateBetaPackagingRequested && expected == privateExpected) {
+            failClosed("Public and Private Beta signing certificates must differ.")
         }
-        if (expected == privateExpected) failClosed("Public and Private Beta signing certificates must differ.")
 
         val store = try {
             KeyStore.getInstance("PKCS12").apply {
@@ -369,6 +377,7 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
             failClosed("The configured Personal Beta alias is not an accessible private signing key.")
         }
 
+        if (privateBetaPackagingRequested) {
         val privateStoreFile = file(checkNotNull(privateStorePath))
         if (!privateStoreFile.isFile) failClosed("Private Beta keystore path is not a file.")
         val privateStore = try {
@@ -386,6 +395,7 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
             privateStore.getKey(checkNotNull(privateKeyAlias), checkNotNull(privateKeyPassword).toCharArray())
         } catch (_: Exception) { failClosed("Private Beta key password could not unlock the private key.") }
         if (privateKey !is java.security.PrivateKey) failClosed("Private Beta alias is not an accessible private signing key.")
+        }
     }
 }
 

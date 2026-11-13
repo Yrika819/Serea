@@ -241,26 +241,27 @@ class CalendarProviderSessionsTest {
 
     @Test fun deniedAndExpiredAuthorizationDoNotReachTheHttpServer() = runBlocking {
         val sessions = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-        for (gateway in listOf(
-            PlayServicesFixture(permission = ScopePermission.DENIED),
-            object : GoogleAuthorizationGateway {
-                override val mode = GoogleAuthorizationMode.PLAY_SERVICES
-                override val authorizationSessionId = "expired-calendar-session-fixture"
-                override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
-                    TokenSupplyResult.Unavailable(AuthorizationFailure.EXPIRED)
-                override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
-                    GoogleServiceState.AVAILABLE,
-                    scopes.associateWith { ScopePermission.EXPIRED },
-                    AuthorizationFailure.EXPIRED,
-                )
-            },
+        val expiredGateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "expired-calendar-session-fixture"
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
+                TokenSupplyResult.Unavailable(AuthorizationFailure.EXPIRED)
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.EXPIRED },
+                AuthorizationFailure.EXPIRED,
+            )
+        }
+        for ((gateway, expectedFailure) in listOf(
+            PlayServicesFixture(permission = ScopePermission.DENIED) to CalendarApiFailureCode.PERMISSION_DENIED,
+            expiredGateway to CalendarApiFailureCode.AUTHENTICATION_EXPIRED,
         )) {
             val session = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
             try {
                 session.getEvent(CalendarEventKey(CalendarId("fixture@example.test"), EventId("fixture")))
                 throw AssertionError("authorization must fail closed")
             } catch (failure: CalendarReadFailure) {
-                assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code)
+                assertEquals(expectedFailure, failure.code)
             }
             assertEquals(0, server.requestCount)
         }

@@ -17,6 +17,7 @@ val betaKeyAlias = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KE
 val betaKeyPassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD").orNull
 val betaExpectedFingerprint = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256").orNull
 val betaVersionCode = providers.gradleProperty("sereaBetaVersionCode").orNull?.toIntOrNull()
+val privateBetaVersionCode = providers.gradleProperty("sereaPrivateBetaVersionCode").orNull?.toIntOrNull() ?: 2
 val betaSigningInputsReady = listOf(
     betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
 ).all { !it.isNullOrBlank() }
@@ -117,6 +118,17 @@ android {
                 keyPassword = checkNotNull(betaKeyPassword)
             }
         }
+        // Private Beta has a separate configuration namespace. It intentionally
+        // uses the Owner-managed certificate without creating or embedding a key.
+        if (betaSigningInputsReady) {
+            create("privateBeta") {
+                storeFile = file(checkNotNull(betaStorePath))
+                storeType = "PKCS12"
+                storePassword = checkNotNull(betaStorePassword)
+                keyAlias = checkNotNull(betaKeyAlias)
+                keyPassword = checkNotNull(betaKeyPassword)
+            }
+        }
         if (updateTestSigningInputsReady) {
             create("ephemeralUpdateTest") {
                 storeFile = file(checkNotNull(updateTestStorePath))
@@ -160,7 +172,7 @@ android {
         }
         create("privateBeta") {
             initWith(getByName("beta"))
-            applicationIdSuffix = ".beta"
+            applicationIdSuffix = ".privatebeta"
             matchingFallbacks += listOf("beta", "release")
             buildConfigField(
                 "boolean",
@@ -168,7 +180,7 @@ android {
                 ownerPrivateBetaGoogleEnabled.toString(),
             )
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "true")
-            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
+            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("privateBeta")
         }
     }
     if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
@@ -346,11 +358,18 @@ tasks.configureEach {
 }
 
 androidComponents.onVariants { variant ->
-    if (variant.buildType == "beta" || variant.buildType == "privateBeta") {
+    if (variant.buildType == "beta") {
         check(variant.applicationId.get() == "app.serea.android.beta") {
-            "Personal Beta applicationId drifted: expected app.serea.android.beta, got ${variant.applicationId.get()}"
+            "Public Beta applicationId drifted: expected app.serea.android.beta, got ${variant.applicationId.get()}"
         }
         betaVersionCode?.let { code -> variant.outputs.forEach { it.versionCode.set(code) } }
+    }
+    if (variant.buildType == "privateBeta") {
+        check(variant.applicationId.get() == "app.serea.android.privatebeta") {
+            "Private Beta applicationId drifted: expected app.serea.android.privatebeta, got ${variant.applicationId.get()}"
+        }
+        check(privateBetaVersionCode >= 2) { "Private Beta versionCode must be >= 2." }
+        variant.outputs.forEach { it.versionCode.set(privateBetaVersionCode) }
     }
 }
 

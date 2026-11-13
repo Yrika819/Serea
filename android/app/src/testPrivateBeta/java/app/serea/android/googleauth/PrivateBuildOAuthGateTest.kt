@@ -12,7 +12,7 @@ class PrivateBuildOAuthGateTest {
         assertEquals(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED, ownerPrivateGoogleOAuthEnabled(true))
         assertFalse(ownerPrivateGoogleOAuthEnabled(requestedByLocalPrivateBuild = false))
         if (BuildConfig.BUILD_TYPE == "privateBeta") {
-            assertEquals("app.serea.android.beta", BuildConfig.APPLICATION_ID)
+            assertEquals("app.serea.android.privatebeta", BuildConfig.APPLICATION_ID)
             assertEquals(2, BuildConfig.VERSION_CODE)
         }
     }

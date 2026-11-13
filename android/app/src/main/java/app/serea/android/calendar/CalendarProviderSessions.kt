@@ -100,8 +100,8 @@ class CalendarProviderSessions(
         session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
             session.cancelInFlightReadsForGrantInvalidation()
         })
-        session.attachAuthenticationInvalidationObserver(gateway.observeGoogleAuthenticationInvalidation { sourceJob ->
-            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob)
+        session.attachAuthenticationInvalidationObserver(gateway.observeGoogleAuthenticationInvalidation { sourceJob, generation ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob, generation)
         })
         return session
     }
@@ -144,7 +144,7 @@ class CalendarProviderSession internal constructor(
 ) : CalendarReadPort, CalendarAuthorizationPort, AutoCloseable {
     private val lock = Any()
     private var closed = false
-    private val activeJobs = linkedSetOf<Job>()
+    private val activeJobs = linkedMapOf<Job, Long>()
     private var grantInvalidationObserver: AutoCloseable? = null
     private var authenticationInvalidationObserver: AutoCloseable? = null
     private var grantInvalidationGeneration = 0L
@@ -194,15 +194,17 @@ class CalendarProviderSession internal constructor(
         val jobs = synchronized(lock) {
             if (closed) return
             grantInvalidationGeneration++
-            activeJobs.toList()
+            activeJobs.keys.toList()
         }
         jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
     }
 
-    internal fun cancelInFlightReadsForAuthenticationInvalidation(sourceJob: Job?) {
+    internal fun cancelInFlightReadsForAuthenticationInvalidation(sourceJob: Job?, invalidationGeneration: Long) {
         val jobs = synchronized(lock) {
             if (closed) return
-            activeJobs.filter { it !== sourceJob }
+            activeJobs.filter { (job, requestGeneration) ->
+                job !== sourceJob && requestGeneration < invalidationGeneration
+            }.keys
         }
         jobs.forEach { it.cancel(CancellationException("Google authorization expired.")) }
     }
@@ -211,7 +213,7 @@ class CalendarProviderSession internal constructor(
         val (jobs, grantObserver, authenticationObserver) = synchronized(lock) {
             if (closed) return
             closed = true
-            val active = activeJobs.toList().also { activeJobs.clear() }
+            val active = activeJobs.keys.toList().also { activeJobs.clear() }
             Triple(
                 active,
                 grantInvalidationObserver.also { grantInvalidationObserver = null },
@@ -231,8 +233,9 @@ class CalendarProviderSession internal constructor(
                 requestJob.cancel()
                 throw inactiveSession()
             }
-            activeJobs += requestJob
-            grantInvalidationGeneration to currentGrantInvalidationGeneration()
+            val gatewayGeneration = currentGrantInvalidationGeneration()
+            activeJobs[requestJob] = gatewayGeneration
+            grantInvalidationGeneration to gatewayGeneration
         }
         try {
             if (!isCurrent()) throw inactiveSession()

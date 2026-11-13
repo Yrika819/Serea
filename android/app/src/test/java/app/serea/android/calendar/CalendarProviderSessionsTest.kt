@@ -818,7 +818,7 @@ class CalendarProviderSessionsTest {
                     null,
                     onAuthenticationRejected = { sourceJob, _ ->
                         invalidationEpoch.incrementAndGet()
-                        observers.notifyAuthenticationInvalidationStarted(sourceJob)
+                        observers.notifyAuthenticationInvalidationStarted(sourceJob, invalidationEpoch.get())
                         true
                     },
                 ))
@@ -835,8 +835,8 @@ class CalendarProviderSessionsTest {
             isCurrent = { true },
             onClose = {},
         )
-        session.attachAuthenticationInvalidationObserver(observers.observeAuthenticationInvalidation { sourceJob ->
-            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob)
+        session.attachAuthenticationInvalidationObserver(observers.observeAuthenticationInvalidation { sourceJob, generation ->
+            session.cancelInFlightReadsForAuthenticationInvalidation(sourceJob, generation)
         })
         val source = async {
             runCatching { session.getEvent(CalendarEventKey(CalendarId("primary"), EventId("source-401"))) }
@@ -859,6 +859,44 @@ class CalendarProviderSessionsTest {
             source.cancelAndJoin()
             sibling.cancelAndJoin()
         }
+    }
+
+    @Test fun late401NotificationDoesNotCancelReadsStartedAfterReauthorizationEpoch() = runBlocking {
+        val epoch = AtomicLong(0)
+        val oldReadStarted = CompletableDeferred<Unit>()
+        val newReadStarted = CompletableDeferred<Unit>()
+        val authorization = object : CalendarAuthorizationPort {
+            override suspend fun status(): CalendarAuthorizationStatus {
+                if (epoch.get() == 0L) oldReadStarted.complete(Unit) else newReadStarted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val session = CalendarProviderSession(
+            id = 93,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = FakeCalendarProvider(),
+            authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = { epoch.get() },
+            isCurrent = { true },
+            onClose = {},
+        )
+        val oldRead = async { runCatching { session.status() } }
+        val newRead = try {
+            oldReadStarted.await()
+            val invalidationGeneration = epoch.incrementAndGet()
+            val read = async { runCatching { session.status() } }
+            newReadStarted.await()
+
+            // Simulate the observer callback running after reauthorization and a fresh read start.
+            session.cancelInFlightReadsForAuthenticationInvalidation(null, invalidationGeneration)
+            assertTrue("the old read is cancelled", oldRead.isCancelled)
+            assertTrue("a post-reauthorization read survives the late notification", read.isActive)
+            read
+        } finally {
+            session.close()
+        }
+        newRead.cancelAndJoin()
+        oldRead.cancelAndJoin()
     }
 
     private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {

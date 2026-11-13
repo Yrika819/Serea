@@ -18,6 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
+import java.security.MessageDigest
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -105,6 +106,7 @@ internal class GoogleGrantLeaseState {
     private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
     private var authorizationOperationInFlight = false
     private val credentialGenerations = GoogleScope.entries.associateWith { 0L }.toMutableMap()
+    private val credentialFingerprints = mutableMapOf<GoogleScope, ByteArray>()
 
     /** Gateway calls this while holding its consent lock. */
     fun tryBeginAuthorizationOperation(): Boolean {
@@ -150,10 +152,23 @@ internal class GoogleGrantLeaseState {
     }
 
     /** Identifies one successful AccessTokenLease issuance independently of feature gating. */
-    fun issueCredentialGenerations(scopes: Set<GoogleScope>): Map<GoogleScope, Long> =
-        scopes.associateWith { scope ->
-            (credentialGenerations.getValue(scope) + 1L).also { credentialGenerations[scope] = it }
+    fun issueCredentialGenerations(
+        scopes: Set<GoogleScope>,
+        credentialFingerprint: ByteArray? = null,
+    ): Map<GoogleScope, Long> = scopes.associateWith { scope ->
+        val previous = credentialFingerprints[scope]
+        val sameCredential = credentialFingerprint != null && previous != null &&
+            MessageDigest.isEqual(previous, credentialFingerprint)
+        if (sameCredential) {
+            credentialGenerations.getValue(scope)
+        } else {
+            (credentialGenerations.getValue(scope) + 1L).also { generation ->
+                credentialGenerations[scope] = generation
+                if (credentialFingerprint == null) credentialFingerprints.remove(scope)
+                else credentialFingerprints[scope] = credentialFingerprint.copyOf()
+            }
         }
+    }
 
     /** HTTP authentication failures only invalidate the lease generation that made that call. */
     fun invalidateAfterAuthenticationFailure(
@@ -172,6 +187,7 @@ internal class GoogleGrantLeaseState {
         leaseVersions.keys.forEach(::invalidateFeatureLeases)
         rejectedCredentialGenerations.keys.forEach { scope ->
             credentialGenerations[scope] = credentialGenerations.getValue(scope) + 1L
+            credentialFingerprints.remove(scope)
         }
         return true
     }
@@ -253,7 +269,7 @@ interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthoriz
     /** Subscribe to synchronous local invalidation when a shared Google grant revoke starts. */
     fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable = AutoCloseable { }
     /** 401 invalidation cancels sibling reads while preserving the request that received the 401. */
-    fun observeGoogleAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable = AutoCloseable { }
+    fun observeGoogleAuthenticationInvalidation(listener: (Job?, Long) -> Unit): AutoCloseable = AutoCloseable { }
 }
 
 /** Private UI surface for foreground consent operations; never exposed to Public composition. */
@@ -268,7 +284,7 @@ internal interface PrivateGoogleRealAuthorizationGateway : GoogleAuthorizationGa
 /** Thread-safe synchronous notifications used to stop provider requests at grant invalidation. */
 internal class GoogleGrantInvalidationObservers {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
-    private val authenticationListeners = CopyOnWriteArrayList<(Job?) -> Unit>()
+    private val authenticationListeners = CopyOnWriteArrayList<(Job?, Long) -> Unit>()
 
     fun observe(listener: () -> Unit): AutoCloseable {
         listeners += listener
@@ -279,13 +295,13 @@ internal class GoogleGrantInvalidationObservers {
         listeners.forEach { listener -> runCatching(listener) }
     }
 
-    fun observeAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable {
+    fun observeAuthenticationInvalidation(listener: (Job?, Long) -> Unit): AutoCloseable {
         authenticationListeners += listener
         return AutoCloseable { authenticationListeners.remove(listener) }
     }
 
-    fun notifyAuthenticationInvalidationStarted(sourceJob: Job?) {
-        authenticationListeners.forEach { listener -> runCatching { listener(sourceJob) } }
+    fun notifyAuthenticationInvalidationStarted(sourceJob: Job?, invalidationGeneration: Long) {
+        authenticationListeners.forEach { listener -> runCatching { listener(sourceJob, invalidationGeneration) } }
     }
 }
 
@@ -404,7 +420,7 @@ internal class PlayServicesGoogleAuthorizationGateway(
     override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
         grantInvalidationObservers.observe(listener)
 
-    override fun observeGoogleAuthenticationInvalidation(listener: (Job?) -> Unit): AutoCloseable =
+    override fun observeGoogleAuthenticationInvalidation(listener: (Job?, Long) -> Unit): AutoCloseable =
         grantInvalidationObservers.observeAuthenticationInvalidation(listener)
 
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
@@ -662,7 +678,9 @@ internal class PlayServicesGoogleAuthorizationGateway(
         val leaseFeatureVersions = if (advanceGenerationOnSuccess) {
             grantState.advanceLeaseGeneration(featureVersions.keys)
         } else featureVersions
-        val credentialGenerations = grantState.issueCredentialGenerations(requested)
+        val credentialFingerprint = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(token.toByteArray(Charsets.UTF_8))
+        val credentialGenerations = grantState.issueCredentialGenerations(requested, credentialFingerprint)
         val lease = AccessTokenLease(
             token,
             granted,
@@ -676,7 +694,7 @@ internal class PlayServicesGoogleAuthorizationGateway(
                 if (rejectedScope == null) {
                     false
                 } else {
-                    val invalidated = synchronized(consentLock) {
+                    val invalidationGeneration = synchronized(consentLock) {
                         if (!grantState.invalidateAfterAuthenticationFailure(
                                 credentialGenerations,
                                 rejectedScope,
@@ -685,16 +703,17 @@ internal class PlayServicesGoogleAuthorizationGateway(
                                 knownPermissions,
                             )
                         ) {
-                            false
+                            null
                         } else {
                             // This generation is also the provider's result-delivery barrier. Advance
                             // it before notifying observers, matching provider-wide revoke ordering.
                             googleGrantGeneration.incrementAndGet()
-                            true
                         }
                     }
-                    if (invalidated) grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob)
-                    invalidated
+                    if (invalidationGeneration != null) {
+                        grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob, invalidationGeneration)
+                    }
+                    invalidationGeneration != null
                 }
             },
         )

@@ -57,6 +57,11 @@ if [[ -s "$metrics_file" ]]; then
     owner_after_first_load coordinator_after_first_load owner_after_cancel_and_free
     coordinator_after_cancel_and_free owner_after_reload_free coordinator_after_reload_free
     jni_free_failure_preserved_native_owner reload_after_free_failure_denied
+    adapter_eviction_ms adapter_eviction_released adapter_first_eviction_release_confirmed
+    adapter_stale_consent_rejected
+    adapter_reload_and_generation_ms adapter_first_engine_id adapter_reloaded_engine_id
+    adapter_failed_eviction_ms adapter_eviction_free_failure_fail_closed
+    adapter_native_owner_after_free_failure
   )
   for metric in "${required_metrics[@]}"; do
     if ! grep -q "^${metric}=" "$metrics_file"; then

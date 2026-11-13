@@ -13,8 +13,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
@@ -308,15 +306,14 @@ class TaskDateTimePickerTest {
         val dueTimeNode = compose.onNodeWithTag("task_due_time").fetchSemanticsNode()
         assertEquals("", if (SemanticsProperties.EditableText in dueTimeNode.config) dueTimeNode.config[SemanticsProperties.EditableText].text else null)
         compose.onNodeWithTag("task_due_time").performTextInput("09:30")
+        val enteredTimeNode = compose.onNodeWithTag("task_due_time").fetchSemanticsNode()
+        assertEquals("The time entry must reach the task draft before Save is tapped.", "09:30",
+            if (SemanticsProperties.EditableText in enteredTimeNode.config) enteredTimeNode.config[SemanticsProperties.EditableText].text else null)
         compose.onNodeWithTag("task_save").performClick()
         val errorText = "時刻を設定するには期限日が必要です。"
-        val errorAppeared = runCatching {
-            compose.waitUntil(5_000) {
-                compose.onAllNodesWithText(errorText, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
-            }
-        }.isSuccess
-        if (!errorAppeared) compose.onRoot(useUnmergedTree = true).printToLog("task-time-requires-date-error-timeout")
-        assertTrue("Task editor must expose the date-required validation error.", errorAppeared)
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(errorText, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText(errorText, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
         assertTrue(repository.createDrafts.isEmpty())
     }

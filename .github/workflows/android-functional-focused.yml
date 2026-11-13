@@ -82,6 +82,7 @@ jobs:
           --tests '*LocalFakeRoutingAdversarialTest'
           --tests '*GoogleTrustedHandoffTest'
           --tests '*LocalModelChatAdapterTest'
+          --tests '*LocalModelMemoryLifecycleTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload focused unit evidence

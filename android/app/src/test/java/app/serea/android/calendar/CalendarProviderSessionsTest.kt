@@ -20,6 +20,7 @@ import app.serea.android.calendar.transport.CalendarAccessTokenPort
 import app.serea.android.calendar.transport.CalendarHttpRetryPolicy
 import app.serea.android.calendar.transport.GoogleCalendarHttpReadPort
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -889,7 +890,9 @@ class CalendarProviderSessionsTest {
 
             // Simulate the observer callback running after reauthorization and a fresh read start.
             session.cancelInFlightReadsForAuthenticationInvalidation(null, invalidationGeneration)
-            assertTrue("the old read is cancelled", oldRead.isCancelled)
+            val oldResult = oldRead.await()
+            assertFalse("the old read is cancelled", oldResult.isSuccess)
+            assertTrue("the old read reports cancellation", oldResult.exceptionOrNull() is CancellationException)
             assertTrue("a post-reauthorization read survives the late notification", read.isActive)
             read
         } finally {

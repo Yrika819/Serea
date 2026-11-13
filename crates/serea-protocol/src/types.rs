@@ -336,7 +336,11 @@ declare_value!(
     /// A `CapabilityDescriptor.description`.
     DescriptorDescription,
     DescriptorDescription,
-    |value| validate_text(ValueField::DescriptorDescription, TextCategory::Prose, value)
+    |value| validate_text(
+        ValueField::DescriptorDescription,
+        TextCategory::Prose,
+        value
+    )
 );
 declare_value!(
     /// An `ApprovalRequest.plain_summary`: host-written from validated

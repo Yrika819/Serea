@@ -14,7 +14,7 @@
 | PR #232 | **OPEN・未統合・Ready for review**。最新確認時も変更しない。Primary-only実装は#234経由でmainへ統合済み。PR #232の未統合差分や状態を、main上のH4-A状態と混同しない |
 | PR #237 | **Closed/MERGED**。mainへ `8c137c538135d66fb2dab16bd74c10cc56146da4` として統合。Release Fault Exclusion A/B/C/Dを維持しCargo 1.100のartifact layoutに対応、`types.rs`にrustfmtのみ反映。PR記載の正式検証はAPI26/35各105/105、Fast/Full/Android Gate/MSRVを含む |
 | PR #233 | Draft。同期前HEAD `07b297836c7e78a98419d6dca330268f544f80e2` は過去スナップショット。AGENTS.mdと本ロードマップだけの文書差分を維持 |
-| H4-B / PR #236 | Draft。同期前HEAD `2d6ef6bb45f076679ff26fe40b547cd475ebdb9b` は過去スナップショット。401/403/429、失効世代、retry/cancel、account/process death、Primary-only/Fake-only等の実装と追加テストを含む。新main同期後のCIは別途確認する |
+| H4-B / PR #236 | Draft。main同期済み。検証中HEAD `43698d47caa134b2b0fc0ffef43daffed2d669f3`。同期前HEAD `2d6ef6bb45f076679ff26fe40b547cd475ebdb9b` は過去スナップショット。401/403/429、失効世代、retry/cancel、account/process death、Primary-only/Fake-only等の実装と追加テストを含む。ここに記したHEADも取得時点のスナップショットで、再開時はGitHubで再確認する |
 | 実Google OAuth / Google API | 未有効化。実アカウント・外部API・実Revokeを使用しない。`googleHttpEnabledByOwner=false`を維持 |
 | CI / 安全境界 | #237の検証結果は同PR HEADに対する証跡で、#233/#236の同期後HEADのCI結果ではない。`googleHttpEnabledByOwner=false`を維持し、実OAuth/API/AIを有効化しない |
 

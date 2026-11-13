@@ -17,7 +17,7 @@ At session start, **fetch main and target PR status from GitHub**. SHA values an
 - Canonical main `8c137c538135d66fb2dab16bd74c10cc56146da4`; Tree `792287a6b359c547f7a2026e7c3d2054be541176`. This includes merged PR #237 (Cargo 1.100 release artifact support and rustfmt-only formatting in `types.rs`).
 - H4-A is complete through merged PR #234 (`eaa8f7cefb608d846c336a972f33b0812f269f57` was the prior main HEAD). PR #232 remains **OPEN, not merged, and ready for review (not Draft)**; its Primary-only implementation is on main through #234. Do not change PR #232.
 - PR #231 already merged. Synthetic in-flight Consent Process Death E2E passed on Android API 26 and 35; this does **not** establish success of real Google OAuth.
-- H4-B implementation is in PR #236, still Draft at its recorded pre-sync HEAD pending main synchronization and fresh validation. Private Google HTTP remains disabled; no real Google connection is authorized.
+- H4-B implementation is in PR #236, still Draft and now synchronized with main. Its current validation is running on HEAD `43698d47caa134b2b0fc0ffef43daffed2d669f3` (a dated snapshot); Private Google HTTP remains disabled and no real Google connection is authorized.
 - PR #233 is the documentation-only roadmap handoff. Its recorded pre-sync HEAD is a historical snapshot; current branch state and checks must be fetched from GitHub.
 - This is a dated handoff snapshot. Fetch GitHub before acting and distinguish current state from historical snapshots in the roadmap.
 

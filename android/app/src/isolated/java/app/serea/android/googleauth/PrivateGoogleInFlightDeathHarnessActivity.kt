@@ -305,6 +305,8 @@ class PrivateGoogleInFlightDeathHarnessActivity : ComponentActivity() {
         }
 
         override fun disableInApp(feature: GoogleFeature) = Unit
+
+        override suspend fun revokeGoogleGrant(): AuthorizationFailure? = AuthorizationFailure.NOT_CONFIGURED
     }
 }
 

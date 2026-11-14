@@ -29,6 +29,75 @@ import org.junit.Test
 class GoogleAuthorizationTest {
     private val both = setOf(GMAIL_READ_ONLY, CALENDAR_EVENTS_READ_ONLY)
 
+    @Test fun privateScopeContractAcceptsOnlyExactPrimaryCalendarRequestAndRejectsOvergrant() {
+        val allowed = setOf(CALENDAR_EVENTS_READ_ONLY)
+        assertNull(PrivatePrimaryCalendarScopeContract.validateRequest(CALENDAR, allowed))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateConsentRequest(allowed))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed, setOf(CALENDAR_EVENTS_READ_ONLY.value)))
+
+        listOf(
+            emptySet(),
+            setOf(GMAIL_READ_ONLY),
+            setOf(CALENDAR_LIST_READ_ONLY),
+            setOf(CALENDAR_EVENTS_READ_ONLY, GMAIL_READ_ONLY),
+            setOf(CALENDAR_EVENTS_READ_ONLY, CALENDAR_LIST_READ_ONLY),
+        ).forEach { requested ->
+            assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+                PrivatePrimaryCalendarScopeContract.validateConsentRequest(requested))
+            assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+                PrivatePrimaryCalendarScopeContract.validateRequest(CALENDAR, requested))
+        }
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateRequest(GMAIL, allowed))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, GMAIL_READ_ONLY.value)))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, "https://example.invalid/extra")))
+        // Missing requested scope is a denial/incomplete-consent result, never an overgrant.
+        assertNull(PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed, emptySet()))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed,
+            setOf(CALENDAR_EVENTS_READ_ONLY.value)))
+        assertEquals(AuthorizationFailure.DENIED,
+            PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed, emptySet()))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, GMAIL_READ_ONLY.value)))
+    }
+
+    @Test fun authorizationDiagnosticsRedactTokenAndPrivateAccountIdentity() {
+        val token = "synthetic-secret-token-never-real"
+        val account = "synthetic-owner@example.invalid"
+        val requestId = "synthetic-consent-request-id"
+        val sessionId = "synthetic-authorization-session-id"
+        val resultText = GoogleAuthorizationResultSnapshot(
+            hasResolution = false,
+            grantedScopes = setOf(CALENDAR_EVENTS_READ_ONLY.value),
+            accessToken = token,
+            pendingIntent = null,
+        ).toString()
+        val stateText = PrivateGoogleAuthorizationUiState(
+            enabledInThisVariant = true,
+            realOAuthEnabled = true,
+            hasSelectedAccount = true,
+            selectedAccountDisplayName = account,
+            pendingRealConsentRequestId = requestId,
+            pendingRealConsentGeneration = 12L,
+            pendingRealConsentSessionId = sessionId,
+            pendingAccountSelectionToken = "synthetic-account-request-token",
+            message = "synthetic UI diagnostic with identifying context",
+        ).toString()
+
+        listOf(token, account, requestId, sessionId, "synthetic-account-request-token").forEach { secret ->
+            assertFalse("result snapshot leaked $secret", resultText.contains(secret))
+            assertFalse("UI state leaked $secret", stateText.contains(secret))
+        }
+        assertTrue(resultText.contains("accessToken=<redacted>"))
+        assertTrue(stateText.contains("selectedAccountDisplayName=<redacted>"))
+        assertTrue(stateText.contains("pendingIdentity=<redacted>"))
+    }
+
     @Test fun http401ExpiresOnlyTheAuthorizationLeaseGenerationThatMadeTheRequest() {
         val state = GoogleGrantLeaseState()
         val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)

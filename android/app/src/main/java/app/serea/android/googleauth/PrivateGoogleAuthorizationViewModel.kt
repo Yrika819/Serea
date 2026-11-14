@@ -22,6 +22,7 @@ internal enum class PrivateGoogleAuthStatus {
     AUTHORIZING,
     CONSENT_PENDING,
     AUTHORIZED,
+    REVOKING,
     CANCELLED,
     REVOKED,
     ERROR,
@@ -42,6 +43,9 @@ internal data class PrivateGoogleAuthorizationUiState(
     val enabledInThisVariant: Boolean,
     val realOAuthEnabled: Boolean,
     val hasSelectedAccount: Boolean = false,
+    /** Shown only to identify the account in the explicit revoke confirmation; never persisted/logged. */
+    val selectedAccountDisplayName: String? = null,
+    val revokeConfirmationPending: Boolean = false,
     val syntheticAccount: SyntheticGoogleAccount? = null,
     val status: PrivateGoogleAuthStatus = PrivateGoogleAuthStatus.DISCONNECTED,
     val pendingAccountSelectionId: Long? = null,
@@ -52,7 +56,14 @@ internal data class PrivateGoogleAuthorizationUiState(
     val pendingRealConsentGeneration: Long? = null,
     val pendingRealConsentSessionId: String? = null,
     val message: String,
-)
+) {
+    /** Account labels, consent/session IDs, and request tokens are never printable diagnostics. */
+    override fun toString(): String =
+        "PrivateGoogleAuthorizationUiState(enabledInThisVariant=$enabledInThisVariant, " +
+            "realOAuthEnabled=$realOAuthEnabled, hasSelectedAccount=$hasSelectedAccount, " +
+            "selectedAccountDisplayName=<redacted>, revokeConfirmationPending=$revokeConfirmationPending, " +
+            "syntheticAccount=$syntheticAccount, status=$status, pendingIdentity=<redacted>, message=<redacted>)"
+}
 
 internal data class PendingGoogleConsentActivityResult(
     val identity: PrivateGoogleConsentIdentity,
@@ -111,7 +122,9 @@ internal class PrivateGoogleAuthorizationViewModel(
         if (!enabledInThisVariant || !realOAuthEnabled ||
             mutableState.value.pendingAccountSelectionId != null ||
             mutableState.value.status == PrivateGoogleAuthStatus.AUTHORIZING ||
-            mutableState.value.status == PrivateGoogleAuthStatus.CONSENT_PENDING
+            mutableState.value.status == PrivateGoogleAuthStatus.CONSENT_PENDING ||
+            mutableState.value.status == PrivateGoogleAuthStatus.REVOKING ||
+            mutableState.value.revokeConfirmationPending
         ) return null
         generation++
         closeCalendarSession()
@@ -125,6 +138,8 @@ internal class PrivateGoogleAuthorizationViewModel(
         )
         mutableState.value = mutableState.value.copy(
             hasSelectedAccount = false,
+            selectedAccountDisplayName = null,
+            revokeConfirmationPending = false,
             syntheticAccount = null,
             status = PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING,
             pendingAccountSelectionId = request.requestId,
@@ -139,7 +154,7 @@ internal class PrivateGoogleAuthorizationViewModel(
         return request
     }
 
-    /** Called only for the current AccountPicker result; the account name is never copied to UI state. */
+    /** The selected account label is exposed only so the explicit revoke dialog names its target. */
     fun onRealAccountSelected(
         requestId: Long,
         requestGeneration: Long,
@@ -162,6 +177,7 @@ internal class PrivateGoogleAuthorizationViewModel(
             realGateway = null
             mutableState.value = mutableState.value.copy(
                 hasSelectedAccount = false,
+                selectedAccountDisplayName = null,
                 syntheticAccount = null,
                 pendingAccountSelectionId = null,
                 pendingAccountSelectionGeneration = null,
@@ -183,6 +199,7 @@ internal class PrivateGoogleAuthorizationViewModel(
             }.also { it.disableInApp(GoogleFeature.GMAIL) }
         mutableState.value = mutableState.value.copy(
             hasSelectedAccount = true,
+            selectedAccountDisplayName = accountName,
             syntheticAccount = null,
             pendingAccountSelectionId = null,
             pendingAccountSelectionGeneration = null,
@@ -204,6 +221,7 @@ internal class PrivateGoogleAuthorizationViewModel(
         generation++
         mutableState.value = mutableState.value.copy(
             hasSelectedAccount = false,
+            selectedAccountDisplayName = null,
             pendingAccountSelectionId = null,
             pendingAccountSelectionGeneration = null,
             pendingAccountSelectionToken = null,
@@ -232,6 +250,7 @@ internal class PrivateGoogleAuthorizationViewModel(
     /** No account selection or consent is initiated from startup or recomposition. */
     fun requestPrimaryCalendarConsent() {
         if (!enabledInThisVariant || !mutableState.value.hasSelectedAccount) return
+        if (mutableState.value.revokeConfirmationPending || mutableState.value.status == PrivateGoogleAuthStatus.REVOKING) return
         if (mutableState.value.status == PrivateGoogleAuthStatus.AUTHORIZING ||
             mutableState.value.status == PrivateGoogleAuthStatus.CONSENT_PENDING
         ) return
@@ -445,6 +464,7 @@ internal class PrivateGoogleAuthorizationViewModel(
     }
 
     fun disconnectCalendarInApp() {
+        if (mutableState.value.status == PrivateGoogleAuthStatus.REVOKING) return
         generation++
         if (realOAuthEnabled) realGateway?.disableInApp(GoogleFeature.CALENDAR)
         else fakeGateway.disableInApp(GoogleFeature.CALENDAR)
@@ -452,9 +472,88 @@ internal class PrivateGoogleAuthorizationViewModel(
         cancelPendingRealConsent()
         mutableState.value = mutableState.value.copy(
             pendingMockConsent = null,
+            revokeConfirmationPending = false,
             status = PrivateGoogleAuthStatus.REVOKED,
             message = "Calendarはアプリ内で切断されました。Google共有Grantは変更していません。ProviderはFakeです。",
         )
+    }
+
+    /** Opens a confirmation dialog without changing the Google grant or local session. */
+    fun requestGoogleGrantRevoke(): Boolean {
+        val state = mutableState.value
+        if (!enabledInThisVariant || !realOAuthEnabled || !state.hasSelectedAccount || realGateway == null ||
+            state.revokeConfirmationPending || state.status in setOf(
+                PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING,
+                PrivateGoogleAuthStatus.AUTHORIZING,
+                PrivateGoogleAuthStatus.CONSENT_PENDING,
+                PrivateGoogleAuthStatus.REVOKING,
+            )
+        ) return false
+        mutableState.value = state.copy(revokeConfirmationPending = true)
+        return true
+    }
+
+    fun cancelGoogleGrantRevoke() {
+        if (mutableState.value.revokeConfirmationPending) {
+            mutableState.value = mutableState.value.copy(revokeConfirmationPending = false)
+        }
+    }
+
+    /** Locally invalidates the selected session before starting the account-bound Google revoke. */
+    fun confirmGoogleGrantRevoke(): Boolean {
+        val state = mutableState.value
+        val gateway = realGateway
+        if (!state.revokeConfirmationPending || !state.hasSelectedAccount || gateway == null ||
+            state.status == PrivateGoogleAuthStatus.REVOKING
+        ) return false
+
+        val targetSessionId = gateway.authorizationSessionId ?: return false
+        generation++
+        val revokeGeneration = generation
+        gateway.disableInApp(GoogleFeature.CALENDAR)
+        gateway.disableInApp(GoogleFeature.GMAIL)
+        closeCalendarSession()
+        cancelPendingRealConsent()
+        consentIdentityGate.clear()
+        mutableState.value = mutableState.value.copy(
+            hasSelectedAccount = false,
+            revokeConfirmationPending = false,
+            status = PrivateGoogleAuthStatus.REVOKING,
+            message = "選択中のGoogle Accountの認可を取り消しています。ローカルSessionは停止済みです。",
+        )
+
+        viewModelScope.launch {
+            val failure = try {
+                gateway.revokeGoogleGrant()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                AuthorizationFailure.CANCELLED
+            } catch (_: Exception) {
+                AuthorizationFailure.UNAVAILABLE
+            }
+            if (generation != revokeGeneration || realGateway !== gateway ||
+                gateway.authorizationSessionId != targetSessionId ||
+                mutableState.value.status != PrivateGoogleAuthStatus.REVOKING
+            ) return@launch
+
+            realGateway = null
+            mutableState.value = mutableState.value.copy(
+                hasSelectedAccount = false,
+                selectedAccountDisplayName = null,
+                pendingAccountSelectionId = null,
+                pendingAccountSelectionGeneration = null,
+                pendingAccountSelectionToken = null,
+                pendingRealConsentRequestId = null,
+                pendingRealConsentGeneration = null,
+                pendingRealConsentSessionId = null,
+                status = if (failure == null) PrivateGoogleAuthStatus.REVOKED else PrivateGoogleAuthStatus.ERROR,
+                message = if (failure == null) {
+                    "Google認可を取り消しました。再利用時は改めて認可が必要です。"
+                } else {
+                    "ローカル接続は停止しましたが、Google側の取消は確認できませんでした (${failure.name})。自動再試行はしません。"
+                },
+            )
+        }
+        return true
     }
 
     private fun markAuthorized(gateway: GoogleAuthorizationGateway, requestGeneration: Long) {
@@ -483,6 +582,7 @@ internal class PrivateGoogleAuthorizationViewModel(
     private fun setFailure(message: String, requestGeneration: Long) {
         if (requestGeneration != generation) return
         cancelPendingRealConsent()
+        closeCalendarSession()
         mutableState.value = mutableState.value.copy(
             pendingMockConsent = null,
             pendingRealConsentRequestId = null,

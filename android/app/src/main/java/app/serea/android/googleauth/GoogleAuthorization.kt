@@ -425,7 +425,12 @@ internal data class GoogleAuthorizationResultSnapshot(
     val grantedScopes: Set<String>,
     val accessToken: String?,
     val pendingIntent: PendingIntent?,
-)
+) {
+    /** SDK snapshots can cross diagnostics and assertion boundaries; credentials are never printable. */
+    override fun toString(): String =
+        "GoogleAuthorizationResultSnapshot(hasResolution=$hasResolution, grantedScopes=$grantedScopes, " +
+            "accessToken=<redacted>, pendingIntent=${if (pendingIntent == null) "absent" else "present"})"
+}
 
 /** Isolates Play Services calls so deterministic tests never need a real Google account/service. */
 internal interface GoogleAuthorizationOperations {
@@ -745,91 +750,106 @@ internal class PlayServicesGoogleAuthorizationGateway(
         allowConsent: Boolean,
         featureVersions: Map<GoogleFeature, Long>,
         advanceGenerationOnSuccess: Boolean = false,
-    ): AuthorizationOutcome = synchronized(consentLock) {
-        googleAuthorizationOperationFailure(grantState, requested, featureVersions)?.let { failure ->
-            return@synchronized AuthorizationOutcome.Rejected(failure)
-        }
-        PrivatePrimaryCalendarScopeContract.validateReturnedScopes(requested, result.grantedScopes)?.let { failure ->
-            return@synchronized AuthorizationOutcome.Rejected(failure)
-        }
-        if (result.hasResolution) {
-            val granted = result.grantedScopes.mapTo(linkedSetOf()) { raw ->
-                GoogleScope.entries.single { it.value == raw }
+    ): AuthorizationOutcome {
+        var invalidatedForUnsafeScopes = false
+        val outcome = synchronized(consentLock) {
+            googleAuthorizationOperationFailure(grantState, requested, featureVersions)?.let { failure ->
+                return@synchronized AuthorizationOutcome.Rejected(failure)
             }
-            if (requested.all { it in granted } || result.pendingIntent == null) {
-                return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
+            PrivatePrimaryCalendarScopeContract.validateReturnedScopes(requested, result.grantedScopes)?.let { failure ->
+                invalidateForUnsafeScopeResultLocked()
+                invalidatedForUnsafeScopes = true
+                return@synchronized AuthorizationOutcome.Rejected(failure)
             }
-            if (!allowConsent) {
-                recordConsentResolution(knownPermissions, requested, granted)
-                return@synchronized AuthorizationOutcome.ConsentRequired(requested - granted)
-            }
-            val id = java.util.UUID.randomUUID().toString()
-            val request = ConsentRequestRegistry.Request(
-                id = id,
-                scopes = requested.toSet(),
-                grantedScopes = granted,
-                pendingIntent = result.pendingIntent,
-                featureVersions = featureVersions.toMap(),
-            )
-            if (!consentRequests.register(request)) {
-                return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.REQUEST_IN_PROGRESS)
-            }
-            recordConsentResolution(knownPermissions, requested, granted)
-            return@synchronized AuthorizationOutcome.ConsentRequired(requested - granted, id)
-        }
-        val granted = result.grantedScopes.mapTo(linkedSetOf()) { raw -> GoogleScope.entries.single { it.value == raw } }
-        val token = result.accessToken
-        PrivatePrimaryCalendarScopeContract.validateTokenScopes(requested, result.grantedScopes)?.let { failure ->
-            return@synchronized AuthorizationOutcome.Rejected(failure)
-                .also { cacheOutcome(requested, it) }
-        }
-        if (token.isNullOrBlank()) {
-            return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED)
-                .also { cacheOutcome(requested, it) }
-        }
-        val leaseFeatureVersions = if (advanceGenerationOnSuccess) {
-            grantState.advanceLeaseGeneration(featureVersions.keys)
-        } else featureVersions
-        val credentialFingerprint = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(token.toByteArray(Charsets.UTF_8))
-        val credentialGenerations = grantState.issueCredentialGenerations(requested, credentialFingerprint)
-        val lease = AccessTokenLease(
-            token,
-            granted,
-            elapsedRealtimeMillis() + 5 * 60 * 1000L,
-            validityCheck = {
-                synchronized(consentLock) { grantState.isLeaseCurrent(leaseFeatureVersions) }
-            },
-            authorizationSessionId = authorizationSessionId,
-            onAuthenticationRejected = { sourceJob, rawScope ->
-                val rejectedScope = GoogleScope.entries.firstOrNull { it.value == rawScope }
-                if (rejectedScope == null) {
-                    false
-                } else {
-                    val invalidationGeneration = synchronized(consentLock) {
-                        if (!grantState.invalidateAfterAuthenticationFailure(
-                                credentialGenerations,
-                                rejectedScope,
-                                leaseFeatureVersions,
-                                requested,
-                                knownPermissions,
-                            )
-                        ) {
-                            null
-                        } else {
-                            // This generation is also the provider's result-delivery barrier. Advance
-                            // it before notifying observers, matching provider-wide revoke ordering.
-                            googleGrantGeneration.incrementAndGet()
-                        }
-                    }
-                    if (invalidationGeneration != null) {
-                        grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob, invalidationGeneration)
-                    }
-                    invalidationGeneration != null
+            if (result.hasResolution) {
+                val granted = result.grantedScopes.mapTo(linkedSetOf()) { raw ->
+                    GoogleScope.entries.single { it.value == raw }
                 }
-            },
-        )
-        AuthorizationOutcome.Authorized(lease).also { cacheOutcome(requested, it) }
+                if (requested.all { it in granted } || result.pendingIntent == null) {
+                    return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
+                }
+                if (!allowConsent) {
+                    recordConsentResolution(knownPermissions, requested, granted)
+                    return@synchronized AuthorizationOutcome.ConsentRequired(requested - granted)
+                }
+                val id = java.util.UUID.randomUUID().toString()
+                val request = ConsentRequestRegistry.Request(
+                    id = id,
+                    scopes = requested.toSet(),
+                    grantedScopes = granted,
+                    pendingIntent = result.pendingIntent,
+                    featureVersions = featureVersions.toMap(),
+                )
+                if (!consentRequests.register(request)) {
+                    return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.REQUEST_IN_PROGRESS)
+                }
+                recordConsentResolution(knownPermissions, requested, granted)
+                return@synchronized AuthorizationOutcome.ConsentRequired(requested - granted, id)
+            }
+            val granted = result.grantedScopes.mapTo(linkedSetOf()) { raw -> GoogleScope.entries.single { it.value == raw } }
+            val token = result.accessToken
+            PrivatePrimaryCalendarScopeContract.validateTokenScopes(requested, result.grantedScopes)?.let { failure ->
+                invalidateForUnsafeScopeResultLocked()
+                invalidatedForUnsafeScopes = true
+                return@synchronized AuthorizationOutcome.Rejected(failure)
+            }
+            if (token.isNullOrBlank()) {
+                return@synchronized AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED)
+                    .also { cacheOutcome(requested, it) }
+            }
+            val leaseFeatureVersions = if (advanceGenerationOnSuccess) {
+                grantState.advanceLeaseGeneration(featureVersions.keys)
+            } else featureVersions
+            val credentialFingerprint = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(token.toByteArray(Charsets.UTF_8))
+            val credentialGenerations = grantState.issueCredentialGenerations(requested, credentialFingerprint)
+            val lease = AccessTokenLease(
+                token,
+                granted,
+                elapsedRealtimeMillis() + 5 * 60 * 1000L,
+                validityCheck = {
+                    synchronized(consentLock) { grantState.isLeaseCurrent(leaseFeatureVersions) }
+                },
+                authorizationSessionId = authorizationSessionId,
+                onAuthenticationRejected = { sourceJob, rawScope ->
+                    val rejectedScope = GoogleScope.entries.firstOrNull { it.value == rawScope }
+                    if (rejectedScope == null) {
+                        false
+                    } else {
+                        val invalidationGeneration = synchronized(consentLock) {
+                            if (!grantState.invalidateAfterAuthenticationFailure(
+                                    credentialGenerations,
+                                    rejectedScope,
+                                    leaseFeatureVersions,
+                                    requested,
+                                    knownPermissions,
+                                )
+                            ) {
+                                null
+                            } else {
+                                // This generation is also the provider's result-delivery barrier. Advance
+                                // it before notifying observers, matching provider-wide revoke ordering.
+                                googleGrantGeneration.incrementAndGet()
+                            }
+                        }
+                        if (invalidationGeneration != null) {
+                            grantInvalidationObservers.notifyAuthenticationInvalidationStarted(sourceJob, invalidationGeneration)
+                        }
+                        invalidationGeneration != null
+                    }
+                },
+            )
+            AuthorizationOutcome.Authorized(lease).also { cacheOutcome(requested, it) }
+        }
+        if (invalidatedForUnsafeScopes) grantInvalidationObservers.notifyInvalidationStarted()
+        return outcome
+    }
+
+    /** Called only while holding consentLock; unsafe scope data invalidates every cached local grant. */
+    private fun invalidateForUnsafeScopeResultLocked() {
+        googleGrantGeneration.incrementAndGet()
+        invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+        consentRequests.clear()
     }
 
     private fun cacheOutcome(scopes: Set<GoogleScope>, outcome: AuthorizationOutcome) = synchronized(consentLock) {

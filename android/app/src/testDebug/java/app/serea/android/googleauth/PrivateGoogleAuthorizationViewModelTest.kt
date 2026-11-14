@@ -46,18 +46,26 @@ class PrivateGoogleAuthorizationViewModelTest {
     private class RevokeFixtureGateway(
         override val authorizationSessionId: String = "synthetic-account-session",
         var revokeFailure: AuthorizationFailure? = null,
+        private val rejectScopeOnSecondAuthorization: Boolean = false,
     ) : PrivateGoogleRealAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
         var revokeCalls = 0
+        var authorizeCalls = 0
         val disabled = mutableSetOf<GoogleFeature>()
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
             TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
         override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
             GoogleServiceState.AVAILABLE, scopes.associateWith { ScopePermission.GRANTED },
         )
-        override suspend fun authorize(scopes: Set<GoogleScope>) = AuthorizationOutcome.Authorized(
-            AccessTokenLease("synthetic-token", scopes, null, authorizationSessionId),
-        )
+        override suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
+            authorizeCalls++
+            if (rejectScopeOnSecondAuthorization && authorizeCalls == 2) {
+                return AuthorizationOutcome.Rejected(AuthorizationFailure.SCOPE_MISMATCH)
+            }
+            return AuthorizationOutcome.Authorized(
+                AccessTokenLease("synthetic-token", scopes, null, authorizationSessionId),
+            )
+        }
         override fun completeConsentResult(requestId: String, data: Intent?) =
             AuthorizationOutcome.Rejected(AuthorizationFailure.STALE_CONSENT_RESULT)
         override fun takePendingConsentIntent(requestId: String) = null
@@ -135,6 +143,31 @@ class PrivateGoogleAuthorizationViewModelTest {
             assertEquals(1, gateway.revokeCalls)
             assertFalse(viewModel.confirmGoogleGrantRevoke())
             assertEquals(1, gateway.revokeCalls)
+        }
+
+    @Test
+    fun scopeFailureClosesExistingProviderSessionAndLeavesUiUnauthorized() =
+        runTest(mainDispatcher.dispatcher) {
+            val gateway = RevokeFixtureGateway(rejectScopeOnSecondAuthorization = true)
+            val viewModel = PrivateGoogleAuthorizationViewModel(
+                context = null, enabledInThisVariant = true, realOAuthEnabled = true,
+                realGatewayFactory = { _, _ -> gateway },
+            )
+            selectFixtureAccount(viewModel)
+            viewModel.requestPrimaryCalendarConsent()
+            advanceUntilIdle()
+            assertEquals(PrivateGoogleAuthStatus.AUTHORIZED, viewModel.state.value.status)
+            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+
+            viewModel.requestPrimaryCalendarConsent()
+            advanceUntilIdle()
+
+            assertEquals(2, gateway.authorizeCalls)
+            assertEquals(PrivateGoogleAuthStatus.ERROR, viewModel.state.value.status)
+            assertNull(viewModel.calendarSession.value)
+            assertTrue("provider session was closed on unsafe scope response", runCatching { session.listCalendars() }.isFailure)
+            assertFalse("UI must not retain authorized state", viewModel.state.value.status == PrivateGoogleAuthStatus.AUTHORIZED)
+            session.close()
         }
 
     @Test

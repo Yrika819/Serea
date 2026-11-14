@@ -66,6 +66,38 @@ class GoogleAuthorizationTest {
                 setOf(CALENDAR_EVENTS_READ_ONLY.value, GMAIL_READ_ONLY.value)))
     }
 
+    @Test fun authorizationDiagnosticsRedactTokenAndPrivateAccountIdentity() {
+        val token = "synthetic-secret-token-never-real"
+        val account = "synthetic-owner@example.invalid"
+        val requestId = "synthetic-consent-request-id"
+        val sessionId = "synthetic-authorization-session-id"
+        val resultText = GoogleAuthorizationResultSnapshot(
+            hasResolution = false,
+            grantedScopes = setOf(CALENDAR_EVENTS_READ_ONLY.value),
+            accessToken = token,
+            pendingIntent = null,
+        ).toString()
+        val stateText = PrivateGoogleAuthorizationUiState(
+            enabledInThisVariant = true,
+            realOAuthEnabled = true,
+            hasSelectedAccount = true,
+            selectedAccountDisplayName = account,
+            pendingRealConsentRequestId = requestId,
+            pendingRealConsentGeneration = 12L,
+            pendingRealConsentSessionId = sessionId,
+            pendingAccountSelectionToken = "synthetic-account-request-token",
+            message = "synthetic UI diagnostic with identifying context",
+        ).toString()
+
+        listOf(token, account, requestId, sessionId, "synthetic-account-request-token").forEach { secret ->
+            assertFalse("result snapshot leaked $secret", resultText.contains(secret))
+            assertFalse("UI state leaked $secret", stateText.contains(secret))
+        }
+        assertTrue(resultText.contains("accessToken=<redacted>"))
+        assertTrue(stateText.contains("selectedAccountDisplayName=<redacted>"))
+        assertTrue(stateText.contains("pendingIdentity=<redacted>"))
+    }
+
     @Test fun http401ExpiresOnlyTheAuthorizationLeaseGenerationThatMadeTheRequest() {
         val state = GoogleGrantLeaseState()
         val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)

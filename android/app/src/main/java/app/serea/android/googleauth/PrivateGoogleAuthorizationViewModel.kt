@@ -56,7 +56,14 @@ internal data class PrivateGoogleAuthorizationUiState(
     val pendingRealConsentGeneration: Long? = null,
     val pendingRealConsentSessionId: String? = null,
     val message: String,
-)
+) {
+    /** Account labels, consent/session IDs, and request tokens are never printable diagnostics. */
+    override fun toString(): String =
+        "PrivateGoogleAuthorizationUiState(enabledInThisVariant=$enabledInThisVariant, " +
+            "realOAuthEnabled=$realOAuthEnabled, hasSelectedAccount=$hasSelectedAccount, " +
+            "selectedAccountDisplayName=<redacted>, revokeConfirmationPending=$revokeConfirmationPending, " +
+            "syntheticAccount=$syntheticAccount, status=$status, pendingIdentity=<redacted>, message=<redacted>)"
+}
 
 internal data class PendingGoogleConsentActivityResult(
     val identity: PrivateGoogleConsentIdentity,
@@ -575,6 +582,7 @@ internal class PrivateGoogleAuthorizationViewModel(
     private fun setFailure(message: String, requestGeneration: Long) {
         if (requestGeneration != generation) return
         cancelPendingRealConsent()
+        closeCalendarSession()
         mutableState.value = mutableState.value.copy(
             pendingMockConsent = null,
             pendingRealConsentRequestId = null,

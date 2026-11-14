@@ -359,16 +359,17 @@ fun registerBetaSigningGuard(taskName: String, privateVariant: Boolean) = tasks.
 val validatePublicBetaSigning = registerBetaSigningGuard("validatePublicBetaSigning", privateVariant = false)
 val validatePrivateBetaSigning = registerBetaSigningGuard("validatePrivateBetaSigning", privateVariant = true)
 
-// Attach to resolved variant tasks instead of parsing CLI task names. Aggregate
-// assemble/bundle and abbreviations expand to these task nodes before execution.
+// Attach to concrete artifact-producing tasks, not similarly prefixed resource
+// tasks such as packagePrivateBetaResources. Aggregate assemble/bundle and task
+// abbreviations resolve through these canonical variant nodes.
+val publicBetaPackagingTasks = setOf("assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle")
+val privateBetaPackagingTasks = setOf(
+    "assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta", "signPrivateBetaBundle",
+)
 tasks.configureEach {
-    val packagingTask = name.startsWith("assemble", ignoreCase = true) ||
-        name.startsWith("package", ignoreCase = true) ||
-        name.startsWith("bundle", ignoreCase = true) ||
-        name.startsWith("sign", ignoreCase = true)
-    if (packagingTask && name.contains("PrivateBeta", ignoreCase = true)) {
+    if (name in privateBetaPackagingTasks) {
         dependsOn(validatePrivateBetaSigning)
-    } else if (packagingTask && name.contains("Beta", ignoreCase = true)) {
+    } else if (name in publicBetaPackagingTasks) {
         dependsOn(validatePublicBetaSigning)
     }
 }

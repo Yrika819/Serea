@@ -47,6 +47,8 @@ val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("Pr
 val privateBetaUnitTestFilterArgs = setOf(
     "--tests",
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
+    "app.serea.android.googleauth.PrivateGoogleConsentResultTest",
+    "app.serea.android.googleauth.PrivateGoogleGatewayOperationsTest",
 )
 val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
 val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&

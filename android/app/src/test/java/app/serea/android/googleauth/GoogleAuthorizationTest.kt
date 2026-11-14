@@ -29,6 +29,43 @@ import org.junit.Test
 class GoogleAuthorizationTest {
     private val both = setOf(GMAIL_READ_ONLY, CALENDAR_EVENTS_READ_ONLY)
 
+    @Test fun privateScopeContractAcceptsOnlyExactPrimaryCalendarRequestAndRejectsOvergrant() {
+        val allowed = setOf(CALENDAR_EVENTS_READ_ONLY)
+        assertNull(PrivatePrimaryCalendarScopeContract.validateRequest(CALENDAR, allowed))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateConsentRequest(allowed))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed, setOf(CALENDAR_EVENTS_READ_ONLY.value)))
+
+        listOf(
+            emptySet(),
+            setOf(GMAIL_READ_ONLY),
+            setOf(CALENDAR_LIST_READ_ONLY),
+            setOf(CALENDAR_EVENTS_READ_ONLY, GMAIL_READ_ONLY),
+            setOf(CALENDAR_EVENTS_READ_ONLY, CALENDAR_LIST_READ_ONLY),
+        ).forEach { requested ->
+            assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+                PrivatePrimaryCalendarScopeContract.validateConsentRequest(requested))
+            assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+                PrivatePrimaryCalendarScopeContract.validateRequest(CALENDAR, requested))
+        }
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateRequest(GMAIL, allowed))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, GMAIL_READ_ONLY.value)))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, "https://example.invalid/extra")))
+        // Missing requested scope is a denial/incomplete-consent result, never an overgrant.
+        assertNull(PrivatePrimaryCalendarScopeContract.validateReturnedScopes(allowed, emptySet()))
+        assertNull(PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed,
+            setOf(CALENDAR_EVENTS_READ_ONLY.value)))
+        assertEquals(AuthorizationFailure.DENIED,
+            PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed, emptySet()))
+        assertEquals(AuthorizationFailure.SCOPE_MISMATCH,
+            PrivatePrimaryCalendarScopeContract.validateTokenScopes(allowed,
+                setOf(CALENDAR_EVENTS_READ_ONLY.value, GMAIL_READ_ONLY.value)))
+    }
+
     @Test fun http401ExpiresOnlyTheAuthorizationLeaseGenerationThatMadeTheRequest() {
         val state = GoogleGrantLeaseState()
         val permissions = mutableMapOf(CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED)

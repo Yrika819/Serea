@@ -133,9 +133,43 @@ internal fun PrivateGoogleAuthorizationPanel(
         if (state.hasSelectedAccount) {
             TextButton(
                 onClick = viewModel::disconnectCalendarInApp,
+                enabled = state.status != PrivateGoogleAuthStatus.REVOKING && !state.revokeConfirmationPending,
                 modifier = Modifier.testTag("private_google_disconnect_calendar"),
             ) { Text("Calendarをアプリ内で切断") }
+            if (state.realOAuthEnabled) {
+                TextButton(
+                    onClick = { viewModel.requestGoogleGrantRevoke() },
+                    enabled = state.status != PrivateGoogleAuthStatus.REVOKING && !state.revokeConfirmationPending,
+                    modifier = Modifier.testTag("private_google_revoke_google_grant"),
+                ) { Text("Google側のSerea認可を取り消す") }
+            }
         }
+    }
+
+    if (state.revokeConfirmationPending) {
+        AlertDialog(
+            onDismissRequest = viewModel::cancelGoogleGrantRevoke,
+            title = { Text("Google認可を取り消しますか？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("対象アカウント: ${state.selectedAccountDisplayName ?: "選択済みアカウント"}")
+                    Text("Sereaに付与したGoogle認可を取り消します。再利用時には、Googleで改めて認可が必要になる場合があります。")
+                    Text("取消を開始すると、結果にかかわらずこの端末の接続とTokenは直ちに停止します。")
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.confirmGoogleGrantRevoke() },
+                    modifier = Modifier.testTag("private_google_revoke_google_grant_confirm"),
+                ) { Text("Google認可を取り消す") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = viewModel::cancelGoogleGrantRevoke,
+                    modifier = Modifier.testTag("private_google_revoke_google_grant_cancel"),
+                ) { Text("キャンセル") }
+            },
+        )
     }
 
     val preview = state.pendingMockConsent
@@ -179,6 +213,7 @@ private fun PrivateGoogleAuthStatus.label(): String = when (this) {
     PrivateGoogleAuthStatus.AUTHORIZING -> "認可処理中"
     PrivateGoogleAuthStatus.CONSENT_PENDING -> "認可結果待ち"
     PrivateGoogleAuthStatus.AUTHORIZED -> "認可状態を確認済み"
+    PrivateGoogleAuthStatus.REVOKING -> "Google認可取消中・ローカル接続停止済み"
     PrivateGoogleAuthStatus.CANCELLED -> "取消"
     PrivateGoogleAuthStatus.REVOKED -> "アプリ内切断"
     PrivateGoogleAuthStatus.ERROR -> "利用不可"

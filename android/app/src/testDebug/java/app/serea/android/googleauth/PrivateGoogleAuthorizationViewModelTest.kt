@@ -1,6 +1,7 @@
 package app.serea.android.googleauth
 
 import android.app.Activity
+import android.content.Intent
 import app.serea.android.calendar.CalendarAuthorizationState
 import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.googleauth.TokenSupplyResult.Unavailable
@@ -17,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotSame
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.Description
@@ -41,10 +43,117 @@ class PrivateGoogleAuthorizationViewModelTest {
 
     @get:Rule val mainDispatcher = MainDispatcherRule()
 
+    private class RevokeFixtureGateway(
+        override val authorizationSessionId: String = "synthetic-account-session",
+        var revokeFailure: AuthorizationFailure? = null,
+    ) : PrivateGoogleRealAuthorizationGateway {
+        override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+        var revokeCalls = 0
+        val disabled = mutableSetOf<GoogleFeature>()
+        override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
+            TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
+        override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+            GoogleServiceState.AVAILABLE, scopes.associateWith { ScopePermission.GRANTED },
+        )
+        override suspend fun authorize(scopes: Set<GoogleScope>) = AuthorizationOutcome.Authorized(
+            AccessTokenLease("synthetic-token", scopes, null, authorizationSessionId),
+        )
+        override fun completeConsentResult(requestId: String, data: Intent?) =
+            AuthorizationOutcome.Rejected(AuthorizationFailure.STALE_CONSENT_RESULT)
+        override fun takePendingConsentIntent(requestId: String) = null
+        override fun cancelConsentRequest(requestId: String) = false
+        override fun disableInApp(feature: GoogleFeature) { disabled += feature }
+        override suspend fun revokeGoogleGrant(): AuthorizationFailure? {
+            revokeCalls++
+            return revokeFailure
+        }
+    }
+
+    private fun selectFixtureAccount(viewModel: PrivateGoogleAuthorizationViewModel) {
+        val request = checkNotNull(viewModel.beginRealAccountSelection())
+        viewModel.onRealAccountSelected(
+            request.requestId, request.generation, request.requestToken,
+            "owner@example.invalid", PrivateGoogleAuthorizationViewModel.GOOGLE_ACCOUNT_TYPE,
+        )
+    }
+
     @Test
     fun publicDebugBuildDoesNotExposePrivateGoogleAuthorizationUi() {
         assertFalse(BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED)
         assertFalse(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
+    }
+
+    @Test
+    fun googleGrantRevokeRequiresExplicitConfirmationAndStopsLocalSessionFirst() =
+        runTest(mainDispatcher.dispatcher) {
+            val gateway = RevokeFixtureGateway()
+            val viewModel = PrivateGoogleAuthorizationViewModel(
+                context = null, enabledInThisVariant = true, realOAuthEnabled = true,
+                realGatewayFactory = { _, _ -> gateway },
+            )
+            selectFixtureAccount(viewModel)
+            viewModel.requestPrimaryCalendarConsent()
+            advanceUntilIdle()
+            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+
+            assertTrue(viewModel.requestGoogleGrantRevoke())
+            assertEquals(0, gateway.revokeCalls)
+            viewModel.cancelGoogleGrantRevoke()
+            assertEquals(0, gateway.revokeCalls)
+            assertTrue(viewModel.state.value.hasSelectedAccount)
+            assertNotSame(null, viewModel.calendarSession.value)
+
+            assertTrue(viewModel.requestGoogleGrantRevoke())
+            assertTrue(viewModel.confirmGoogleGrantRevoke())
+            assertEquals(PrivateGoogleAuthStatus.REVOKING, viewModel.state.value.status)
+            assertNull(viewModel.calendarSession.value)
+            assertTrue(runCatching { session.listCalendars() }.isFailure)
+            advanceUntilIdle()
+
+            assertEquals(1, gateway.revokeCalls)
+            assertEquals(PrivateGoogleAuthStatus.REVOKED, viewModel.state.value.status)
+            assertFalse(viewModel.state.value.hasSelectedAccount)
+            assertTrue(viewModel.state.value.message.contains("再利用時"))
+            session.close()
+        }
+
+    @Test
+    fun failedGoogleRevokeKeepsLocalConnectionStoppedAndDoesNotAutoRetry() =
+        runTest(mainDispatcher.dispatcher) {
+            val gateway = RevokeFixtureGateway(revokeFailure = AuthorizationFailure.NETWORK)
+            val viewModel = PrivateGoogleAuthorizationViewModel(
+                context = null, enabledInThisVariant = true, realOAuthEnabled = true,
+                realGatewayFactory = { _, _ -> gateway },
+            )
+            selectFixtureAccount(viewModel)
+            assertTrue(viewModel.requestGoogleGrantRevoke())
+            assertTrue(viewModel.confirmGoogleGrantRevoke())
+            advanceUntilIdle()
+            assertEquals(PrivateGoogleAuthStatus.ERROR, viewModel.state.value.status)
+            assertFalse(viewModel.state.value.hasSelectedAccount)
+            assertTrue(viewModel.state.value.message.contains("取消は確認できません"))
+            assertEquals(1, gateway.revokeCalls)
+            assertFalse(viewModel.confirmGoogleGrantRevoke())
+            assertEquals(1, gateway.revokeCalls)
+        }
+
+    @Test
+    fun appLocalDisconnectAndMockModeNeverInvokeGoogleGrantRevoke() = runTest(mainDispatcher.dispatcher) {
+        val gateway = RevokeFixtureGateway()
+        val real = PrivateGoogleAuthorizationViewModel(
+            context = null, enabledInThisVariant = true, realOAuthEnabled = true,
+            realGatewayFactory = { _, _ -> gateway },
+        )
+        selectFixtureAccount(real)
+        real.disconnectCalendarInApp()
+        assertEquals(0, gateway.revokeCalls)
+        assertTrue(real.state.value.message.contains("Google共有Grantは変更していません"))
+
+        val mock = PrivateGoogleAuthorizationViewModel(context = null, enabledInThisVariant = true, realOAuthEnabled = false)
+        mock.selectSyntheticAccount(SyntheticGoogleAccount.A)
+        assertFalse(mock.requestGoogleGrantRevoke())
+        assertFalse(mock.confirmGoogleGrantRevoke())
+        assertEquals(0, gateway.revokeCalls)
     }
 
     @Test

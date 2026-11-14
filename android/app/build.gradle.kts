@@ -49,9 +49,6 @@ val privateBetaUnitTestFilterArgs = setOf(
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
 )
 val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
-val privateBetaPackagingRequested = requestedTaskNames.any {
-    it.substringAfterLast(':') in setOf("assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta", "signPrivateBetaBundle")
-}
 val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&
     requestedTaskNames.isNotEmpty() &&
     requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
@@ -299,6 +296,14 @@ val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") 
     description = "Require and verify the Owner-managed Personal Beta signing identity before packaging."
     outputs.upToDateWhen { false }
     doLast {
+        // Inspect the resolved graph, not the CLI spelling. This covers aggregate
+        // tasks (`assemble`, `bundle`), task abbreviations, and indirect packaging
+        // dependencies because Gradle has expanded them before task execution.
+        val privateBetaPackagingRequested = gradle.taskGraph.allTasks.any { task ->
+            task.name.contains("privateBeta", ignoreCase = true) &&
+                task.name.substringBefore("PrivateBeta", missingDelimiterValue = "")
+                    .lowercase(Locale.ROOT) in setOf("assemble", "package", "bundle", "sign")
+        }
         fun failClosed(message: String): Nothing {
             listOf("beta", "privateBeta").forEach { variant ->
                 layout.buildDirectory.dir("outputs/apk/$variant").get().asFile.deleteRecursively()

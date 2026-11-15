@@ -4,7 +4,7 @@ This file is the repository entry point for coding assistants and review agents.
 
 ## Read first
 
-1. **[Current Personal Beta Roadmap (2026-11-12)](docs/roadmaps/2026-11-12-personal-beta-roadmap.md)** — current phase map, delivery gates, Owner decision register and deadlines.
+1. **[Current Personal Beta Roadmap (latest sync: 2026-11-15)](docs/roadmaps/2026-11-12-personal-beta-roadmap.md)** — current phase map, delivery gates, Owner decision register and deadlines.
 2. [Existing G10–G15 Execution Plan](docs/g9/g10-execution-plan.md) — original phase boundaries and release-critical path.
 3. [Personal Beta Scope](docs/g9/beta-scope.md) — P0 / P1 / P2 and Demo Beta distinction.
 4. [Owner Decision Ledger](docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md) — historical approval categories; **confirm more recent explicit Owner decisions before acting**.
@@ -12,14 +12,15 @@ This file is the repository entry point for coding assistants and review agents.
 
 At session start, **fetch main and target PR status from GitHub**. SHA values and dated check results in documents are snapshots, not evergreen facts.
 
-## Current handoff snapshot (2026-11-13 UTC)
+## Current handoff snapshot (2026-11-15 JST)
 
-- Canonical main `8c137c538135d66fb2dab16bd74c10cc56146da4`; Tree `792287a6b359c547f7a2026e7c3d2054be541176`. This includes merged PR #237 (Cargo 1.100 release artifact support and rustfmt-only formatting in `types.rs`).
-- H4-A is complete through merged PR #234 (`eaa8f7cefb608d846c336a972f33b0812f269f57` was the prior main HEAD). PR #232 remains **OPEN, not merged, and ready for review (not Draft)**; its Primary-only implementation is on main through #234. Do not change PR #232.
-- PR #231 already merged. Synthetic in-flight Consent Process Death E2E passed on Android API 26 and 35; this does **not** establish success of real Google OAuth.
-- H4-B implementation is in PR #236, still Draft and now synchronized with main. Its current validation is running on HEAD `43698d47caa134b2b0fc0ffef43daffed2d669f3` (a dated snapshot); Private Google HTTP remains disabled and no real Google connection is authorized.
-- PR #233 is the documentation-only roadmap handoff. Its recorded pre-sync HEAD is a historical snapshot; current branch state and checks must be fetched from GitHub.
-- This is a dated handoff snapshot. Fetch GitHub before acting and distinguish current state from historical snapshots in the roadmap.
+- Canonical main `317c601760ab7148afd979ee9ef092838d76a072`, Tree `2017e9b15c09724459afe3f59c4740bb4a6c04fe`. At the time of this snapshot, 38 checks succeeded, one documentation check was skipped, and all four Required checks passed.
+- H4-A merged via PR #234; H4-B via #236; H4-C2 via #240; H4-D1-R via #242. The initial roadmap/agent guide merged through #233. Read the latest synchronization section of the roadmap rather than treating the historical tables as live state.
+- Public Beta remains `app.serea.android.beta`; Private Beta uses `app.serea.android.privatebeta` with independent signing and versionCode settings. Production signing and distribution require separate Owner authorization.
+- PR #231's in-flight Consent Process Death E2E and #242's OAuth hardening use Synthetic/Fake evidence. Real Google access has not been accepted. Keep real Google HTTP and unapproved OAuth disabled.
+- Legacy PR #232 (OPEN/Ready) and #239 (OPEN/Draft) are not the canonical integration paths; leave their state unchanged absent explicit Owner instruction.
+- Next gate: H4-D2 local Disposable signing/recovery and Android dynamic verification, followed by Owner decisions on release versioning and formal signing. Local work and its evidence are not necessarily part of main. Do not publish private operational materials or credentials. Before real OAuth, complete the signing, Cloud configuration, and explicit activation gates.
+- Personal Beta remains NO-GO until the Owner reviews the actual service, security, device and release evidence. A limited preview must not be presented as completed Personal Beta.
 
 ## Hard boundaries
 

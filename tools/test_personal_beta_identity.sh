@@ -189,9 +189,6 @@ build_tools="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROO
 aapt="$build_tools/aapt"
 apksigner="$build_tools/apksigner"
 zipalign="$build_tools/zipalign"
-for tool in "$aapt" "$apksigner" "$zipalign"; do
-  [[ -x "$tool" ]] || { echo "Required Android build tool is unavailable: $tool" >&2; exit 1; }
-done
 
 cleanup() { rm -rf "$test_root"; }
 trap cleanup EXIT

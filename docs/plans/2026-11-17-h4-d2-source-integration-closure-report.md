@@ -35,7 +35,7 @@
 - signing: `tools/serea_signing.py`, `serea_apk_signer.py`, `serea_release_ledger.py`, `serea_identity_registry.py`, `serea_signing_state.py`, `serea_signing_witness.py`, `serea_enrollment_authority.py`
 - tests: `tests/test_serea_publish_toctou.py`, `test_serea_sign_apk_cli_e2e.py`, `test_serea_apk_signer.py`, `test_serea_apk_signer_e2e.py`, `test_serea_enrollment_authority.py`, `test_serea_identity_registry.py`, `test_serea_release_ledger.py`, `test_serea_signing_witness.py`, `test_serea_signing_cli.py`, `run_disposable_signing_e2e.py`（テストimport依存のみ。レガシー `build-public`/`build-private` 経路は現行成功証跡ではない）
 - build/CI: `.github/workflows/android.yml`, `android/app/build.gradle.kts`, `android/gradle.properties`, `tools/validate_docs.py`, `tools/verify_android_build_provenance.py`
-- docs: `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`, `2026-11-15-owner-production-signing-launch-runbook.md`, `2026-11-16-h4-d2-final-dynamic-acceptance-report.md`, `2026-11-16-h4-d2-final-recovery-closure-report.md`, `2026-11-16-h4-d2-signing-closure-report.md`, `2026-11-17-h4-d2-signing-final-closeout-report.md`
+- docs: `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`, `2026-11-15-owner-production-signing-launch-runbook.md`, `2026-11-16-h4-d2-final-dynamic-acceptance-report.md`, `2026-11-16-h4-d2-final-recovery-closure-report.md`, `2026-11-16-h4-d2-signing-closure-report.md`, `2026-11-17-h4-d2-signing-final-closeout-report.md`, `2026-11-17-h4-d2-source-integration-closure-report.md`（本報告）
 
 除外: `.superpowers/`, `.local/`, ビルド出力, 個人Gradle設定, 鍵/PKCS12/Vault/状態ストア, 個人パス含有文書, 署名無関係のCalendar/Gmail/AI文書。
 

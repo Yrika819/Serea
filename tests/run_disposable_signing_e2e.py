@@ -220,9 +220,9 @@ def _run_gradle_guard_cases_locked(root: Path, work: Path, passwords: dict[str, 
         # The retired Gradle signing tasks (:app:validatePublicBetaSigning /
         # validatePrivateBetaSigning) no longer exist: Beta packaging is unsigned and
         # the independent signing CLI owns all signing. Guard contracts are now
-        # enforced by the CLI and validated by tests/test_serea_signing_cli.py
-        # (wrong fingerprint, same signer, missing inputs, wrong PKCS12 password,
-        # and formal-mode fail-closed). This harness verifies the in-vault identity
+        # enforced by the CLI (retired-path fail-closed; lane identity checks live
+        # in the signer modules and are exercised by the portable unit suites).
+        # This harness verifies the in-vault identity
         # distinctness and refuse-formal contract directly instead of invoking dead
         # Gradle tasks, so the evidence remains reproducible from this snapshot.
         if public["sha256"] == private["sha256"] or \
@@ -366,9 +366,12 @@ def main(argv: list[str] | None = None) -> int:
                 "--witness", str(signing_witness), *authority_args,
                 "--public-version-code", "2", "--private-version-code", "2"], [a, b, c])
         results.append("independent witness, Identity Registry and Release Ledger bound outside encrypted Vault: PASS")
-        print("Running disposable Public/Private Gradle Guard negative cases...", flush=True)
+        print("Running disposable signer identity / retired-path Guard checks...", flush=True)
         run_gradle_guard_cases(root, work, {"vault": a, "public": b, "private": c})
-        results.append("Public/Private wrong fingerprint, same signer, missing inputs, and Private wrong password Guards: PASS")
+        # Legacy Gradle signing guards were retired with signingConfig; do not claim
+        # the removed fingerprint/password cases as PASS. Current coverage is the CLI
+        # fail-closed contract in tests/test_serea_signing_cli.py (macOS/local host).
+        results.append("signer identity distinctness and retired Gradle signing path rejected: PASS")
         results.append("Public/Private certificate identities and public keys distinct: PASS")
         require("wrong Vault passphrase", fingerprint_args, [wrong], ok=False)
         results.append("wrong Vault passphrase: REJECTED")

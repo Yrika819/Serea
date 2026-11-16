@@ -1,7 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.security.KeyStore
-import java.security.MessageDigest
-import java.util.Locale
+
 
 plugins {
     id("com.android.application")
@@ -11,36 +9,24 @@ plugins {
     id("com.github.jk1.dependency-license-report")
 }
 
-val betaStorePath = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH").orNull
-val betaStorePassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD").orNull
-val betaKeyAlias = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS").orNull
-val betaKeyPassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD").orNull
-val betaExpectedFingerprint = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256").orNull
+
 val betaVersionCode = providers.gradleProperty("sereaBetaVersionCode").orNull?.toIntOrNull()
+if (betaVersionCode != null && betaVersionCode !in 2..2_100_000_000) {
+    error("-PsereaBetaVersionCode must be in 2..2100000000.")
+}
 val privateVersionCodeText = providers.gradleProperty("sereaPrivateBetaVersionCode").orNull
 val privateBetaVersionCode = privateVersionCodeText?.toIntOrNull() ?: if (privateVersionCodeText == null) 2 else
     error("-PsereaPrivateBetaVersionCode must be an integer >= 2.")
-if (privateBetaVersionCode < 2) error("-PsereaPrivateBetaVersionCode must be >= 2.")
-val privateStorePath = providers.environmentVariable("SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PATH").orNull
-val privateStorePassword = providers.environmentVariable("SEREA_ANDROID_PRIVATE_BETA_KEYSTORE_PASSWORD").orNull
-val privateKeyAlias = providers.environmentVariable("SEREA_ANDROID_PRIVATE_BETA_KEY_ALIAS").orNull
-val privateKeyPassword = providers.environmentVariable("SEREA_ANDROID_PRIVATE_BETA_KEY_PASSWORD").orNull
-val privateExpectedFingerprint = providers.environmentVariable("SEREA_ANDROID_PRIVATE_BETA_CERT_SHA256").orNull
-val privateSigningInputsReady = listOf(privateStorePath, privateStorePassword, privateKeyAlias, privateKeyPassword,
-    privateExpectedFingerprint).all { !it.isNullOrBlank() }
-val betaSigningInputsReady = listOf(
-    betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
-).all { !it.isNullOrBlank() }
-if (privateSigningInputsReady && betaSigningInputsReady &&
-    privateExpectedFingerprint!!.filter { it.isLetterOrDigit() }.equals(
-        betaExpectedFingerprint!!.filter { it.isLetterOrDigit() }, ignoreCase = true)) {
-    error("Public and Private Beta must use different signing certificates.")
+if (privateBetaVersionCode !in 2..2_100_000_000) {
+    error("-PsereaPrivateBetaVersionCode must be in 2..2100000000.")
 }
+
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
 // Opt-in is local to the Owner's private Beta invocation. Missing input keeps OAuth compiled off.
-val ownerPrivateBetaGoogleEnabled = providers.environmentVariable("SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED").orNull == "true"
+val ownerPrivateBetaGoogleEnabled =
+    providers.environmentVariable("SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED").orNull == "true"
 val ciBuild = providers.environmentVariable("CI").orNull.equals("true", ignoreCase = true) ||
-    providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true)
+        providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true)
 val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("PrivateBeta", ignoreCase = true) }
 // CI may compile and run this exact no-secret JVM unit-test variant. Every other
 // CI invocation leaves the Private Beta variant disabled, and packaging tasks are rejected.
@@ -52,14 +38,14 @@ val privateBetaUnitTestFilterArgs = setOf(
 )
 val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }
 val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmpty() &&
-    requestedTaskNames.isNotEmpty() &&
-    requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
+        requestedTaskNames.isNotEmpty() &&
+        requestedTaskNames.all { it.substringAfterLast(':') == "testPrivateBetaUnitTest" }
 if (privateBetaRequested && ciBuild && !privateBetaUnitTestOnlyInvocation) {
     error("CI may only run the isolated Private Beta unit-test task; packaging is local-only.")
 }
 val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
 val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
-    gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation" }
+        gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation" }
 val nativeRuntimeAbi = providers.gradleProperty("sereaNativeRuntimeAbi").orNull ?: "x86_64"
 val llamaCppSource = if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
     providers.gradleProperty("sereaLlamaCppSource").orNull
@@ -126,24 +112,7 @@ android {
     }
 
     signingConfigs {
-        if (betaSigningInputsReady) {
-            create("personalBeta") {
-                storeFile = file(checkNotNull(betaStorePath))
-                storeType = "PKCS12"
-                storePassword = checkNotNull(betaStorePassword)
-                keyAlias = checkNotNull(betaKeyAlias)
-                keyPassword = checkNotNull(betaKeyPassword)
-            }
-        }
-        if (privateSigningInputsReady) {
-            create("privateBetaOwner") {
-                storeFile = file(checkNotNull(privateStorePath))
-                storeType = "PKCS12"
-                storePassword = checkNotNull(privateStorePassword)
-                keyAlias = checkNotNull(privateKeyAlias)
-                keyPassword = checkNotNull(privateKeyPassword)
-            }
-        }
+
         if (updateTestSigningInputsReady) {
             create("ephemeralUpdateTest") {
                 storeFile = file(checkNotNull(updateTestStorePath))
@@ -183,7 +152,7 @@ android {
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
-            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
+            signingConfig = null
         }
         create("privateBeta") {
             initWith(getByName("beta"))
@@ -198,7 +167,7 @@ android {
                 ownerPrivateBetaGoogleEnabled.toString(),
             )
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "true")
-            if (privateSigningInputsReady) signingConfig = signingConfigs.getByName("privateBetaOwner")
+            signingConfig = null
         }
     }
     if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
@@ -293,86 +262,27 @@ tasks.matching { it.name == "mergeIsolatedAssets" }.configureEach {
     dependsOn(copyIsolatedBaselineProfileAssets)
 }
 
-fun registerBetaSigningGuard(taskName: String, privateVariant: Boolean) = tasks.register(taskName) {
+// Beta artifacts are intentionally unsigned. APK signing is performed only by the
+// separate signing-domain CLI; no Beta packaging task receives signing credentials.
+fun registerUnsignedBetaGuard(taskName: String, versionCode: Int?) = tasks.register(taskName) {
     group = "verification"
-    description = if (privateVariant) "Validate Private Beta signing identity." else "Validate Public Beta signing identity."
     outputs.upToDateWhen { false }
     doLast {
-        fun failClosed(message: String): Nothing {
-            val variant = if (privateVariant) "privateBeta" else "beta"
-            layout.buildDirectory.dir("outputs/apk/$variant").get().asFile.deleteRecursively()
-            layout.buildDirectory.dir("outputs/bundle/$variant").get().asFile.deleteRecursively()
-            error(message)
+        if (versionCode == null || versionCode !in 2..2_100_000_000) {
+            error("Beta unsigned packaging requires an explicit versionCode in 2..2100000000.")
         }
-        fun normalizeFingerprint(value: String, label: String): String {
-            val normalized = value.replace(":", "").replace(Regex("\\s"), "").uppercase(Locale.ROOT)
-            if (!normalized.matches(Regex("[0-9A-F]{64}"))) failClosed("$label must be a SHA-256 certificate fingerprint.")
-            return normalized
-        }
-        val storePath = if (privateVariant) privateStorePath else betaStorePath
-        val storePassword = if (privateVariant) privateStorePassword else betaStorePassword
-        val keyAlias = if (privateVariant) privateKeyAlias else betaKeyAlias
-        val keyPassword = if (privateVariant) privateKeyPassword else betaKeyPassword
-        val expectedFingerprint = if (privateVariant) privateExpectedFingerprint else betaExpectedFingerprint
-        val required = mapOf(
-            "keystore path" to storePath,
-            "keystore password" to storePassword,
-            "key alias" to keyAlias,
-            "key password" to keyPassword,
-            "certificate SHA-256" to expectedFingerprint,
-        ).toMutableMap()
-        if (privateVariant) {
-            // This is an Owner-trusted fingerprint, not a Public key or password.
-            required["trusted Public Beta certificate SHA-256"] = betaExpectedFingerprint
-            required["Private Beta versionCode"] = privateBetaVersionCode.toString()
-        } else {
-            required["Public Beta versionCode"] = betaVersionCode?.toString()
-        }
-        val missing = required.filterValues { it.isNullOrBlank() }.keys
-        if (missing.isNotEmpty()) failClosed("Beta packaging blocked; missing ${missing.joinToString()}.")
-        if (!privateVariant && checkNotNull(betaVersionCode) <= 1) {
-            failClosed("Public Beta versionCode must be greater than 1.")
-        }
-        val expected = normalizeFingerprint(checkNotNull(expectedFingerprint), "Configured certificate SHA-256")
-        if (privateVariant) {
-            val trustedPublic = normalizeFingerprint(checkNotNull(betaExpectedFingerprint), "Trusted Public certificate SHA-256")
-            if (expected == trustedPublic) failClosed("Public and Private Beta signing certificates must differ.")
-        }
-        val keystoreFile = file(checkNotNull(storePath))
-        if (!keystoreFile.isFile) failClosed("Beta keystore path is not a file.")
-        val store = try {
-            KeyStore.getInstance("PKCS12").apply {
-                keystoreFile.inputStream().use { load(it, checkNotNull(storePassword).toCharArray()) }
-            }
-        } catch (_: Exception) { failClosed("Beta PKCS12 keystore could not be opened with the configured password.") }
-        if (!store.isKeyEntry(checkNotNull(keyAlias))) failClosed("Configured Beta alias is not a private-key entry.")
-        val certificate = store.getCertificate(checkNotNull(keyAlias))
-            ?: failClosed("Configured Beta alias has no signing certificate.")
-        val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
-            .joinToString("") { "%02X".format(Locale.ROOT, it.toInt() and 0xff) }
-        if (actual != expected) failClosed("Beta keystore certificate does not match configured SHA-256.")
-        val signingKey = try {
-            store.getKey(checkNotNull(keyAlias), checkNotNull(keyPassword).toCharArray())
-        } catch (_: Exception) { failClosed("Configured Beta key password could not unlock the private key.") }
-        if (signingKey !is java.security.PrivateKey) failClosed("Configured Beta alias is not an accessible private signing key.")
     }
 }
 
-val validatePublicBetaSigning = registerBetaSigningGuard("validatePublicBetaSigning", privateVariant = false)
-val validatePrivateBetaSigning = registerBetaSigningGuard("validatePrivateBetaSigning", privateVariant = true)
-
-// Attach to concrete artifact-producing tasks, not similarly prefixed resource
-// tasks such as packagePrivateBetaResources. Aggregate assemble/bundle and task
-// abbreviations resolve through these canonical variant nodes.
-val publicBetaPackagingTasks = setOf("assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle")
-val privateBetaPackagingTasks = setOf(
-    "assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta", "signPrivateBetaBundle",
-)
+val validatePublicBetaUnsigned = registerUnsignedBetaGuard("validatePublicBetaUnsigned", betaVersionCode)
+val validatePrivateBetaUnsigned = registerUnsignedBetaGuard("validatePrivateBetaUnsigned", privateBetaVersionCode)
+val publicBetaPackagingTasks = setOf("assembleBeta", "packageBeta", "bundleBeta")
+val privateBetaPackagingTasks = setOf("assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta")
 tasks.configureEach {
     if (name in privateBetaPackagingTasks) {
-        dependsOn(validatePrivateBetaSigning)
+        dependsOn(validatePrivateBetaUnsigned)
     } else if (name in publicBetaPackagingTasks) {
-        dependsOn(validatePublicBetaSigning)
+        dependsOn(validatePublicBetaUnsigned)
     }
 }
 
@@ -381,13 +291,19 @@ androidComponents.onVariants { variant ->
         check(variant.applicationId.get() == "app.serea.android.beta") {
             "Personal Beta applicationId drifted: expected app.serea.android.beta, got ${variant.applicationId.get()}"
         }
-        betaVersionCode?.let { code -> variant.outputs.forEach { it.versionCode.set(code) } }
+        betaVersionCode?.let { code ->
+            variant.outputs.forEach { output ->
+                output.versionCode.set(code)
+            }
+        }
     }
     if (variant.buildType == "privateBeta") {
         check(variant.applicationId.get() == "app.serea.android.privatebeta") {
             "Private Beta applicationId drifted: expected app.serea.android.privatebeta, got ${variant.applicationId.get()}"
         }
-        variant.outputs.forEach { it.versionCode.set(privateBetaVersionCode) }
+        variant.outputs.forEach { output ->
+            output.versionCode.set(privateBetaVersionCode)
+        }
     }
 }
 
@@ -450,7 +366,8 @@ configurations.configureEach {
         }
         if (requested.group == "com.google.protobuf" && requested.name in setOf(
                 "protobuf-java", "protobuf-javalite", "protobuf-java-util", "protobuf-kotlin",
-            )) {
+            )
+        ) {
             useVersion("3.25.9")
             because("CVE-2024-7254 affects older protobuf releases")
         }

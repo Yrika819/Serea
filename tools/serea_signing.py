@@ -889,8 +889,13 @@ def _ledger_add(mount: Path, lane: str, apk: Path, identity: dict[str, Any]) -> 
     _atomic_json(ledger_path, ledger)
 
 
+def _sdk_build_tools() -> Path:
+    """Android build-tools location used by the isolated signer (35.0.0 contract)."""
+    return Path.home() / "Library/Android/sdk/build-tools/35.0.0"
+
+
 def _verify_apk(apk: Path, lane: str, expected: dict[str, Any]) -> dict[str, str]:
-    sdk = Path.home() / "Library/Android/sdk/build-tools/35.0.0"
+    sdk = _sdk_build_tools()
     aapt = sdk / "aapt"
     apksigner = sdk / "apksigner"
     if not aapt.is_file() or not apksigner.is_file():
@@ -1042,7 +1047,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "diskutil": Path("/usr/sbin/diskutil").is_file(),
         "JDK 17": (jdk / "bin/java").is_file() and (jdk / "bin/keytool").is_file(),
         "Gradle wrapper": (ANDROID_ROOT / "gradlew").is_file(),
-        "Android Build Tools 35.0.0": (Path.home() / "Library/Android/sdk/build-tools/35.0.0/apksigner").is_file(),
+        "Android Build Tools 35.0.0": (_sdk_build_tools() / "apksigner").is_file(),
         "OpenSSL": Path("/usr/bin/openssl").is_file(),
     }
     for name, ok in checks.items():
@@ -1460,7 +1465,7 @@ def cmd_ledger_recover_publish(args: argparse.Namespace) -> int:
             if not isinstance(apk_hash, str) or apk_hash != signed_apk_sha256:
                 raise SigningError("Managed signed APK does not match its publication receipt")
             apk_app_id, apk_version_code, apk_version_name = apk_signer._apk_identity(
-                managed_apk, Path.home() / "Library/Android/sdk/build-tools/35.0.0/aapt")
+                managed_apk, _sdk_build_tools() / "aapt")
             if apk_app_id != identities[args.lane]["application_id"] or apk_version_code != args.version_code:
                 raise SigningError("Managed APK identity does not match the recoverable lane and versionCode")
             if event["state"] == "BUILT" and event["version_name"] != apk_version_name:
@@ -1471,8 +1476,7 @@ def cmd_ledger_recover_publish(args: argparse.Namespace) -> int:
                                         "sha1": identity["sha1"], "sha256": identity["sha256"]})
             apk_evidence["version_code"] = apk_version_code
             cert_sha256 = identity["sha256"].lower().replace(":", "")
-            signer_hashes = [apk_signer._verified_signer(managed_apk, Path.home() /
-                              "Library/Android/sdk/build-tools/35.0.0/apksigner", sdk=sdk)
+            signer_hashes = [apk_signer._verified_signer(managed_apk, _sdk_build_tools() / "apksigner", sdk=sdk)
                              for sdk in (26, 35)]
             if signer_hashes != [cert_sha256, cert_sha256]:
                 raise SigningError("Managed signed APK does not verify with the lane certificate on API 26 and 35")
@@ -1886,13 +1890,13 @@ def cmd_sign_apk(args: argparse.Namespace) -> int:
                 staged = import_apk(args.apk, staging)
                 inspection = inspect_unsigned_apk(staged)
                 apk_signer._assert_no_apk_signing_block(staged)
-                sdk = Path.home() / "Library/Android/sdk/build-tools/35.0.0"
+                sdk = _sdk_build_tools()
                 existing_signature = apk_signer._tool_run([
                     sdk / "apksigner", "verify", "--min-sdk-version", "26", "--max-sdk-version", "35", staged])
                 if existing_signature.returncode == 0:
                     raise SigningError("Input APK is already signed")
                 app_id, actual_code, version_name = apk_signer._apk_identity(
-                    staged, Path.home() / "Library/Android/sdk/build-tools/35.0.0/aapt")
+                    staged, _sdk_build_tools() / "aapt")
                 if app_id != apk_signer.APP_IDS[lane] or actual_code != version_code:
                     raise SigningError("Unsigned APK identity/version does not match the next Release Ledger code")
                 _, provenance_hash = validate_provenance(

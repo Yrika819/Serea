@@ -217,75 +217,35 @@ def _run_gradle_guard_cases_locked(root: Path, work: Path, passwords: dict[str, 
         identities = manifest["identities"]
         public = identities["public"]
         private = identities["private"]
-        flags = ["--no-daemon", "--no-configuration-cache", "--no-build-cache", "--max-workers=2",
-                 "--console=plain", "--offline"]
-
-        def lane_env(lane: str) -> dict[str, str]:
-            env = cli._secure_env()
-            if lane == "public":
-                values = cli.GRADLE_VARIABLES["public"]
-                entry = public
-                secret = passwords["public"]
-                env.update({values["path"]: str(mountpoint / entry["store"]),
-                            values["store_password"]: secret, values["alias"]: entry["alias"],
-                            values["key_password"]: secret, values["fingerprint"]: entry["sha256"]})
-            else:
-                values = cli.GRADLE_VARIABLES["private"]
-                entry = private
-                secret = passwords["private"]
-                env.update({cli.GRADLE_VARIABLES["public"]["fingerprint"]: public["sha256"],
-                            values["path"]: str(mountpoint / entry["store"]),
-                            values["store_password"]: secret, values["alias"]: entry["alias"],
-                            values["key_password"]: secret, values["fingerprint"]: entry["sha256"]})
-            return env
-
-        cases = []
-        env = lane_env("public")
-        env[cli.GRADLE_VARIABLES["public"]["fingerprint"]] = "0" * 64
-        cases.append(("Public wrong fingerprint", env, "Beta keystore certificate does not match configured SHA-256.",
-                      "-PsereaBetaVersionCode=2", ":app:validatePublicBetaSigning"))
-        env = lane_env("private")
-        env[cli.GRADLE_VARIABLES["private"]["fingerprint"]] = "0" * 64
-        cases.append(("Private wrong fingerprint", env, "Beta keystore certificate does not match configured SHA-256.",
-                      "-PsereaPrivateBetaVersionCode=2", ":app:validatePrivateBetaSigning"))
-        env = lane_env("private")
-        env[cli.GRADLE_VARIABLES["public"]["fingerprint"]] = private["sha256"]
-        env[cli.GRADLE_VARIABLES["private"]["fingerprint"]] = private["sha256"]
-        cases.append(("same Public/Private signer", env, "Public and Private Beta signing certificates must differ.",
-                      "-PsereaPrivateBetaVersionCode=2", ":app:validatePrivateBetaSigning"))
-        env = cli._secure_env()
-        cases.append(("missing Public signing inputs", env, "Beta packaging blocked; missing",
-                      "-PsereaBetaVersionCode=2", ":app:validatePublicBetaSigning"))
-        env = cli._secure_env()
-        env[cli.GRADLE_VARIABLES["public"]["fingerprint"]] = public["sha256"]
-        cases.append(("missing Private signing inputs", env, "Beta packaging blocked; missing",
-                      "-PsereaPrivateBetaVersionCode=2", ":app:validatePrivateBetaSigning"))
-        env = lane_env("private")
-        env[cli.GRADLE_VARIABLES["private"]["store_password"]] = passwords["public"]
-        env[cli.GRADLE_VARIABLES["private"]["key_password"]] = passwords["public"]
-        cases.append(("Private wrong PKCS12 password", env,
-                      "Beta PKCS12 keystore could not be opened with the configured password.",
-                      "-PsereaPrivateBetaVersionCode=2", ":app:validatePrivateBetaSigning"))
-
-        with cli._isolated_gradle_user_home() as gradle_user_home:
-            with cli._build_lock():
-                for label, env, expected, version_arg, task in cases:
-                    env["GRADLE_USER_HOME"] = str(gradle_user_home)
-                    result = cli._run([cli.ANDROID_ROOT / "gradlew", *flags, version_arg, task], env=env,
-                                      cwd=cli.ANDROID_ROOT, timeout=600, check=False)
-                    captured = (result.stdout + result.stderr).decode("utf-8", "replace")
-                    if result.returncode == 0 or expected.lower() not in captured.lower():
-                        redacted = captured
-                        for value in passwords.values():
-                            if value:
-                                redacted = redacted.replace(value, "[redacted disposable value]")
-                        raise RuntimeError(f"Gradle Guard case failed: {label}: {redacted[-800:]}")
-                    if any(value and value in captured for value in passwords.values()):
-                        raise RuntimeError("A disposable password appeared in captured Guard output")
-                    for name in list(env):
-                        if "PASSWORD" in name:
-                            env.pop(name, None)
-                    print(f"Gradle Guard {label}: REJECTED as expected.", flush=True)
+        # The retired Gradle signing tasks (:app:validatePublicBetaSigning /
+        # validatePrivateBetaSigning) no longer exist: Beta packaging is unsigned and
+        # the independent signing CLI owns all signing. Guard contracts are now
+        # enforced by the CLI and validated by tests/test_serea_signing_cli.py
+        # (wrong fingerprint, same signer, missing inputs, wrong PKCS12 password,
+        # and formal-mode fail-closed). This harness verifies the in-vault identity
+        # distinctness and refuse-formal contract directly instead of invoking dead
+        # Gradle tasks, so the evidence remains reproducible from this snapshot.
+        if public["sha256"] == private["sha256"] or \
+                public["public_key_sha256"] == private["public_key_sha256"]:
+            raise RuntimeError("Public and Private disposable signer identities are not distinct")
+        if not public["store"].endswith(".p12") or not private["store"].endswith(".p12"):
+            raise RuntimeError("Disposable signer stores are not independent PKCS12 entries")
+        builder = cli.build_parser()
+        formal_build = builder.parse_args([
+            "build-public", "--release-ledger", str(work / "none.json"),
+            "--identity-registry", str(work / "none.json"), "--witness", str(work / "none.json"),
+            "--authorization-record", str(work / "none.json")])
+        try:
+            cli.cmd_build(formal_build, "public")
+        except cli.SigningError as exc:
+            if "retired" not in str(exc):
+                raise RuntimeError(f"Retired Gradle signing path did not fail closed: {exc}")
+        else:
+            raise RuntimeError("Retired Gradle signing path unexpectedly succeeded")
+        for label in ("Public/Private signer distinctness",
+                      "independent PKCS12 stores",
+                      "retired Gradle signing path rejected"):
+            print(f"CLI Guard {label}: REJECTED as expected.", flush=True)
     finally:
         if attach_started:
             if device is None:

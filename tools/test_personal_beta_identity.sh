@@ -188,6 +188,10 @@ build_tools_version="${BUILD_TOOLS_VERSION:-35.0.0}"
 build_tools="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}/build-tools/$build_tools_version"
 aapt="$build_tools/aapt"
 apksigner="$build_tools/apksigner"
+zipalign="$build_tools/zipalign"
+for tool in "$aapt" "$apksigner" "$zipalign"; do
+  [[ -x "$tool" ]] || { echo "Required Android build tool is unavailable: $tool" >&2; exit 1; }
+done
 
 cleanup() { rm -rf "$test_root"; }
 trap cleanup EXIT
@@ -362,7 +366,20 @@ build_beta() {
   local args=(--no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleBeta "-PsereaBetaVersionCode=$version")
   if [[ "$harness" == true ]]; then args+=("-PsereaPersonalBetaValidationHarness=true"); fi
   (cd "$android_dir" && ./gradlew "${args[@]}")
-  local beta_apk="$android_dir/app/build/outputs/apk/beta/app-beta.apk"
+  # Beta packaging is intentionally unsigned so the isolated signing CLI owns all
+  # release signing. This disposable harness signs the Gradle output locally with
+  # its own throwaway PKCS12 identity so the emulator can verify certificate-change
+  # semantics. No production key or Gradle signing configuration is involved.
+  local unsigned_apk="$android_dir/app/build/outputs/apk/beta/app-beta-unsigned.apk"
+  local aligned_apk="$test_root/personal-beta-v${version}-aligned.apk"
+  local beta_apk="$test_root/personal-beta-v${version}-test-signed.apk"
+  "$build_tools/zipalign" -f -p 4 "$unsigned_apk" "$aligned_apk"
+  "$apksigner" sign \
+    --ks "$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" \
+    --ks-key-alias "$SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" \
+    --ks-pass "env:SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD" \
+    --key-pass "env:SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD" \
+    --out "$beta_apk" "$aligned_apk"
   if unzip -Z1 "$beta_apk" | grep -E '^lib/[^/]+/lib(serea_local_llama|llama|ggml)[^/]*\.so$'; then
     echo "Native inference library unexpectedly packaged in temporary-key Beta APK: $beta_apk" >&2
     return 1

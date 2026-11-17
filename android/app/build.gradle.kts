@@ -15,11 +15,7 @@ if (betaVersionCode != null && betaVersionCode !in 2..2_100_000_000) {
     error("-PsereaBetaVersionCode must be in 2..2100000000.")
 }
 val privateVersionCodeText = providers.gradleProperty("sereaPrivateBetaVersionCode").orNull
-val privateBetaVersionCode = privateVersionCodeText?.toIntOrNull() ?: if (privateVersionCodeText == null) 2 else
-    error("-PsereaPrivateBetaVersionCode must be an integer >= 2.")
-if (privateBetaVersionCode !in 2..2_100_000_000) {
-    error("-PsereaPrivateBetaVersionCode must be in 2..2100000000.")
-}
+val privateBetaVersionCode = privateVersionCodeText?.toIntOrNull()?.takeIf { it in 2..2_100_000_000 } ?: 2
 
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
 // Opt-in is local to the Owner's private Beta invocation. Missing input keeps OAuth compiled off.
@@ -275,7 +271,16 @@ fun registerUnsignedBetaGuard(taskName: String, versionCode: Int?) = tasks.regis
 }
 
 val validatePublicBetaUnsigned = registerUnsignedBetaGuard("validatePublicBetaUnsigned", betaVersionCode)
-val validatePrivateBetaUnsigned = registerUnsignedBetaGuard("validatePrivateBetaUnsigned", privateBetaVersionCode)
+val validatePrivateBetaUnsigned = tasks.register("validatePrivateBetaUnsigned") {
+    group = "verification"
+    outputs.upToDateWhen { false }
+    doLast {
+        val requestedPrivateVersionCode = privateVersionCodeText?.toIntOrNull()
+        if (requestedPrivateVersionCode == null || requestedPrivateVersionCode !in 2..2_100_000_000) {
+            error("Private Beta unsigned packaging requires -PsereaPrivateBetaVersionCode explicitly set to an integer in 2..2100000000.")
+        }
+    }
+}
 val publicBetaPackagingTasks = setOf("assembleBeta", "packageBeta", "bundleBeta")
 val privateBetaPackagingTasks = setOf("assemblePrivateBeta", "packagePrivateBeta", "bundlePrivateBeta")
 tasks.configureEach {

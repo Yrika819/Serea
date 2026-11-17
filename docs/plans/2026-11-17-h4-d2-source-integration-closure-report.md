@@ -10,7 +10,7 @@
 |---|---|
 | canonical main HEAD / Tree (2026-11-17 取得) | `317c601760ab7148afd979ee9ef092838d76a072` / `2017e9b15c09724459afe3f59c4740bb4a6c04fe` |
 | Branch Protection Required checks | `Linux fast checks`, `Linux stable full validation`, `Android Emulator Required Gate`, `Linux MSRV 1.89.0`（enforce_admins=true） |
-| 専用worktree | `/Users/yuta/.local/share/opencode/worktree/eb2ced/h4-d2-signing-source-closure` |
+| 専用worktree | `[local worktree path omitted]` |
 | 専用branch | `codex/h4-d2-signing-source-closure` |
 | Git identity | `yrika <143304522+Yrika819@users.noreply.github.com>`（既存承認済み設定と一致） |
 | 既存PR確認 | #244 は本PR。#243 はロードマップ文書Draft（非競合・未変更）。#242/#240/#237 等はマージ済み。#232/#239/#238 等は未統合で未変更 |
@@ -22,7 +22,7 @@
 - State: **OPEN / Draft**（Draft解除・Mergeせず）
 - PR HEAD (commit): `8c53bab33e5abb167f94a5d096fe9555b14a2232`
 - PR Tree: `2de9c134c7e976227c0f0821e9ec7528dc62d34d`
-- 既存dirty/untracked作業ツリー（`/Users/yuta/Desktop/Serea`）は reset/clean/stash せず保護。
+- 既存dirty/untracked作業ツリー（`[local worktree path omitted]`）は reset/clean/stash せず保護。
 
 ## 3. Owner判断の記録（AC-01）
 
@@ -37,9 +37,9 @@
 - build/CI: `.github/workflows/android.yml`, `android/app/build.gradle.kts`, `android/gradle.properties`, `tools/validate_docs.py`, `tools/verify_android_build_provenance.py`
 - docs: `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`, `2026-11-15-owner-production-signing-launch-runbook.md`, `2026-11-16-h4-d2-final-dynamic-acceptance-report.md`, `2026-11-16-h4-d2-final-recovery-closure-report.md`, `2026-11-16-h4-d2-signing-closure-report.md`, `2026-11-17-h4-d2-signing-final-closeout-report.md`, `2026-11-17-h4-d2-source-integration-closure-report.md`（本報告）
 
-除外: `.superpowers/`, `.local/`, ビルド出力, 個人Gradle設定, 鍵/PKCS12/Vault/状態ストア, 個人パス含有文書, 署名無関係のCalendar/Gmail/AI文書。
+除外: `.superpowers/`, `.local/`, ビルド出力, 個人Gradle設定, 鍵/PKCS12/Vault/状態ストア, その他の個人パス含有文書, 署名無関係のCalendar/Gmail/AI文書。本報告の初回公開版に個人パスが混入していたため、現行候補から除去し、この節で監査記録を訂正する。
 
-## 5. 最終ソースハッシュ（公開候補・主要）
+## 5. 旧公開候補のソースハッシュ（当時の検証snapshot。現行作業treeのhashではない）
 
 ```text
 a17b33860f2cda3a2cd8ea8b4ffcbed60b5999eec5d92b250a4adf820f715bce  tools/serea_signing.py
@@ -55,9 +55,11 @@ e587520bd6698bad26d626719f60325a7ad70485c0bb30c16ed4122945bd95fe  .github/workfl
 
 ## 6. 機密情報監査（AC-04）
 
-- 公開対象28件をオフライン走査。API key / Access Token / 認証情報 / PEM秘密鍵 / PKCS12 / 個人homeパス / ユーザー名 / メール / トークン様文字列: **0件**。
-- 検出パターンはすべて benign と分類: コンテンツSHA-256、GitHub Action SHAピン、base64様APKファイル名、getpass プロンプト文言（`passphrase:` ラベル）のみ。
-- 値そのものはログ・レポート・AIコンテキストへ出力していない。実際の秘密設定・正式資産は読取っていない。
+- 旧監査の「個人homeパス等 0件」は誤り。本報告の初回公開版（当時の公開候補30ファイル）には個人絶対パス2件が含まれる。旧監査では履歴2版・計4件と記録していたが、baseから現HEADまでの全報告履歴を再走査した集計は次項の3版・計6件である。
+- 修正後の公開候補31ファイル（PR差分30ファイルと回帰テスト1件）を再走査: 個人絶対パス0、秘密鍵・token・bearer・cloud key・Google access tokenの対象パターン0。credential-assignment heuristicの4件は `tools/test_personal_beta_identity.sh` 内の生成・一時テスト値として分類し、静的な実資格情報とは確認されなかった。
+- GitHub上でPRが公開アクセス可能であることを確認済み。baseから現HEADまでのPRブランチにある本報告の履歴3版を値非表示で再走査し、各版2件、計6件の個人作業場所パスを検出。対象にした秘密鍵・token等の秘密パターンは0件。現行候補からは除去済みだが、既公開コミット履歴には残り、通常の修正コミットでは消えない。
+- Ownerは2026-11-17の明示指示で、秘密鍵/token/認証情報が確認されていないことを条件に、既知の個人パスが公開履歴へ残るリスクを受容した。Force Push/rebase/旧PR削除は行わず、現在候補からの除去と履歴残存の明記を維持する。新規PRだけでは過去の公開履歴は除去されない。この承認は正式署名、Merge、Draft解除を含まない。
+- 今回の監査コマンドは値を表示せず、件数と分類だけを記録した。過去版に個人パスが掲載されていた事実は上記のとおりであり、秘密設定・正式資産は読取っていない。
 - Workflowの.new/変更差分（`.github/workflows/android.yml`）は既存CIへ署名unittestステップを追加するのみで、外部送信・秘密利用・権限拡大なし。
 
 ## 7. push前検証（AC-05）
@@ -114,11 +116,11 @@ Android 88/88 と実暗号化Vault証跡は過去工程の成功証跡を利用�
 | AC-01 Owner判断・機能凍結記録 | PASS | O-07 を Ledger へ記録。未承認項目を明記 |
 | AC-02 最新main/既存PR確認 | PASS | main `317c6017`、Required 4件、PR一覧取得済み |
 | AC-03 隔離worktree安全選定 | PASS | 専用worktree/branch、明示allowlist、`git add -A`禁止 |
-| AC-04 機密監査PASS | PASS | 公開28件スキャン、値出力なし |
+| AC-04 機密監査 | **PASS（履歴リスク受容を含む）** | 現行候補31件の個人パス/対象秘密パターン0。PRブランチ履歴の既知の個人パス開示はOwner明示受容済みで、除去したとの主張はしない |
 | AC-05 回帰・安全契約PASS | PASS | 100/100、py_compile、docs、diff --check |
 | AC-06 Draft PR作成 | PASS | #244（Draft維持） |
-| AC-07 同一SHA Required CI | **PARTIAL** | 初回SHAで3/4 success・GateはH-1/HOST_INFRA連鎖失敗。修正後SHAで再検証中 |
-| AC-08 独立レビューCritical/High 0 | **PARTIAL** | 初回はHigh 1（H-1）。修正後再レビュー待ち |
+| AC-07 同一SHA Required CI | **PARTIAL** | 修正前PR HEADでは4/4 SUCCESS。未commit候補のため修正後SHAのRequired CIはPush後に確認する |
+| AC-08 独立レビューCritical/High 0 | **PASS（独立レビュー）** | 今回の3ファイル候補レビューで未解決Critical/High 0。GitHub正式APPROVEDとは別で、正式レビュー0件 |
 | AC-09 ロードマップ案・3レーン準備 | PASS | 更新ドラフトとLane A/B/Cを準備 |
 | AC-10 成果物保護・権限境界 | PASS | 既存worktree無変更、禁止操作なし |
 
@@ -127,6 +129,16 @@ Android 88/88 と実暗号化Vault証跡は過去工程の成功証跡を利用�
 - 残存: 正式ホスト硬化・FileVault/SIP/OCLP、暗号化外部バックアップと独立保管、正式鍵生成、同一SHA Required CI完了、独立レビュー、Merge判断、Production有効化判断、実OAuth/実AI承認。
 - ロードマップ更新案: `docs/plans/2026-11-17-h4-d2-signing-source-closure-roadmap-update-draft.md` に準備済み。既存ロードマップの履歴を保持し「0.2 現在状態への同期 — 2026-11-17」を追加する方式。文書専用の後続PR向けで、署名PR #244 には混入させていない。既存PR #243 の変更なし。
 - 後続3レーン: Lane A 署名・リリース管理（正式ホスト／Production設計準備／鍵・バックアップ）、Lane B Google統合（Private-only/Primary-only契約確認／Calendar準備／Gmail Mockと権限整理）、Lane C AI統合（推論候補／Provider abstraction／データ分類・Egress・予算／Fake provider検証）。今回はB/Cの実装・実接続を行わない。
+
+## 11.2 H4-D2-Final blocker correction — final verification handoff
+
+- 対象: B-01公開文書の個人パス一般化・旧監査記述訂正、B-02 Private Beta versionCode契約の局所修正、関連するsource-contract回帰テスト1件のみ。
+- 作業状態: 専用worktreeに未commit差分として保持。PR #244の公開HEADは引き続き `7b461a461be9691825bbe8f02793030747f2fc58`、Draft/OPEN。Push/commitは実施していない。
+- B-02実装: Private variant構成には安全なversionCode fallbackを残し、Private unsigned artifact guardで元プロパティの存在・整数・範囲をtask実行時に検証。Public guard、signingConfig、署名CLI/Vault/Recoveryは変更していない。
+- B-02試験: source-contract test 2/2 PASS（実装前RED・修正後GREEN）。Gradle実動作で未指定/非整数/下限以下/上限超過を拒否。`assemblePrivateBeta`・`packagePrivateBeta`・`bundlePrivateBeta` と省略記法 `:app:aPB` でガード拒否を確認。明示42ではPrivate APK生成成功（Private applicationId、versionCode 42、versionName 0.1.0-demo、未署名、OAuth既定false、Production署名環境変数なし）。`assembleDebug` 成功、Private OAuth Enabled Fake JVM 10/10、Disabled 1/1、Debug unit 482/482。Public Beta APKもversionCode 42で生成し未署名を確認。Build Provenance 5/5 PASS。
+- Final候補監査: 公開候補31ファイル中、個人絶対パス0・対象秘密パターン0。Build Provenance 5/5 PASS。Docs validatorは`docs/`配下220 Markdownを検証しPASS（repository root走査はignored `.local/reviews` 内のローカルレビューリンクで失敗したため、公開文書範囲に限定して再実行）。最終編集後の`git diff --check`もPASS。
+- Terra独立レビューは文書のAC-04にOwner承認済みリスクを「判断待ち」とする不整合を指摘したため、受容済みの残留リスクと未完了の新SHA CIを分離して訂正。今回のレビューはGitHub正式APPROVEDではない。
+- 公開履歴に残る既知の個人作業場所パスはOwnerが明示受容済み（計6件/3報告履歴版）。秘密情報の検出はなし。通常Pushは他の必須検証ゲート通過後に限り実施し、Draft解除/Merge/正式署名は未承認。
 
 ## 12. 権限境界
 

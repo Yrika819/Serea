@@ -119,26 +119,26 @@ Android 88/88 と実暗号化Vault証跡は過去工程の成功証跡を利用�
 | AC-04 機密監査 | **PASS（履歴リスク受容を含む）** | 現行候補31件の個人パス/対象秘密パターン0。PRブランチ履歴の既知の個人パス開示はOwner明示受容済みで、除去したとの主張はしない |
 | AC-05 回帰・安全契約PASS | PASS | 100/100、py_compile、docs、diff --check |
 | AC-06 Draft PR作成 | PASS | #244（Draft維持） |
-| AC-07 同一SHA Required CI | **PARTIAL** | 修正前PR HEADでは4/4 SUCCESS。未commit候補のため修正後SHAのRequired CIはPush後に確認する |
+| AC-07 同一SHA Required CI | **PASS（b2eda43の検証snapshot）** | b2eda43でRequired CI 4/4 SUCCESS。後続のこの文書-only同期commitは別SHAとなるため、Merge判断前にそのSHAのRequired CIを再確認する |
 | AC-08 独立レビューCritical/High 0 | **PASS（独立レビュー）** | 今回の3ファイル候補レビューで未解決Critical/High 0。GitHub正式APPROVEDとは別で、正式レビュー0件 |
 | AC-09 ロードマップ案・3レーン準備 | PASS | 更新ドラフトとLane A/B/Cを準備 |
 | AC-10 成果物保護・権限境界 | PASS | 既存worktree無変更、禁止操作なし |
 
 ## 11. 残存Ownerゲート / ロードマップ更新案
 
-- 残存: 正式ホスト硬化・FileVault/SIP/OCLP、暗号化外部バックアップと独立保管、正式鍵生成、同一SHA Required CI完了、独立レビュー、Merge判断、Production有効化判断、実OAuth/実AI承認。
+- 残存Owner判断: 正式ホスト硬化・FileVault/SIP/OCLP、暗号化外部バックアップと独立保管、正式鍵生成、Merge/Draft解除、Production署名/配布、実OAuth/実AI承認。独立レビューとRequired CI 4/4はb2eda43の検証snapshotで完了。本報告の文書-only同期commitは新SHA検証を要する。
 - ロードマップ更新案: `docs/plans/2026-11-17-h4-d2-signing-source-closure-roadmap-update-draft.md` に準備済み。既存ロードマップの履歴を保持し「0.2 現在状態への同期 — 2026-11-17」を追加する方式。文書専用の後続PR向けで、署名PR #244 には混入させていない。既存PR #243 の変更なし。
 - 後続3レーン: Lane A 署名・リリース管理（正式ホスト／Production設計準備／鍵・バックアップ）、Lane B Google統合（Private-only/Primary-only契約確認／Calendar準備／Gmail Mockと権限整理）、Lane C AI統合（推論候補／Provider abstraction／データ分類・Egress・予算／Fake provider検証）。今回はB/Cの実装・実接続を行わない。
 
 ## 11.2 H4-D2-Final blocker correction — final verification handoff
 
 - 対象: B-01公開文書の個人パス一般化・旧監査記述訂正、B-02 Private Beta versionCode契約の局所修正、関連するsource-contract回帰テスト1件のみ。
-- 作業状態: 専用worktreeに未commit差分として保持。PR #244の公開HEADは引き続き `7b461a461be9691825bbe8f02793030747f2fc58`、Draft/OPEN。Push/commitは実施していない。
+- 作業状態: 3ファイルの限定候補を通常commit `b2eda43` として既存PR #244へpush済み。PRはOPEN/Draftを維持し、force push/rebase/mergeなし。本節はb2eda43の検証handoff snapshotであり、この文書-only同期自体は次の通常commitで別SHAとなる。
 - B-02実装: Private variant構成には安全なversionCode fallbackを残し、Private unsigned artifact guardで元プロパティの存在・整数・範囲をtask実行時に検証。Public guard、signingConfig、署名CLI/Vault/Recoveryは変更していない。
 - B-02試験: source-contract test 2/2 PASS（実装前RED・修正後GREEN）。Gradle実動作で未指定/非整数/下限以下/上限超過を拒否。`assemblePrivateBeta`・`packagePrivateBeta`・`bundlePrivateBeta` と省略記法 `:app:aPB` でガード拒否を確認。明示42ではPrivate APK生成成功（Private applicationId、versionCode 42、versionName 0.1.0-demo、未署名、OAuth既定false、Production署名環境変数なし）。`assembleDebug` 成功、Private OAuth Enabled Fake JVM 10/10、Disabled 1/1、Debug unit 482/482。Public Beta APKもversionCode 42で生成し未署名を確認。Build Provenance 5/5 PASS。
 - Final候補監査: 公開候補31ファイル中、個人絶対パス0・対象秘密パターン0。Build Provenance 5/5 PASS。Docs validatorは`docs/`配下220 Markdownを検証しPASS（repository root走査はignored `.local/reviews` 内のローカルレビューリンクで失敗したため、公開文書範囲に限定して再実行）。最終編集後の`git diff --check`もPASS。
-- Terra独立レビューは文書のAC-04にOwner承認済みリスクを「判断待ち」とする不整合を指摘したため、受容済みの残留リスクと未完了の新SHA CIを分離して訂正。今回のレビューはGitHub正式APPROVEDではない。
-- 公開履歴に残る既知の個人作業場所パスはOwnerが明示受容済み（計6件/3報告履歴版）。秘密情報の検出はなし。通常Pushは他の必須検証ゲート通過後に限り実施し、Draft解除/Merge/正式署名は未承認。
+- Terra最終独立レビューは文書のAC-04にあったOwner承認済みリスクの「判断待ち」不整合を指摘したため、受容済みの残留リスクとCI状態を区別して訂正。最終レビューの未解決Critical/Highは0。これはGitHub正式APPROVEDではない。
+- 公開履歴に残る既知の個人作業場所パスはOwnerが明示受容済み（計6件/3報告履歴版）。対象秘密情報パターンは現行候補/報告履歴監査で0。b2eda43への通常push済み。この文書-only同期後は新SHA Required CIを再確認する。Draft解除/Merge/正式署名は未承認。
 
 ## 12. 権限境界
 

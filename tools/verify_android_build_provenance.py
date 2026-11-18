@@ -101,7 +101,7 @@ def verify(args: argparse.Namespace) -> dict[str, str]:
         fail(path, "isolated_apk_path/package/sha256",
              f"isolated APK fields contain {len(actual_records)} records; expected exactly 6 in target/test order", api)
     for index, ((actual_key, actual_value), (expected_key, expected_value)) in enumerate(
-            zip(actual_records, expected_records, strict=True), start=1):
+            zip(actual_records, expected_records), start=1):
         if actual_key != expected_key:
             fail(path, actual_key, f"record {index} is out of order; expected {expected_key}", api)
         if expected_value and actual_value != expected_value:

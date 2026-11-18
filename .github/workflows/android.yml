@@ -204,6 +204,11 @@ jobs:
         run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - name: Test Android CI host preflight and APT fallback helpers
         run: python3 -m unittest tools.test_android_ci_host -v
+      - name: Test independent signing state and recovery CLI (portable core)
+        # These suites exercise portable signing-state logic. The CLI safety suite
+        # (tests.test_serea_signing_cli) asserts a macOS Temurin/JDK layout and is
+        # validated on the macOS runner / local host, not on ubuntu-24.04.
+        run: python3 -m unittest tests.test_serea_enrollment_authority tests.test_serea_release_ledger tests.test_serea_identity_registry tests.test_serea_signing_witness -v
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

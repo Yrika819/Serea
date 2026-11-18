@@ -127,8 +127,18 @@ for f in files:
             errors.append(f"{rel} broken link target: {target}")
             continue
         if frag and dest.suffix == ".md":
-            known = anchors.get(dest)
-            if known is not None and frag not in known:
+            line_fragment = re.fullmatch(r"L([1-9][0-9]*)", frag)
+            if line_fragment:
+                target_line = int(line_fragment.group(1))
+                try:
+                    line_exists = target_line <= len(dest.read_text(encoding="utf-8").splitlines())
+                except OSError:
+                    line_exists = False
+                valid_fragment = line_exists
+            else:
+                known = anchors.get(dest)
+                valid_fragment = known is None or frag in known
+            if not valid_fragment:
                 line_no = text[: m.start()].count("\n") + 1
                 errors.append(f"{rel}:{line_no} broken anchor: {target}")
 

@@ -13,6 +13,13 @@ This ledger collects approvals that must come from the Owner. Until approved, af
 | O-04 | Install and accept on the physical Pixel 7a | BLOCKED BY DEVICE AVAILABILITY / NOT_RUN | Pixel 7a must be made available and Owner must authorize installation/acceptance scope | Use disposable API 26/35 Emulator and CI evidence; do not request device data deletion or reset |
 | O-05 | Merge integration candidate into `main` | NOT_REQUESTED | Owner review of final same-HEAD Required, security, release and evidence packet | Keep all PRs Draft/open; never merge automatically |
 | O-06 | Final Personal Beta GO / release authorization | NOT_REQUESTED | Explicit Owner decision after Required CI, service acceptance, production identity, device acceptance and residual-risk review | Report GO-candidate or NO-GO only; do not distribute or claim release readiness |
+| O-07 | Accept conditional residual same-UID signing risk and operational conditions; freeze signing feature work | **APPROVED (2026-11-16 conversation)** — operational-risk acceptance only | Owner accepted: separation of development and formal signing environments; dedicated Owner-managed account; no AI agent, untrusted code or Gradle in the signing environment; no third-party access to signing assets or state stores; independent artifact verification before transfer; and no guarantee of full defense against an arbitrary same-UID attacker. This is NOT acceptance that the formal host conditions are met, and does NOT authorize formal key generation, Production signing, formal APK signing, Merge, distribution, real OAuth or real AI | Keep Production disabled; do not access formal assets or Keychain, generate formal keys, sign formal APKs, merge, distribute, or enable OAuth/AI. Feature work on signing stays frozen. |
+
+### O-07 scope note (added 2026-11-17)
+
+Owner approval of a **conditional residual risk** is not confirmation that the compensating operational conditions actually hold on any host. The formal signing host, FileVault/SIP/OCLP posture, encrypted independent backups/custody, formal identity generation and same-SHA CI remain separate Owner gates (O-03/O-05/O-06 plus the H4-D2 closeout report). No Production authority is implied by O-07.
+
+Signing feature work is frozen at the validated implementation recorded in `docs/plans/2026-11-17-h4-d2-signing-final-closeout-report.md`; subsequent resources are allocated to Calendar, Gmail and AI integration. See `docs/plans/2026-11-17-h4-d2-source-integration-closure-report.md` for the source-integration/CI closure.
 
 ## Current technical boundaries
 

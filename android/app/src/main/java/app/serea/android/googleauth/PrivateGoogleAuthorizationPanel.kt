@@ -127,7 +127,7 @@ internal fun PrivateGoogleAuthorizationPanel(
         if (state.status == PrivateGoogleAuthStatus.AUTHORIZED && onOpenCalendar != null) {
             OutlinedButton(
                 onClick = { viewModel.openPrimaryCalendar()?.let(onOpenCalendar) },
-                modifier = Modifier.testTag("private_google_open_fake_calendar"),
+                modifier = Modifier.testTag("private_google_open_calendar"),
             ) {
                 Text(if (viewModel.opensGoogleProvider) "Google CalendarのPrimary予定を表示" else "架空のPrimary予定を表示")
             }

@@ -89,6 +89,7 @@ internal class PrivateGoogleAuthorizationViewModel(
             selectedAccount = Account(accountName, GOOGLE_ACCOUNT_TYPE),
         )
     },
+    private val calendarGatewayForTests: GoogleAuthorizationGateway? = null,
     calendarCompositionFactory: () -> PrivateGoogleCalendarComposition = { PrivateGoogleCalendarComposition() },
 ) : ViewModel() {
     private val appContext = context?.applicationContext
@@ -458,7 +459,8 @@ internal class PrivateGoogleAuthorizationViewModel(
     /** Opens the authorized primary provider; product HTTP remains disabled. */
     fun openPrimaryCalendar(): CalendarProviderSession? {
         if (mutableState.value.status != PrivateGoogleAuthStatus.AUTHORIZED) return null
-        val gateway: GoogleAuthorizationGateway = if (realOAuthEnabled) realGateway ?: return null else fakeGateway
+        val gateway: GoogleAuthorizationGateway = calendarGatewayForTests
+            ?: if (realOAuthEnabled) realGateway ?: return null else fakeGateway
         closeCalendarSession()
         return try {
             calendarComposition.openAuthorizedPrimary(gateway).also {

@@ -103,6 +103,9 @@ internal data class CalendarAgendaItemsSnapshot(
 internal val CalendarAgendaItemsKey =
     SemanticsPropertyKey<CalendarAgendaItemsSnapshot>("CalendarAgendaItems")
 
+internal fun isDemoProviderWhileLoading(providerKind: app.serea.android.calendar.CalendarProviderKind?): Boolean =
+    providerKind != app.serea.android.calendar.CalendarProviderKind.GOOGLE_READ_ONLY
+
 /**
  * Independent navigation entry point for read-only Calendar. The composition root supplies
  * session-bound ports; this screen never creates authorization or network adapters.
@@ -212,7 +215,9 @@ fun CalendarAgendaScreen(
         is CalendarAgendaUiState.Agenda -> (state as CalendarAgendaUiState.Agenda).mockOnly
         is CalendarAgendaUiState.EventDetail -> (state as CalendarAgendaUiState.EventDetail).mockOnly
         is CalendarAgendaUiState.Failure -> (state as CalendarAgendaUiState.Failure).mockOnly
-        is CalendarAgendaUiState.Loading -> true
+        is CalendarAgendaUiState.Loading -> isDemoProviderWhileLoading(
+            (provider as? app.serea.android.calendar.CalendarProviderSession)?.kind,
+        )
     }
     var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
     LaunchedEffect(state.query, state.selectedCalendarId) {
@@ -274,6 +279,14 @@ fun CalendarAgendaScreen(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = { if (inDetail) leaveDetail() else onBack() }) {
                     Text("戻る")
+                }
+                if (state is CalendarAgendaUiState.Agenda) {
+                    TextButton(
+                        onClick = controller::refreshAgenda,
+                        modifier = Modifier.testTag("calendar_agenda_refresh"),
+                    ) {
+                        Text("更新")
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 Text(

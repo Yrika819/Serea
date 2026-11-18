@@ -16,6 +16,13 @@ internal class PrivateGoogleCalendarComposition(
     private val baseUrl: HttpUrl? = null,
 ) : AutoCloseable {
     val opensGoogleProvider = privateVariantEnabled && googleHttpEnabledByOwner
+
+    init {
+        check(!opensGoogleProvider || BuildConfig.BUILD_TYPE == "isolated") {
+            "Google Calendar HTTP test composition is restricted to the isolated variant."
+        }
+    }
+
     private val sessions = CalendarProviderSessions(
         fakeProvider = { FakeCalendarProvider.Fixtures.privatePrimaryProvider() },
         googleHttpEnabledByOwner = opensGoogleProvider,

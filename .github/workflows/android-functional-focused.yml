@@ -84,6 +84,45 @@ jobs:
           --tests '*LocalModelChatAdapterTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
+      - name: Run isolated-only Private Primary composition contract tests
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon :app:testIsolatedUnitTest
+          --tests 'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
+      - name: Verify exactly nine isolated composition tests passed
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          results = pathlib.Path('android/app/build/test-results/testIsolatedUnitTest')
+          cases = [
+              case
+              for path in sorted(results.glob('TEST-*.xml'))
+              for case in ET.parse(path).findall('./testcase')
+          ]
+          assert len(cases) == 9, f'Expected 9 isolated composition cases, got {len(cases)}'
+          assert {case.get('classname') for case in cases} == {
+              'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
+          }
+          expected = {
+              'productDefaultsOpenOnlyPrimaryFakeForBothGatewayModes',
+              'privateGateAndHttpGateAreIndependent',
+              'explicitTestGatesSelectGoogleAndUseExactPrimaryScope',
+              'liveRejectsMockMissingBlankAndDisabledSessionsBeforeStatusTokenOrHttp',
+              'expiredScopeFailsReadablyWithoutTokenOrHttp',
+              'googleTransportFailureIsNotReplacedWithFakeAndCloseInvalidatesSession',
+              'missingRequiredScopeFailsReadablyBeforeTokenOrHttp',
+              'staleSelectedSessionCannotAcquireTokenOrSendHttp',
+              'sessionChangingDuringStatusIsRejectedBeforeConstruction',
+          }
+          assert {case.get('name') for case in cases} == expected
+          assert all(
+              not any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped'))
+              for case in cases
+          )
+          print('PASS: exact isolated Private Primary composition JUnit identities (9); failures=0 errors=0 skips=0')
+          PY
       - name: Upload focused unit evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

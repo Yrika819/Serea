@@ -179,6 +179,11 @@ internal class CalendarAgendaUiController(
         loadCurrentRoute()
     }
 
+    fun refreshAgenda() {
+        if (mutableState.value is CalendarAgendaUiState.Loading || detailKey != null) return
+        loadAgenda()
+    }
+
     fun close() {
         requestGeneration++
         activeJob?.cancel()
@@ -474,7 +479,7 @@ object CalendarAgendaJapaneseText {
         CalendarAgendaFailure.PERMISSION_REQUIRED -> "予定を表示する権限が必要です。"
         CalendarAgendaFailure.DENIED -> "予定を表示する権限がありません。"
         CalendarAgendaFailure.POLICY_DENIED -> "組織またはサービスのポリシーにより予定を表示できません。"
-        CalendarAgendaFailure.EXPIRED -> "予定を表示する権限の有効期限が切れています。"
+        CalendarAgendaFailure.EXPIRED -> "予定を表示する認可の有効期限が切れています。再認可が必要です。"
         CalendarAgendaFailure.MISSING_SCOPE -> "予定の閲覧に必要な権限が不足しています。"
         CalendarAgendaFailure.TIME_ZONE_UNKNOWN -> "予定のタイムゾーンを確認できないため表示できません。"
         CalendarAgendaFailure.TIMEOUT -> "読み込みがタイムアウトしました。再試行してください。"

@@ -78,32 +78,28 @@ class PrivateGoogleAuthorizationViewModelTest {
     }
 
     @Test
-    fun injectedLiveCompositionReplacesAndClosesSessions() = runTest(mainDispatcher.dispatcher) {
-        okhttp3.mockwebserver.MockWebServer().use { server ->
-            server.start()
-            val gateway = RevokeFixtureGateway()
-            val viewModel = PrivateGoogleAuthorizationViewModel(
-                context = null, enabledInThisVariant = true, realOAuthEnabled = true,
-                realGatewayFactory = { _, _ -> gateway },
-                calendarCompositionFactory = {
-                    PrivateGoogleCalendarComposition(true, true, okhttp3.OkHttpClient(), server.url("/calendar/v3/"))
-                },
-            )
-            assertNull(viewModel.openPrimaryCalendar())
-            assertTrue(viewModel.opensGoogleProvider)
-            selectFixtureAccount(viewModel)
-            viewModel.requestPrimaryCalendarConsent()
-            advanceUntilIdle()
-            val first = checkNotNull(viewModel.openPrimaryCalendar())
-            assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, first.kind)
-            assertTrue(first.primaryCalendarOnly)
-            val second = checkNotNull(viewModel.openPrimaryCalendar())
-            assertTrue(runCatching { first.status() }.isFailure)
-            viewModel.disconnectCalendarInApp()
-            assertNull(viewModel.calendarSession.value)
-            assertTrue(runCatching { second.status() }.isFailure)
-            assertEquals(0, server.requestCount)
-        }
+    fun authorizedDebugCompositionRemainsFakeAndClosesSessions() = runTest(mainDispatcher.dispatcher) {
+        val gateway = RevokeFixtureGateway()
+        val viewModel = PrivateGoogleAuthorizationViewModel(
+            context = null,
+            enabledInThisVariant = true,
+            realOAuthEnabled = true,
+            realGatewayFactory = { _, _ -> gateway },
+        )
+        assertNull(viewModel.openPrimaryCalendar())
+        assertFalse(viewModel.opensGoogleProvider)
+        selectFixtureAccount(viewModel)
+        viewModel.requestPrimaryCalendarConsent()
+        advanceUntilIdle()
+
+        val first = checkNotNull(viewModel.openPrimaryCalendar())
+        assertEquals(CalendarProviderKind.FAKE, first.kind)
+        assertTrue(first.primaryCalendarOnly)
+        val second = checkNotNull(viewModel.openPrimaryCalendar())
+        assertTrue(runCatching { first.status() }.isFailure)
+        viewModel.disconnectCalendarInApp()
+        assertNull(viewModel.calendarSession.value)
+        assertTrue(runCatching { second.status() }.isFailure)
     }
 
     @Test

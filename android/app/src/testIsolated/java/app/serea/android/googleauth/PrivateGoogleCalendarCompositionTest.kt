@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
+import java.util.concurrent.TimeUnit
 
 class PrivateGoogleCalendarCompositionTest {
     private class Gateway(
@@ -76,9 +77,11 @@ class PrivateGoogleCalendarCompositionTest {
                 assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, session.kind)
                 assertTrue(session.primaryCalendarOnly)
                 assertTrue(session.listEventsPage(CalendarId("primary"), range(), null).events.isEmpty())
+                assertFalse(gateway.statusScopes.isEmpty())
                 assertTrue(gateway.statusScopes.all { it == PrivatePrimaryCalendarScopeContract.scopes })
                 assertEquals(listOf(PrivatePrimaryCalendarScopeContract.scopes), gateway.tokenScopes)
-                assertTrue(server.takeRequest().path!!.startsWith("/calendar/v3/calendars/primary/events"))
+                val request = checkNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+                assertTrue(request.path!!.startsWith("/calendar/v3/calendars/primary/events"))
             }
         }
     }

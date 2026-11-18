@@ -1,7 +1,7 @@
 # Private Primary Google Calendar Provider Wiring — Design
 
-**Status:** Owner-approved implementation direction; implementation is not yet approved for real Google access.  
-**Baseline:** `Yrika819/Serea` main `077246aeab909928fb57316f1f3aefc6be69c0b3`, Tree `0548dba87b34d7b10e5d6c5b591442156abc7b08`.  
+**Status:** Owner-approved implementation direction; implementation is not yet approved for real Google access.
+**Baseline:** `Yrika819/Serea` main `077246aeab909928fb57316f1f3aefc6be69c0b3`, Tree `0548dba87b34d7b10e5d6c5b591442156abc7b08`.
 **Scope:** H4-D1/D2 Private authorization-to-provider wiring and deterministic MockWebServer validation only.
 
 ## Goal

@@ -6,6 +6,7 @@ import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarReadFailure
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
@@ -63,6 +64,27 @@ class PrivateGoogleCalendarCompositionTest {
                 }
             }
             assertEquals(0, server.requestCount)
+        }
+    }
+
+    @Test fun liveCompositionRejectsMissingOrProductionEndpointBeforeAuthorization() {
+        listOf<okhttp3.HttpUrl?>(
+            null,
+            "https://www.googleapis.com/calendar/v3/".toHttpUrl(),
+        ).forEach { endpoint ->
+            val gateway = Gateway()
+            val failure = runCatching {
+                PrivateGoogleCalendarComposition(
+                    privateVariantEnabled = true,
+                    googleHttpEnabledByOwner = true,
+                    client = OkHttpClient(),
+                    baseUrl = endpoint,
+                ).use { it.openAuthorizedPrimary(gateway) }
+            }.exceptionOrNull()
+
+            assertTrue("Live composition must require an explicit loopback endpoint", failure is IllegalStateException)
+            assertTrue(gateway.statusScopes.isEmpty())
+            assertTrue(gateway.tokenScopes.isEmpty())
         }
     }
 
@@ -173,6 +195,32 @@ class PrivateGoogleCalendarCompositionTest {
             }
             PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use {
                 assertTrue(runCatching { it.openAuthorizedPrimary(changing) }.isFailure)
+                assertTrue(gateway.tokenScopes.isEmpty())
+                assertEquals(0, server.requestCount)
+            }
+        }
+    }
+
+    @Test fun sessionChangingDuringAdapterConstructionIsRejectedBeforeTokenOrHttp() {
+        MockWebServer().use { server ->
+            server.start()
+            val gateway = Gateway()
+            var sessionReads = 0
+            val switchingGateway = object : GoogleAuthorizationGateway by gateway {
+                override val authorizationSessionId: String?
+                    get() = if (++sessionReads >= 4) "replacement-synthetic-session" else "synthetic-session"
+            }
+
+            PrivateGoogleCalendarComposition(
+                privateVariantEnabled = true,
+                googleHttpEnabledByOwner = true,
+                client = OkHttpClient(),
+                baseUrl = server.url("/calendar/v3/"),
+            ).use { composition ->
+                val failure = runCatching { composition.openAuthorizedPrimary(switchingGateway) }.exceptionOrNull()
+
+                assertTrue("A session switch during adapter construction must fail closed", failure is IllegalStateException)
+                assertEquals(1, gateway.statusScopes.size)
                 assertTrue(gateway.tokenScopes.isEmpty())
                 assertEquals(0, server.requestCount)
             }

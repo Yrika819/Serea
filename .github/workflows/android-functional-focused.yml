@@ -84,12 +84,32 @@ jobs:
           --tests '*LocalModelChatAdapterTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
+      - name: Run Public Beta HTTP gate regression (unit tests only)
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon :app:testBetaUnitTest
+          --tests 'app.serea.android.googleauth.BetaCalendarHttpGateTest'
+      - name: Verify exactly one Public Beta HTTP gate test passed
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          result = pathlib.Path('android/app/build/test-results/testBetaUnitTest/TEST-app.serea.android.googleauth.BetaCalendarHttpGateTest.xml')
+          root = ET.parse(result).getroot()
+          cases = root.findall('./testcase')
+          assert root.get('tests') == '1' and len(cases) == 1, root.attrib
+          assert root.get('failures', '0') == '0' and root.get('errors', '0') == '0' and root.get('skipped', '0') == '0', root.attrib
+          assert cases[0].get('classname') == 'app.serea.android.googleauth.BetaCalendarHttpGateTest'
+          assert cases[0].get('name') == 'publicBetaCannotEnablePrivateGoogleCalendarHttp'
+          print('PASS: exactly one Public Beta HTTP gate test; failures=0 errors=0 skips=0')
+          PY
       - name: Run isolated-only Private Primary composition contract tests
         working-directory: android
         run: >-
           ./gradlew --no-daemon :app:testIsolatedUnitTest
           --tests 'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
-      - name: Verify exactly nine isolated composition tests passed
+      - name: Verify exactly eleven isolated composition tests passed
         run: |
           python3 - <<'PY'
           import pathlib
@@ -101,7 +121,7 @@ jobs:
               for path in sorted(results.glob('TEST-*.xml'))
               for case in ET.parse(path).findall('./testcase')
           ]
-          assert len(cases) == 9, f'Expected 9 isolated composition cases, got {len(cases)}'
+          assert len(cases) == 11, f'Expected 11 isolated composition cases, got {len(cases)}'
           assert {case.get('classname') for case in cases} == {
               'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
           }
@@ -115,13 +135,15 @@ jobs:
               'missingRequiredScopeFailsReadablyBeforeTokenOrHttp',
               'staleSelectedSessionCannotAcquireTokenOrSendHttp',
               'sessionChangingDuringStatusIsRejectedBeforeConstruction',
+              'liveCompositionRejectsMissingOrProductionEndpointBeforeAuthorization',
+              'sessionChangingDuringAdapterConstructionIsRejectedBeforeTokenOrHttp',
           }
           assert {case.get('name') for case in cases} == expected
           assert all(
               not any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped'))
               for case in cases
           )
-          print('PASS: exact isolated Private Primary composition JUnit identities (9); failures=0 errors=0 skips=0')
+          print('PASS: exact isolated Private Primary composition JUnit identities (11); failures=0 errors=0 skips=0')
           PY
       - name: Upload focused unit evidence
         if: always()
@@ -130,7 +152,10 @@ jobs:
           name: serea-functional-provider-unit
           if-no-files-found: error
           retention-days: 14
-          path: android/app/build/test-results/testDebugUnitTest/
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/test-results/testBetaUnitTest/
+            android/app/build/test-results/testIsolatedUnitTest/
 
   api26-focused:
     name: API 26 focused Fake providers, local Chat and Tasks E2E

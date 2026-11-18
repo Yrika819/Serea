@@ -99,7 +99,7 @@ class PrivateGoogleCalendarLoopbackUiTest {
             }
             return TokenSupplyResult.Available(
                 AccessTokenLease(
-                    token = "synthetic-calendar-token",
+                    token = "synth-token",
                     grantedScopes = scopes,
                     expiresAtElapsedRealtimeMillis = null,
                     authorizationSessionId = authorizationSessionId,
@@ -134,7 +134,7 @@ class PrivateGoogleCalendarLoopbackUiTest {
             """{"timeZone":"America/New_York","items":[{"id":"synthetic-detail","summary":"Synthetic detail event","description":"Synthetic detail text","start":{"dateTime":"2026-11-18T16:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2026-11-18T16:30:00-05:00","timeZone":"America/New_York"}}]}""",
         ))
         server.enqueue(jsonResponse(
-            """{"id":"synthetic-detail","summary":"Synthetic detail event","description":"Synthetic detail text","start":{"dateTime":"2026-11-18T16:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2026-11-18T16:30:00-05:00","timeZone":"America/New_York"}}""",
+            """{"id":"synthetic-timed","summary":"Synthetic timed event","description":"Synthetic detail text","start":{"dateTime":"2026-11-18T14:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2026-11-18T14:30:00-05:00","timeZone":"America/New_York"}}""",
         ))
         server.enqueue(jsonResponse("""{"timeZone":"America/New_York","items":[]}"""))
         renderPrivatePanel(vm)
@@ -203,7 +203,7 @@ class PrivateGoogleCalendarLoopbackUiTest {
         )
         assertEquals(listOf(null, "page-2", null, null), requests.map { it.requestUrl!!.queryParameter("pageToken") })
         requests.forEach { request ->
-            assertEquals("Bearer synthetic-calendar-token", request.getHeader("Authorization"))
+            assertEquals("Bearer synth-token", request.getHeader("Authorization"))
             assertFalse(request.requestLine.contains("calendarList", ignoreCase = true))
             assertFalse(request.requestLine.contains("gmail", ignoreCase = true))
             assertTrue(request.requestUrl!!.host in setOf("localhost", "127.0.0.1"))

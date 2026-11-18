@@ -21,6 +21,13 @@ internal class PrivateGoogleCalendarComposition(
         check(!opensGoogleProvider || BuildConfig.BUILD_TYPE == "isolated") {
             "Google Calendar HTTP test composition is restricted to the isolated variant."
         }
+        check(!opensGoogleProvider || baseUrl?.let {
+            it.host in LOOPBACK_TEST_HOSTS && it.scheme in setOf("http", "https") &&
+                it.encodedPath == "/calendar/v3/" && it.encodedUsername.isEmpty() &&
+                it.encodedPassword.isEmpty() && it.encodedQuery == null && it.encodedFragment == null
+        } == true) {
+            "Google Calendar test composition requires an explicit loopback MockWebServer URL."
+        }
     }
 
     private val sessions = CalendarProviderSessions(
@@ -56,6 +63,12 @@ internal class PrivateGoogleCalendarComposition(
         } else {
             sessions.openPrimaryFake()
         }
+        if (opensGoogleProvider &&
+            (gateway.authorizationSessionId != sessionId || !gateway.isEnabledInApp(GoogleFeature.CALENDAR))
+        ) {
+            session.close()
+            error("Primary Google Calendar authorization session changed while opening.")
+        }
         if (!session.primaryCalendarOnly ||
             session.kind != if (opensGoogleProvider) CalendarProviderKind.GOOGLE_READ_ONLY else CalendarProviderKind.FAKE
         ) {
@@ -72,4 +85,8 @@ internal class PrivateGoogleCalendarComposition(
     }
 
     override fun close() = closeCurrent()
+
+    private companion object {
+        val LOOPBACK_TEST_HOSTS = setOf("127.0.0.1", "localhost", "[::1]")
+    }
 }

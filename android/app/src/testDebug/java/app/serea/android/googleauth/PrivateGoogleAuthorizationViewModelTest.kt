@@ -89,6 +89,7 @@ class PrivateGoogleAuthorizationViewModelTest {
     fun publicDebugBuildDoesNotExposePrivateGoogleAuthorizationUi() {
         assertFalse(BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED)
         assertFalse(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
+        assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
     }
 
     @Test

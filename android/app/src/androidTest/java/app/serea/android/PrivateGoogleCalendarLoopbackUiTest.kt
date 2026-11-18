@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -173,8 +174,9 @@ class PrivateGoogleCalendarLoopbackUiTest {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty() &&
                 server.requestCount == 3
         }
-        compose.onNodeWithTag("calendar_event_detail_item_4").performScrollTo()
-        compose.onNodeWithText("America/New_York", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("calendar_event_detail_item_4")
+            .performScrollTo()
+            .assertTextContains("America/New_York")
         compose.onNodeWithText("表示タイムゾーン", substring = true).assertIsDisplayed()
         compose.onNodeWithText("2026年11月18日(水) 14:00 -05:00", substring = true).assertIsDisplayed()
 

@@ -1,30 +1,62 @@
 package app.serea.android.googleauth
 
+import app.serea.android.BuildConfig
+import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarProviderSession
 import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.FakeCalendarProvider
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
 
-/** Private authorization preview composition. Live Google HTTP is intentionally not selectable. */
-internal class PrivateGoogleCalendarComposition : AutoCloseable {
+/** Product builds remain Fake; isolated tests can explicitly select the primary Google path. */
+internal class PrivateGoogleCalendarComposition(
+    privateVariantEnabled: Boolean = BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED,
+    googleHttpEnabledByOwner: Boolean = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
+    private val client: OkHttpClient = OkHttpClient(),
+    private val baseUrl: HttpUrl? = null,
+) : AutoCloseable {
+    val opensGoogleProvider = privateVariantEnabled && googleHttpEnabledByOwner
     private val sessions = CalendarProviderSessions(
         fakeProvider = { FakeCalendarProvider.Fixtures.privatePrimaryProvider() },
-        googleHttpEnabledByOwner = false,
+        googleHttpEnabledByOwner = opensGoogleProvider,
     )
     private var current: CalendarProviderSession? = null
 
-    fun openAuthorizedPreview(gateway: GoogleAuthorizationGateway): CalendarProviderSession {
-        check(gateway.status(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY))
-            .permits(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY))) {
+    fun openAuthorizedPrimary(gateway: GoogleAuthorizationGateway): CalendarProviderSession {
+        val sessionId = if (opensGoogleProvider) {
+            check(gateway.mode == GoogleAuthorizationMode.PLAY_SERVICES) {
+                "Primary Google Calendar requires Play Services authorization."
+            }
+            check(!gateway.authorizationSessionId.isNullOrBlank() && gateway.isEnabledInApp(GoogleFeature.CALENDAR)) {
+                "Primary Google Calendar authorization session is not active."
+            }
+            gateway.authorizationSessionId
+        } else null
+        val scopes = PrivatePrimaryCalendarScopeContract.scopes
+        val status = gateway.status(scopes)
+        check(status.failure == null && status.permits(scopes)) {
             "Primary Calendar read-only authorization is not active."
         }
-        current?.close()
-        return sessions.openPrimaryFake().also { session ->
-            check(session.kind == app.serea.android.calendar.CalendarProviderKind.FAKE) {
-                "Private preview must stay on the Fake Calendar provider."
+        if (opensGoogleProvider) {
+            check(!sessionId.isNullOrBlank() && gateway.authorizationSessionId == sessionId &&
+                gateway.isEnabledInApp(GoogleFeature.CALENDAR)) {
+                "Primary Google Calendar authorization session is no longer active."
             }
-            check(session.primaryCalendarOnly) { "Private preview must be primary-only." }
-            current = session
         }
+        closeCurrent()
+        val session = if (opensGoogleProvider) {
+            sessions.openPrimaryGoogleReadOnly(gateway, client, baseUrl)
+        } else {
+            sessions.openPrimaryFake()
+        }
+        if (!session.primaryCalendarOnly ||
+            session.kind != if (opensGoogleProvider) CalendarProviderKind.GOOGLE_READ_ONLY else CalendarProviderKind.FAKE
+        ) {
+            session.close()
+            error("Primary Calendar provider selection was rejected.")
+        }
+        current = session
+        return session
     }
 
     fun closeCurrent() {

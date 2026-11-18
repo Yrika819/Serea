@@ -1,5 +1,6 @@
 package app.serea.android
 
+import android.security.NetworkSecurityPolicy
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
@@ -111,6 +112,13 @@ class PrivateGoogleCalendarLoopbackUiTest {
 
     @Test
     fun privateAuthorizationUiReadsPagedPrimaryEventsDetailsRefreshAndClosesSession() {
+        val networkPolicy = NetworkSecurityPolicy.getInstance()
+        assertTrue(networkPolicy.isCleartextTrafficPermitted("localhost"))
+        assertTrue(networkPolicy.isCleartextTrafficPermitted("127.0.0.1"))
+        assertTrue(networkPolicy.isCleartextTrafficPermitted("::1"))
+        assertFalse(networkPolicy.isCleartextTrafficPermitted("example.com"))
+        assertTrue(server.url("/").isLoopbackHost())
+
         val gateway = SyntheticPrimaryGateway()
         val vm = PrivateGoogleAuthorizationViewModel(
             context = null,
@@ -206,7 +214,7 @@ class PrivateGoogleCalendarLoopbackUiTest {
             assertEquals("Bearer synth-token", request.getHeader("Authorization"))
             assertFalse(request.requestLine.contains("calendarList", ignoreCase = true))
             assertFalse(request.requestLine.contains("gmail", ignoreCase = true))
-            assertTrue(request.requestUrl!!.host in setOf("localhost", "127.0.0.1"))
+            assertTrue(request.requestUrl!!.host in setOf("localhost", "127.0.0.1", "::1"))
             assertTrue(request.requestUrl!!.isLoopbackHost())
         }
         assertTrue(gateway.statusScopeRequests.isNotEmpty())
@@ -366,5 +374,5 @@ class PrivateGoogleCalendarLoopbackUiTest {
         .setHeader("Content-Type", "application/json; charset=utf-8")
         .setBody(body)
 
-    private fun okhttp3.HttpUrl.isLoopbackHost(): Boolean = host == "localhost" || host == "127.0.0.1"
+    private fun okhttp3.HttpUrl.isLoopbackHost(): Boolean = host in setOf("localhost", "127.0.0.1", "::1")
 }

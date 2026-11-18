@@ -109,7 +109,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon :app:testIsolatedUnitTest
           --tests 'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
-      - name: Verify exactly eleven isolated composition tests passed
+      - name: Verify exactly twelve isolated composition tests passed
         run: |
           python3 - <<'PY'
           import pathlib
@@ -121,7 +121,7 @@ jobs:
               for path in sorted(results.glob('TEST-*.xml'))
               for case in ET.parse(path).findall('./testcase')
           ]
-          assert len(cases) == 11, f'Expected 11 isolated composition cases, got {len(cases)}'
+          assert len(cases) == 12, f'Expected 12 isolated composition cases, got {len(cases)}'
           assert {case.get('classname') for case in cases} == {
               'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
           }
@@ -137,13 +137,14 @@ jobs:
               'sessionChangingDuringStatusIsRejectedBeforeConstruction',
               'liveCompositionRejectsMissingOrProductionEndpointBeforeAuthorization',
               'sessionChangingDuringAdapterConstructionIsRejectedBeforeTokenOrHttp',
+              'canonicalIpv6LoopbackEndpointIsAccepted',
           }
           assert {case.get('name') for case in cases} == expected
           assert all(
               not any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped'))
               for case in cases
           )
-          print('PASS: exact isolated Private Primary composition JUnit identities (11); failures=0 errors=0 skips=0')
+          print('PASS: exact isolated Private Primary composition JUnit identities (12); failures=0 errors=0 skips=0')
           PY
       - name: Upload focused unit evidence
         if: always()

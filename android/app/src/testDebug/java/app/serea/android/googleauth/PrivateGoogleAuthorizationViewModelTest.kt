@@ -145,6 +145,20 @@ class PrivateGoogleAuthorizationViewModelTest {
     }
 
     @Test
+    fun debugBuildRejectsSyntheticCalendarGatewayInjection() {
+        val failure = runCatching {
+            PrivateGoogleAuthorizationViewModel(
+                context = null,
+                enabledInThisVariant = true,
+                realOAuthEnabled = false,
+                calendarGatewayForTests = RevokeFixtureGateway(),
+            )
+        }.exceptionOrNull()
+
+        assertTrue("Synthetic gateways are test-only and must be rejected in debug", failure is IllegalStateException)
+    }
+
+    @Test
     fun googleGrantRevokeRequiresExplicitConfirmationAndStopsLocalSessionFirst() =
         runTest(mainDispatcher.dispatcher) {
             val gateway = RevokeFixtureGateway()

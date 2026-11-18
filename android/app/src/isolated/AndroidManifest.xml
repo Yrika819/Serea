@@ -2,7 +2,8 @@
     <!-- This signature permission is declared by the disposable Test IME APK. Keep the
          request isolated to this instrumentation target; debug and beta variants do not use it. -->
     <uses-permission android:name="app.serea.android.r25testime.permission.DIAGNOSTICS" />
-    <application>
+    <application
+        android:networkSecurityConfig="@xml/loopback_network_security_config">
         <activity
             android:name=".FakeGoogleProcessDeathHarnessActivity"
             android:exported="true"

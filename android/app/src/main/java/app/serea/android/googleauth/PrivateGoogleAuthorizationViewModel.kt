@@ -92,6 +92,12 @@ internal class PrivateGoogleAuthorizationViewModel(
     private val calendarGatewayForTests: GoogleAuthorizationGateway? = null,
     calendarCompositionFactory: () -> PrivateGoogleCalendarComposition = { PrivateGoogleCalendarComposition() },
 ) : ViewModel() {
+    init {
+        check(calendarGatewayForTests == null || BuildConfig.BUILD_TYPE == "isolated") {
+            "Synthetic Calendar authorization gateways are restricted to the isolated variant."
+        }
+    }
+
     private val appContext = context?.applicationContext
     private val calendarComposition = calendarCompositionFactory()
     val opensGoogleProvider: Boolean get() = calendarComposition.opensGoogleProvider

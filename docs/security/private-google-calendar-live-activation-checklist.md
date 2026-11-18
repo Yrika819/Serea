@@ -12,6 +12,7 @@ This checklist is not an authorization. Each Owner decision below is separate; p
 - Access tokens remain short-lived and in memory. Do not log tokens, account names, event titles/descriptions/locations, or authorization codes; do not retain them in CI artifacts.
 - Google-origin Calendar data is never sent automatically to Cloud AI. Preserve the Egress-before-Usage-before-Dispatch boundary and require any future handoff to follow its separate, explicit local-consent flow.
 - The MockWebServer URL and synthetic Gateway are test dependencies only. Explicit Live test composition overrides are accepted only in the `isolated` test variant and rejected by every product variant. They must never be supplied by a product ViewModel factory or exposed as a user, build-property, environment-variable, or intent switch.
+- Only the `isolated` manifest permits cleartext to `localhost`, `127.0.0.1`, and `::1` for MockWebServer; its base policy and every product manifest deny cleartext traffic.
 - No Gmail scope, CalendarList scope, Calendar write scope, production signing, APK distribution, Pixel operation, or account reset is authorized by this checklist.
 
 ## Owner-only prerequisites before any future activation

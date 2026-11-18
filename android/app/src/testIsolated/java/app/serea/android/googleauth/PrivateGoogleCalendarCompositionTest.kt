@@ -227,5 +227,17 @@ class PrivateGoogleCalendarCompositionTest {
         }
     }
 
+    @Test fun canonicalIpv6LoopbackEndpointIsAccepted() {
+        val endpoint = "http://[::1]:8080/calendar/v3/".toHttpUrl()
+        PrivateGoogleCalendarComposition(
+            privateVariantEnabled = true,
+            googleHttpEnabledByOwner = true,
+            client = OkHttpClient(),
+            baseUrl = endpoint,
+        ).use { composition ->
+            assertTrue(composition.opensGoogleProvider)
+        }
+    }
+
     private fun range() = CalendarDateRange(Instant.parse("2026-11-18T00:00:00Z"), Instant.parse("2026-11-19T00:00:00Z"))
 }

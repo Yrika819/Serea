@@ -87,6 +87,6 @@ internal class PrivateGoogleCalendarComposition(
     override fun close() = closeCurrent()
 
     private companion object {
-        val LOOPBACK_TEST_HOSTS = setOf("127.0.0.1", "localhost", "[::1]")
+        val LOOPBACK_TEST_HOSTS = setOf("127.0.0.1", "localhost", "::1")
     }
 }

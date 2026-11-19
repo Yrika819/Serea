@@ -414,10 +414,7 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             sdk = Path(temporary)
             evidence = self._install(sdk / "host-preflight.txt", sdk)
             evidence.write_text(
-                "apt_sources_sha256_before=sources-same\n"
-                "official_mirror_probe=PASS\n"
-                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
-                "official_mirror_probe_cause=HOST_READY\n",
+                "\n".join(host.verdict_record_lines("preflight", "PASS", "sources-same", "all official InRelease endpoints verified", "HOST_READY")) + "\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
@@ -442,23 +439,24 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary) / "host-preflight.txt"
             evidence.write_text(
-                "apt_sources_sha256_before=sources-a\n"
-                "official_mirror_probe=PASS\n"
-                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
-                "official_mirror_probe_cause=HOST_READY\n",
+                "\n".join(host.verdict_record_lines("preflight", "PASS", "sources-a", "all official InRelease endpoints verified", "HOST_READY")) + "\n",
                 encoding="utf-8",
             )
-            with patch.object(host, "apt_source_snapshot", return_value="sources-a"):
-                self.assertEqual(host.reusable_mirror_probe(evidence, "sources-a"), (True, "all official InRelease endpoints verified", "HOST_READY"))
-                self.assertIsNone(host.reusable_mirror_probe(evidence, "sources-b"))
-            with patch.object(host, "apt_source_snapshot", return_value="sources-b"):
-                self.assertIsNone(host.reusable_mirror_probe(evidence, "sources-b"))
+            self.assertEqual(host.reusable_mirror_probe(evidence, "sources-a"), (True, "all official InRelease endpoints verified", "HOST_READY"))
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "sources-b"))
             evidence.write_text(
-                "apt_sources_sha256_before=sources-a\nofficial_mirror_probe=FAIL\nofficial_mirror_probe_reason=transient\n",
+                "\n".join(host.verdict_record_lines("preflight", "FAIL", "sources-a", "transient", "NETWORK_FAILURE")) + "\n",
                 encoding="utf-8",
             )
-            with patch.object(host, "apt_source_snapshot", return_value="sources-a"):
-                self.assertIsNone(host.reusable_mirror_probe(evidence, "sources-a"))
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "sources-a"))
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-a\nofficial_mirror_probe=PASS\nofficial_mirror_probe_reason=all official InRelease endpoints verified\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(
+                host.reusable_mirror_probe(evidence, "sources-a"),
+                "legacy header-only evidence must never authorize APT; it has to be re-diagnosed",
+            )
 
     def test_recheck_policy_is_bounded(self) -> None:
         self.assertEqual(host.MIRROR_PROBE_ATTEMPTS, 3)
@@ -501,7 +499,9 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
-                host, "apt_source_snapshot", side_effect=["hash-before", "hash-after"]
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-before")
+            ), patch.object(
+                host, "apt_source_snapshot", side_effect=["hash-before", "hash-before", "hash-after"]
             ), patch.object(
                 host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
             ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
@@ -516,6 +516,18 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             self.assertIn("result=HOST_INFRA", content)
             self.assertIn("system APT source configuration changed", content)
             self.assertNotIn("result=HOST_READY", content)
+
+
+EXPECTED_REDIRECT_BANS = (
+    "Acquire::http::AllowRedirect=false",
+    "Acquire::https::AllowRedirect=false",
+    "Acquire::http::archive.ubuntu.com::AllowRedirect=false",
+    "Acquire::https::archive.ubuntu.com::AllowRedirect=false",
+    "Acquire::http::security.ubuntu.com::AllowRedirect=false",
+    "Acquire::https::security.ubuntu.com::AllowRedirect=false",
+    "Acquire::http::ports.ubuntu.com::AllowRedirect=false",
+    "Acquire::https::ports.ubuntu.com::AllowRedirect=false",
+)
 
 
 def fake_clock_after_first_call():
@@ -587,6 +599,67 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
         handlers = [type(handler).__name__ for handler in host.OPENER.handlers]
         self.assertIn("NoRedirectHandler", handlers)
         self.assertNotIn("HTTPRedirectHandler", handlers, "a follow-redirect handler must not be installed")
+
+    def test_apt_commands_carry_every_redirect_ban(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
+            ), patch.object(
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
+            ), patch.object(
+                host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
+            ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "official_fallback", return_value=(sdk / "sources.list", ["-o", "source-options"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=[subprocess.CompletedProcess([], 0, "ok"), subprocess.CompletedProcess([], 0, "ok")]
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 0)
+            for call in apt.call_args_list:
+                for option in EXPECTED_REDIRECT_BANS:
+                    self.assertIn(option, call.args[0], f"{option} must reach every apt invocation")
+
+    def test_redirect_probe_makes_exactly_one_transport_call(self) -> None:
+        import urllib.error
+
+        redirect = urllib.error.HTTPError("https://archive.ubuntu.com/x", 302, "Found", {}, None)
+        with patch.object(host.OPENER, "open", side_effect=redirect) as opened:
+            ok, detail = host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease")
+        self.assertFalse(ok)
+        self.assertIn("REDIRECT_REJECTED", detail)
+        self.assertEqual(opened.call_count, 1, "a redirect must not trigger a second request")
+
+    def test_runtime_refuses_a_verdict_bound_to_a_stale_source_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
+            ), patch.object(
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-from-verdict")
+            ), patch.object(
+                host, "apt_source_snapshot", return_value="hash-at-handoff"
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run when the verdict hash is stale")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertIn("is not bound to the current APT source state", content)
 
     def test_probe_failure_classes_tolerates_legacy_detail_lists(self) -> None:
         self.assertEqual(host.probe_failure_classes(["official_https x: UNREACHABLE (DNS)"]), [])
@@ -765,6 +838,8 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
+            ), patch.object(
                 host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
             ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(
                 host, "package_installed", return_value=True
@@ -786,14 +861,11 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             qemu.chmod(0o755)
             evidence = sdk / "host-preflight.txt"
             evidence.write_text(
-                "apt_sources_sha256_before=hash-one\n"
-                "official_mirror_probe=PASS\n"
-                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
-                "official_mirror_probe_cause=HOST_READY\n",
+                "\n".join(host.verdict_record_lines("preflight", "PASS", "hash-one", "all official InRelease endpoints verified", "HOST_READY")) + "\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
-                host, "apt_source_snapshot", side_effect=["hash-one", "hash-two"]
+                host, "apt_source_snapshot", side_effect=["hash-one", "hash-one", "hash-two"]
             ), patch.object(
                 host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
             ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(

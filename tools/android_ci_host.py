@@ -338,7 +338,8 @@ def _parse_bound_records(lines: Sequence[str]) -> list[dict[str, str]]:
         if current is None:
             continue
         if line.startswith("official_mirror_probe_record_end="):
-            if {"probe", "hash", "reason"} <= current.keys():
+            kind = line.split("=", 1)[1].strip()
+            if kind and kind == current.get("kind") and {"probe", "hash", "reason"} <= current.keys():
                 records.append(current)
             current = None
             continue
@@ -418,18 +419,24 @@ def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
 
 
 def reusable_mirror_probe(path: Path, current_hash: str) -> tuple[bool, str, str] | None:
-    """Reuse only a recorded PASS; a recorded FAIL must be re-diagnosed before APT.
+    """Reuse only a bound PASS record; anything else must be re-diagnosed before APT.
 
     A preflight FAIL can be a transient DNS/TLS failure that cleared minutes later, so
-    replaying it as a terminal verdict would fail closed for the wrong reason.
-
-    ``current_hash`` is the caller's single source snapshot, so the same value becomes
-    the runtime baseline and any later source change is detected against it.
+    replaying it as a terminal verdict would fail closed for the wrong reason. Legacy
+    header-only evidence is never reusable either: it predates the redirect refusal
+    and cannot prove which endpoint produced the verdict.
     """
-    record = recorded_probe_record(path)
-    if record is None or record[3] != current_hash or not record[0]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
         return None
-    return record[0], record[1], record[2]
+    records = _parse_bound_records(lines)
+    if not records:
+        return None
+    record = records[-1]
+    if record["probe"] != "PASS" or record["hash"] != current_hash:
+        return None
+    return True, record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE")
 
 
 def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[bool, str, str]:
@@ -447,12 +454,13 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
     deadline = MONOTONIC() + MIRROR_PROBE_DEADLINE_SECONDS
     for attempt in range(1, MIRROR_PROBE_ATTEMPTS + 1):
         remaining = deadline - MONOTONIC()
-        if attempt > 1 and remaining <= 0:
+        if remaining <= 0:
             append(
                 path,
                 "\n".join((
                     "official_mirror_recheck_deadline_exceeded=true",
                     f"official_mirror_recheck_deadline_seconds={MIRROR_PROBE_DEADLINE_SECONDS}",
+                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; total is bounded by the deadline plus at most one in-flight attempt",
                     "official_mirror_recheck_exhausted=true",
                 )),
             )
@@ -707,8 +715,17 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             f"APT not attempted: {mirror_probe[1]}",
             cause=mirror_probe[2],
         )
-    original_sources_hash = source_hash_before
-    append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}")
+    verdict = recorded_probe_record(path)
+    current_sources_hash = apt_source_snapshot()
+    if verdict is None or not verdict[0] or verdict[3] != current_sources_hash:
+        return record_failure(
+            path,
+            "HOST_INFRA",
+            "official mirror verdict is not bound to the current APT source state",
+            cause="NETWORK_FAILURE",
+        )
+    original_sources_hash = verdict[3]
+    append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}\napt_sources_sha256_at_handoff={current_sources_hash}")
     try:
         source_file, source_options = official_fallback(path, api, runner)
     except RuntimeError as error:

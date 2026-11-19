@@ -199,16 +199,23 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
    - every verdict is written as one immutable record
      (`official_mirror_probe_record_start=` .. `record_end=`) whose bound
      `official_mirror_probe_apt_sources_sha256=` is taken **before** its probe.
-     Fields are first-wins, only a terminated record counts, and once any bound
-     record exists the legacy header form is ignored, so an orphan or
-     header-less verdict can never inherit another source state;
+     Fields are first-wins, only a terminated record whose end kind matches its
+     start kind counts, and reuse requires such a record: legacy
+     header-only evidence is never reusable because it predates the redirect
+     refusal and cannot prove which endpoint produced the verdict;
    - a source change detected across a recheck probe
-     (`official_mirror_recheck_source_changed_during_probe=true`) fails closed;
+     (`official_mirror_recheck_source_changed_during_probe=true`) fails closed,
+     and the runtime re-checks at the APT handoff that the verdict's bound hash
+     still equals the current source state
+     (`apt_sources_sha256_at_handoff=`; a stale verdict is `HOST_INFRA`);
    - a probe that only completes after the deadline cannot be recorded as
-     `PASS`; each endpoint gets `remaining/3` as its own timeout so three
-     sequential endpoints fit the remaining budget
-     (`official_mirror_recheck_https_timeout_seconds=`), and the retry wait is
-     clamped so it cannot sleep past the deadline;
+     `PASS`; **no probe work is started after the deadline**, each endpoint gets
+     `remaining/3` as its own timeout so three sequential endpoints fit the
+     remaining budget (`official_mirror_recheck_https_timeout_seconds=`), and the
+     retry wait is clamped so it cannot sleep past the deadline. The honest bound
+     is therefore `MIRROR_PROBE_DEADLINE_SECONDS` plus at most one in-flight
+     attempt, recorded as
+     `official_mirror_recheck_deadline_scope=`;
    - malformed HTTP responses are classified instead of escaping the recheck.
 
 ### 5.1 Unchanged safety properties
@@ -248,10 +255,10 @@ apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU
 
 ## 7. Regression tests
 
-`tools/test_android_ci_host.py`: 51 cases (the 19 pre-existing cases retained;
+`tools/test_android_ci_host.py`: 54 cases (the 19 pre-existing cases retained;
 the only body changes are the pinned `APT_TIMEOUT_SECONDS == 45` becoming an
 asserted 45..180 bound and a `SLEEP` injection in the pre-existing unreachable-
-mirror test; 32 cases added):
+mirror test; 35 cases added):
 
 | Requirement | Test |
 | --- | --- |
@@ -274,7 +281,10 @@ mirror test; 32 cases added):
 | Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected`, `test_source_change_after_cache_validation_is_detected`, `test_recheck_source_change_during_probe_fails_closed`, `test_verdict_block_is_bound_to_one_complete_record`, `test_incomplete_verdict_block_is_not_reused` |
 | Redirect refused before following | `test_redirect_is_refused_before_it_is_followed`, `test_redirect_handler_refuses_instead_of_following`, `test_redirect_away_from_the_official_endpoint_is_rejected`, `test_apt_refuses_redirects_for_every_official_host` |
 | Only a terminated bound record is reusable | `test_only_a_complete_bound_record_is_reusable`, `test_orphan_hash_cannot_rebind_an_accepted_record`, `test_bound_records_disable_the_legacy_fallback`, `test_preflight_writes_a_self_contained_bound_record` |
-| Deadline applies to in-flight PASS | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline` |
+| Deadline applies to in-flight PASS and to probe start | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline`, `test_recheck_stops_at_the_wall_clock_deadline` |
+| Legacy evidence never authorizes APT | `test_reused_probe_requires_unchanged_apt_sources` (legacy branch) |
+| Verdict hash must survive to the APT handoff | `test_runtime_refuses_a_verdict_bound_to_a_stale_source_hash` |
+| Redirect ban reaches the real apt command line | `test_apt_commands_carry_every_redirect_ban`, `test_redirect_probe_makes_exactly_one_transport_call` |
 | Legacy detail lists tolerated | `test_probe_failure_classes_tolerates_legacy_detail_lists` |
 
 Pre-existing coverage retained: resolved QEMU libraries skip APT
@@ -395,7 +405,20 @@ judged bypassable in three respects, each fixed with a regression test:
 | The clamp was computed once and the retry wait could exceed the deadline | per-endpoint timeout is `remaining/3`, the wait is clamped to the deadline, and a late `PASS` is rejected |
 | APT host-specific `Acquire::*::<host>::AllowRedirect` can outrank the generic key | redirect refusal is passed for each official host as well as generically |
 
-Low findings after round 3: the ordinary install-success branch reports on the
+Round 4 (head `f31b4dec`, tree `e82601d585`): 3 Medium, 0 Low. Two round-3
+controls were still bypassable in evidence-only paths, each fixed:
+
+| Round-4 finding | Resolution |
+| --- | --- |
+| The legacy fallback could read inside an unfinished record, and legacy evidence (written before the redirect refusal) could authorize APT | reuse now requires a terminated, kind-matched bound record; legacy header-only evidence always forces re-diagnosis |
+| Probe work (plan/DNS) could start with the budget already consumed | no attempt starts once the deadline has passed, and the deadline scope is recorded explicitly |
+| The verdict hash could diverge from the runtime baseline before APT | the runtime verifies the verdict's bound hash against a fresh snapshot at the APT handoff |
+
+Two in-memory mutations were used to confirm the new tests are load-bearing
+(dropping every APT redirect flag, and restoring redirect-following in the
+handler): both are now detected.
+
+Low findings after round 4: the ordinary install-success branch reports on the
 loader result while dpkg state is recorded separately (accepted: loader
 resolution is the gating property); the non-Required Real IME diagnostic rejects
 this change through its pre-existing scope guard (documented in 8.1); one

@@ -887,37 +887,92 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             self.assertIn("result=HOST_INFRA", content)
             self.assertNotIn("result=HOST_READY", content)
 
-    def test_verdict_block_is_bound_to_one_complete_record(self) -> None:
+    def test_only_a_complete_bound_record_is_reusable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary) / "host-preflight.txt"
-            # A complete recheck verdict for hash B, then a preflight-style verdict block
-            # appended afterwards. The trailing block must not inherit B.
+
+            def record(probe: str, bound, close: bool = True) -> str:
+                out = ["official_mirror_probe_record_start=recheck", f"official_mirror_probe={probe}"]
+                if bound is not None:
+                    out.append(f"official_mirror_probe_apt_sources_sha256={bound}")
+                out.append("official_mirror_probe_reason=all official InRelease endpoints verified")
+                out.append("official_mirror_probe_cause=HOST_READY")
+                if close:
+                    out.append("official_mirror_probe_record_end=recheck")
+                return "\n".join(out) + "\n"
+
+            evidence.write_text(record("PASS", "hash-b") + record("PASS", "hash-c"), encoding="utf-8")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-b"), "an older bound record must not authorize reuse")
+            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-c")[0], True)
+
+            evidence.write_text(record("PASS", "hash-b") + record("PASS", "hash-c", close=False), encoding="utf-8")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "an unterminated record is not a verdict")
+
+            evidence.write_text(record("PASS", None), encoding="utf-8")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "a record without a bound hash is not reusable")
+
+            evidence.write_text(record("FAIL", "hash-c"), encoding="utf-8")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "a FAIL record is never reused")
+
+    def test_orphan_hash_cannot_rebind_an_accepted_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
             evidence.write_text(
-                "apt_sources_sha256_before=hash-c\n"
+                "official_mirror_probe_record_start=recheck\n"
                 "official_mirror_probe=PASS\n"
                 "official_mirror_probe_apt_sources_sha256=hash-b\n"
                 "official_mirror_probe_reason=all official InRelease endpoints verified\n"
                 "official_mirror_probe_cause=HOST_READY\n"
-                "official_mirror_probe=PASS\n"
-                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
-                "official_mirror_probe_cause=HOST_READY\n",
+                "official_mirror_probe_apt_sources_sha256=hash-d\n"
+                "official_mirror_probe_record_end=recheck\n",
                 encoding="utf-8",
             )
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-b"))
-            with patch.object(host, "apt_source_snapshot", return_value="hash-c"):
-                self.assertEqual(host.reusable_mirror_probe(evidence, "hash-c")[0], True)
+            self.assertEqual(host.recorded_probe_record(evidence)[3], "hash-b", "the first bound hash must win")
+            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-b")[0], True)
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-d"))
 
-    def test_incomplete_verdict_block_is_not_reused(self) -> None:
+    def test_bound_records_disable_the_legacy_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary) / "host-preflight.txt"
             evidence.write_text(
-                "apt_sources_sha256_before=hash-c\n"
+                "apt_sources_sha256_before=hash-a\n"
                 "official_mirror_probe=PASS\n"
-                "official_mirror_probe_apt_sources_sha256=hash-c\n",
+                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
+                "official_mirror_probe_cause=HOST_READY\n"
+                "official_mirror_probe_record_start=recheck\n"
+                "official_mirror_probe=FAIL\n"
+                "official_mirror_probe_apt_sources_sha256=hash-a\n"
+                "official_mirror_probe_reason=unavailable\n"
+                "official_mirror_probe_cause=NETWORK_FAILURE\n"
+                "official_mirror_probe_record_end=recheck\n",
                 encoding="utf-8",
             )
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"))
-            self.assertIsNone(host.recorded_mirror_probe(evidence))
+            self.assertIsNone(
+                host.reusable_mirror_probe(evidence, "hash-a"),
+                "once a bound record exists, a header-less legacy verdict must not authorize reuse",
+            )
+
+    def test_preflight_writes_a_self_contained_bound_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            with patch.object(host, "source_hosts", return_value=["archive.ubuntu.com"]), patch.object(
+                host, "resolve_host", return_value="192.0.2.1"
+            ), patch.object(
+                host,
+                "probe_official_mirrors",
+                return_value=(True, "noble", "amd64", ["source"], ["official_https x: REACHABLE (HTTP 206; TLS verification enabled)", "official_https_failure_classes=none"]),
+            ), patch.object(host, "apt_source_snapshot", return_value="hash-preflight"), patch.object(
+                host, "package_state", return_value="NOT_INSTALLED"
+            ), patch.object(host, "command", return_value=subprocess.CompletedProcess([], 0, "")), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ):
+                self.assertEqual(host.preflight(evidence, "probe"), 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official_mirror_probe_record_start=preflight", content)
+            self.assertIn("official_mirror_probe_apt_sources_sha256=hash-preflight", content)
+            self.assertIn("official_mirror_probe_record_end=preflight", content)
+            with patch.object(host, "apt_source_snapshot", return_value="hash-preflight"):
+                self.assertEqual(host.reusable_mirror_probe(evidence, "hash-preflight")[0], True)
 
     def test_in_flight_probe_budget_is_capped_by_the_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -935,6 +990,8 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 ["official_https x: UNREACHABLE (TIMEOUT; timed out)", "official_https_failure_classes=TIMEOUT"],
             )
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "MIRROR_PROBE_DEADLINE_SECONDS", 9
+            ), patch.object(
                 host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
             ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
                 host, "probe_official_mirrors", return_value=failing
@@ -944,8 +1001,13 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 host, "apt_invocation", side_effect=AssertionError("APT must not run")
             ):
                 self.assertEqual(host.install_runtime(evidence, "35"), 1)
-            self.assertTrue(probe.call_args.kwargs.get("https_timeout"))
+            self.assertEqual(
+                probe.call_args.kwargs["https_timeout"],
+                3,
+                "each endpoint must get remaining/3, not the full 10 s, so one round fits the deadline",
+            )
             self.assertLessEqual(probe.call_args.kwargs["https_timeout"], host.HTTPS_TIMEOUT_SECONDS)
+            self.assertIn("official_mirror_recheck_https_timeout_seconds=3", evidence.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

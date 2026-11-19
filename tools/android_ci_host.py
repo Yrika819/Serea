@@ -58,8 +58,21 @@ APT_OPTIONS = (
 )
 # Index fetch warnings must fail the update instead of continuing with partial indexes.
 APT_UPDATE_STRICT_OPTIONS = ("-o", "APT::Update::Error-Mode=any")
-# Never follow a mirror redirect to another host; official sources only.
-APT_REDIRECT_OPTIONS = ("-o", "Acquire::http::AllowRedirect=false", "-o", "Acquire::https::AllowRedirect=false")
+# Never follow a mirror redirect to another host; official sources only. The
+# generic keys are repeated per official host because APT resolves host-specific
+# Acquire settings before the generic ones.
+OFFICIAL_SOURCE_HOSTS = ("archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com")
+APT_REDIRECT_OPTIONS = tuple(
+    ["-o", "Acquire::http::AllowRedirect=false", "-o", "Acquire::https::AllowRedirect=false"]
+    + [
+        option
+        for host in OFFICIAL_SOURCE_HOSTS
+        for option in (
+            "-o", f"Acquire::http::{host}::AllowRedirect=false",
+            "-o", f"Acquire::https::{host}::AllowRedirect=false",
+        )
+    ]
+)
 NETWORK_FAILURE_MARKERS = (
     "temporary failure resolving",
     "could not resolve",
@@ -310,45 +323,90 @@ def probe_failure_classes(details: Sequence[str]) -> list[str]:
     return []
 
 
-def recorded_probe_record(path: Path) -> tuple[bool, str, str, str | None] | None:
-    """Parse the last *complete* verdict block and the source hash it belongs to.
+def _parse_bound_records(lines: Sequence[str]) -> list[dict[str, str]]:
+    """Parse only complete ``record_start``/``record_end`` verdict records.
 
-    A verdict block starts at ``official_mirror_probe=`` and is only accepted once
-    its ``official_mirror_probe_reason=`` line has been written, so a partially
-    written verdict cannot be read as a completed one. A block carrying its own bound source hash is never paired with
-    the preflight hash of a different source state.
+    Fields are first-wins, so a later orphan hash line can never rebind an
+    accepted verdict, and a record without an end marker is not a verdict at all.
+    """
+    records: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in lines:
+        if line.startswith("official_mirror_probe_record_start="):
+            current = {"kind": line.split("=", 1)[1]}
+            continue
+        if current is None:
+            continue
+        if line.startswith("official_mirror_probe_record_end="):
+            if {"probe", "hash", "reason"} <= current.keys():
+                records.append(current)
+            current = None
+            continue
+        for field, key in (
+            ("official_mirror_probe=", "probe"),
+            ("official_mirror_probe_apt_sources_sha256=", "hash"),
+            ("official_mirror_probe_reason=", "reason"),
+            ("official_mirror_probe_cause=", "cause"),
+        ):
+            if line.startswith(field):
+                current.setdefault(key, line.split("=", 1)[1])
+                break
+    return records
+
+
+def _parse_legacy_records(lines: Sequence[str]) -> list[dict[str, str]]:
+    """Parse the pre-record-marker form: header, then probe/reason[/cause] adjacent."""
+    records: list[dict[str, str]] = []
+    preflight_hash: str | None = None
+    for index, line in enumerate(lines):
+        if line.startswith("apt_sources_sha256_before="):
+            preflight_hash = line.split("=", 1)[1]
+            continue
+        if not line.startswith("official_mirror_probe=") or preflight_hash is None:
+            continue
+        reason_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if not reason_line.startswith("official_mirror_probe_reason="):
+            continue
+        cause_line = lines[index + 2] if index + 2 < len(lines) else ""
+        records.append({
+            "kind": "legacy",
+            "probe": line.split("=", 1)[1],
+            "hash": preflight_hash,
+            "reason": reason_line.split("=", 1)[1],
+            "cause": cause_line.split("=", 1)[1] if cause_line.startswith("official_mirror_probe_cause=") else "NETWORK_FAILURE",
+        })
+    return records
+
+
+def recorded_probe_record(path: Path) -> tuple[bool, str, str, str | None] | None:
+    """Return the last usable verdict and the source hash it is bound to.
+
+    Once any bound record exists the legacy header form is ignored, so a
+    header-less verdict can never inherit an unrelated source state.
     """
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
-    blocks: list[dict[str, str]] = []
-    current: dict[str, str] | None = None
-    preflight_hash: str | None = None
-    for line in lines:
-        if line.startswith("apt_sources_sha256_before="):
-            preflight_hash = line.split("=", 1)[1]
-        if line.startswith("official_mirror_probe="):
-            current = {"probe": line.split("=", 1)[1]}
-            continue
-        if current is None:
-            continue
-        if line.startswith("official_mirror_probe_apt_sources_sha256="):
-            current["bound"] = line.split("=", 1)[1]
-        elif line.startswith("official_mirror_probe_reason="):
-            current["reason"] = line.split("=", 1)[1]
-            current["preflight"] = preflight_hash or ""
-            blocks.append(current)
-        elif line.startswith("official_mirror_probe_cause=") and current.get("reason") is not None:
-            current["cause"] = line.split("=", 1)[1]
-            current = None
-    if not blocks:
+    records = _parse_bound_records(lines) or _parse_legacy_records(lines)
+    if not records:
         return None
-    block = blocks[-1]
-    if block["probe"] not in ("PASS", "FAIL"):
+    record = records[-1]
+    if record["probe"] not in ("PASS", "FAIL"):
         return None
-    resolved_hash = block.get("bound") or block.get("preflight") or None
-    return block["probe"] == "PASS", block.get("reason", "no probe reason recorded"), block.get("cause", "NETWORK_FAILURE"), resolved_hash
+    return record["probe"] == "PASS", record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE"), record["hash"]
+
+
+def verdict_record_lines(kind: str, probe: str, source_hash: str, reason: str, cause: str) -> list[str]:
+    """Emit one immutable, self-contained verdict record."""
+    return [
+        f"official_mirror_probe_record_start={kind}",
+        f"official_mirror_probe={'PASS' if probe == 'PASS' else 'FAIL'}",
+        f"official_mirror_probe_apt_sources_sha256={source_hash}",
+        f"official_mirror_probe_reason={reason}",
+        f"official_mirror_probe_cause={cause}",
+        f"official_mirror_probe_record_end={kind}",
+    ]
 
 
 def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
@@ -400,7 +458,8 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
             )
             return False, reason, cause
         source_hash_before_probe = apt_source_snapshot()
-        https_timeout = max(1, min(HTTPS_TIMEOUT_SECONDS, int(remaining))) if remaining > 0 else 1
+        # Three sequential endpoints must together fit the remaining budget.
+        https_timeout = max(1, min(HTTPS_TIMEOUT_SECONDS, int(remaining) // 3)) if remaining > 0 else 1
         try:
             ok, _release, _architecture, _sources, details = probe_official_mirrors(runner, https_timeout=https_timeout)
             if ok:
@@ -437,10 +496,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
                 f"official_mirror_recheck_source_changed_during_probe={'true' if source_changed else 'false'}",
                 f"official_mirror_recheck_https_timeout_seconds={https_timeout}",
-                "official_mirror_probe=" + ("PASS" if ok else "FAIL"),
-                f"official_mirror_probe_apt_sources_sha256={source_hash_before_probe}",
-                f"official_mirror_probe_reason={reason}",
-                f"official_mirror_probe_cause={cause}",
+                *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause),
             )),
         )
         if source_changed:
@@ -455,8 +511,12 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
             # Unsupported OS/architecture/keyring is deterministic; retrying cannot help.
             return False, reason, cause
         if attempt < MIRROR_PROBE_ATTEMPTS:
-            append(path, f"official_mirror_recheck_wait_seconds={MIRROR_PROBE_RETRY_DELAY_SECONDS}")
-            SLEEP(MIRROR_PROBE_RETRY_DELAY_SECONDS)
+            wait_seconds = min(MIRROR_PROBE_RETRY_DELAY_SECONDS, max(0.0, deadline - MONOTONIC()))
+            if wait_seconds <= 0:
+                append(path, "official_mirror_recheck_deadline_exceeded=true\nofficial_mirror_recheck_exhausted=true")
+                return False, reason, cause
+            append(path, f"official_mirror_recheck_wait_seconds={wait_seconds}")
+            SLEEP(wait_seconds)
     append(path, "official_mirror_recheck_exhausted=true")
     return False, reason, cause
 
@@ -518,19 +578,27 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         dns_results[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
         lines.append(f"{host}: {dns_results[host]}")
     lines.append("official_ubuntu_mirror_https:")
+    probe_source_hash = apt_source_snapshot()
     try:
         mirrors_ok, release, architecture, _sources, details = probe_official_mirrors(runner, dns_results)
         lines.extend((f"fallback_release={release}", f"fallback_architecture={architecture}"))
         lines.extend(details)
-        lines.append(f"official_mirror_probe={'PASS' if mirrors_ok else 'FAIL'}")
-        probe_reason = "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
-        lines.append(f"official_mirror_probe_reason={probe_reason}")
-        lines.append(f"official_mirror_probe_cause={'HOST_READY' if mirrors_ok else 'NETWORK_FAILURE'}")
+        lines.extend(verdict_record_lines(
+            "preflight",
+            "PASS" if mirrors_ok else "FAIL",
+            probe_source_hash,
+            "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable",
+            "HOST_READY" if mirrors_ok else "NETWORK_FAILURE",
+        ))
     except RuntimeError as error:
         lines.append(f"fallback_plan=UNAVAILABLE ({error})")
-        lines.append("official_mirror_probe=FAIL")
-        lines.append(f"official_mirror_probe_reason=official source plan unavailable: {error}")
-        lines.append("official_mirror_probe_cause=DEPENDENCY_FAILURE")
+        lines.extend(verdict_record_lines(
+            "preflight",
+            "FAIL",
+            probe_source_hash,
+            f"official source plan unavailable: {error}",
+            "DEPENDENCY_FAILURE",
+        ))
     lines.append(f"libpulse0_package={package_state(runner)}")
     ldconfig = command(("ldconfig", "-p"), timeout=10, runner=runner)
     lines.append("ldconfig_pulse_entries:")

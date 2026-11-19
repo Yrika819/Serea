@@ -186,23 +186,29 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
    both the attempt budget and the wall-clock deadline are asserted by unit
    tests, so no time limit becomes unlimited.
 5. Independent-review hardening (each with a regression test):
-   - redirects are refused **before** they are followed (`NoRedirectHandler`),
-     so no probe can contact another host, and a 3xx or a final URL that is not
-     the requested official endpoint is `REDIRECT_REJECTED`;
-   - both APT commands run with `Acquire::http::AllowRedirect=false` and
-     `Acquire::https::AllowRedirect=false`, so APT cannot follow a cross-host
-     mirror redirect either;
+   - redirects are refused **before** they are followed (`NoRedirectHandler`,
+     asserted on the installed handler), so no probe can contact another host,
+     and a 3xx or a final URL that is not the requested official endpoint is
+     `REDIRECT_REJECTED`;
+   - both APT commands disable redirects for the generic keys **and** for each
+     official host (`Acquire::http|
+     https::<host>::AllowRedirect=false`), because APT resolves host-specific
+     `Acquire` settings before the generic ones;
    - `apt-get update` runs with `APT::Update::Error-Mode=any` so a partial index
      fetch cannot continue to install;
-   - `reusable_mirror_probe()` takes the caller's single source snapshot, each
-     recheck verdict writes `official_mirror_probe_apt_sources_sha256=` **taken
-     before** its probe, and only a completed verdict block is parsed, so a
-     verdict is never paired with a hash from a different source state;
+   - every verdict is written as one immutable record
+     (`official_mirror_probe_record_start=` .. `record_end=`) whose bound
+     `official_mirror_probe_apt_sources_sha256=` is taken **before** its probe.
+     Fields are first-wins, only a terminated record counts, and once any bound
+     record exists the legacy header form is ignored, so an orphan or
+     header-less verdict can never inherit another source state;
    - a source change detected across a recheck probe
      (`official_mirror_recheck_source_changed_during_probe=true`) fails closed;
    - a probe that only completes after the deadline cannot be recorded as
-     `PASS`, and the in-flight probe timeout is clamped to the remaining budget
-     (`official_mirror_recheck_https_timeout_seconds=`);
+     `PASS`; each endpoint gets `remaining/3` as its own timeout so three
+     sequential endpoints fit the remaining budget
+     (`official_mirror_recheck_https_timeout_seconds=`), and the retry wait is
+     clamped so it cannot sleep past the deadline;
    - malformed HTTP responses are classified instead of escaping the recheck.
 
 ### 5.1 Unchanged safety properties
@@ -242,10 +248,10 @@ apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU
 
 ## 7. Regression tests
 
-`tools/test_android_ci_host.py`: 49 cases (the 19 pre-existing cases retained;
+`tools/test_android_ci_host.py`: 51 cases (the 19 pre-existing cases retained;
 the only body changes are the pinned `APT_TIMEOUT_SECONDS == 45` becoming an
 asserted 45..180 bound and a `SLEEP` injection in the pre-existing unreachable-
-mirror test; 30 cases added):
+mirror test; 32 cases added):
 
 | Requirement | Test |
 | --- | --- |
@@ -266,7 +272,8 @@ mirror test; 30 cases added):
 | Rotating endpoint failure never aggregates | `test_rotating_endpoint_failure_never_aggregates_into_success` |
 | Partial APT index fetch cannot continue | `test_apt_update_uses_strict_error_mode`, `test_official_apt_update_uses_strict_error_mode` |
 | Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected`, `test_source_change_after_cache_validation_is_detected`, `test_recheck_source_change_during_probe_fails_closed`, `test_verdict_block_is_bound_to_one_complete_record`, `test_incomplete_verdict_block_is_not_reused` |
-| Redirect refused before following | `test_redirect_is_refused_before_it_is_followed`, `test_redirect_away_from_the_official_endpoint_is_rejected` |
+| Redirect refused before following | `test_redirect_is_refused_before_it_is_followed`, `test_redirect_handler_refuses_instead_of_following`, `test_redirect_away_from_the_official_endpoint_is_rejected`, `test_apt_refuses_redirects_for_every_official_host` |
+| Only a terminated bound record is reusable | `test_only_a_complete_bound_record_is_reusable`, `test_orphan_hash_cannot_rebind_an_accepted_record`, `test_bound_records_disable_the_legacy_fallback`, `test_preflight_writes_a_self_contained_bound_record` |
 | Deadline applies to in-flight PASS | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline` |
 | Legacy detail lists tolerated | `test_probe_failure_classes_tolerates_legacy_detail_lists` |
 
@@ -379,7 +386,16 @@ were judged incomplete in three respects, each fixed with a regression test:
 | A cached `PASS` could inherit a different block's source hash, and the recheck read the hash after probing | only a completed verdict block is parsed, the bound hash is taken before the probe, and a change across the probe fails closed |
 | `urlopen` still followed the redirect before the final-URL check | `NoRedirectHandler` refuses the redirect first, and both APT commands disable cross-host redirects |
 
-Low findings after round 2: the ordinary install-success branch reports on the
+Round 3 (head `2d7c381f`, tree `f252d89ea3`): 3 Medium, 0 Low. Round-2 fixes were
+judged bypassable in three respects, each fixed with a regression test:
+
+| Round-3 finding | Resolution |
+| --- | --- |
+| A mutable block could be rebound by a later orphan hash, and a header-less verdict could inherit another preflight hash | verdicts are immutable `record_start`/`record_end` records with first-wins fields; the legacy header form is ignored once any bound record exists; preflight now writes its own bound record |
+| The clamp was computed once and the retry wait could exceed the deadline | per-endpoint timeout is `remaining/3`, the wait is clamped to the deadline, and a late `PASS` is rejected |
+| APT host-specific `Acquire::*::<host>::AllowRedirect` can outrank the generic key | redirect refusal is passed for each official host as well as generically |
+
+Low findings after round 3: the ordinary install-success branch reports on the
 loader result while dpkg state is recorded separately (accepted: loader
 resolution is the gating property); the non-Required Real IME diagnostic rejects
 this change through its pre-existing scope guard (documented in 8.1); one

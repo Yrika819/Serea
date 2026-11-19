@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import http.client
 import os
 import platform
 import re
@@ -30,7 +31,11 @@ HTTPS_TIMEOUT_SECONDS = 10
 # Worst case adds MIRROR_PROBE_ATTEMPTS * (3 probes) + (attempts - 1) * delay seconds.
 MIRROR_PROBE_ATTEMPTS = 3
 MIRROR_PROBE_RETRY_DELAY_SECONDS = 5
+# Hard wall-clock ceiling for one re-diagnosis, so a slow endpoint cannot extend the
+# bounded attempt budget indefinitely.
+MIRROR_PROBE_DEADLINE_SECONDS = 90
 SLEEP: Callable[[float], None] = time.sleep
+MONOTONIC: Callable[[], float] = time.monotonic
 HTTPS_FAILURE_MARKERS = (
     ("DNS_FAILURE", ("dns resolution failed", "name or service not known", "temporary failure in name resolution", "nodename nor servname", "getaddrinfo failed", "name resolution", "unresolved")),
     ("TLS_VERIFICATION_FAILURE", ("certificate verify failed", "certificate_verify_failed", "self-signed certificate", "self signed certificate", "hostname mismatch", "unable to get local issuer", "unknown ca")),
@@ -41,6 +46,7 @@ HTTPS_FAILURE_REASONS = {
     "DNS_FAILURE": "DNS resolution failed",
     "TLS_VERIFICATION_FAILURE": "certificate verify failed",
     "HTTP_ERROR": "HTTP status failure",
+    "REDIRECT_REJECTED": "response was redirected away from the official endpoint",
     "TIMEOUT": "timed out",
     "CONNECTION_FAILURE": "connection failed",
 }
@@ -50,6 +56,8 @@ APT_OPTIONS = (
     "-o", "Acquire::http::Timeout=12",
     "-o", "Acquire::https::Timeout=12",
 )
+# Index fetch warnings must fail the update instead of continuing with partial indexes.
+APT_UPDATE_STRICT_OPTIONS = ("-o", "APT::Update::Error-Mode=any")
 NETWORK_FAILURE_MARKERS = (
     "temporary failure resolving",
     "could not resolve",
@@ -233,13 +241,17 @@ def https_reachable(url: str, timeout: int = HTTPS_TIMEOUT_SECONDS) -> tuple[boo
     request = urllib.request.Request(url, method="GET", headers={"Range": "bytes=0-0", "User-Agent": "Serea-Android-CI-Host-Preflight"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
+            # A followed redirect could downgrade to plaintext or leave the official
+            # endpoint; only the exact requested URL counts as verified reachability.
+            if response.geturl().split("#", 1)[0] != url:
+                return False, https_failure_detail("REDIRECT_REJECTED")
             response.read(1)
             if 200 <= response.status < 400:
                 return True, f"HTTP {response.status}; TLS verification enabled"
             return False, https_failure_detail("HTTP_ERROR", status=response.status)
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
         # TLS verification is never disabled: certificate failures are terminal FAIL results.
-        return False, https_failure_detail(classify_https_failure(str(error)))
+        return False, https_failure_detail(classify_https_failure(f"{type(error).__name__}: {error}"))
 
 
 def probe_official_mirrors(
@@ -282,31 +294,47 @@ def probe_failure_classes(details: Sequence[str]) -> list[str]:
     return []
 
 
-def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
-    """Reuse a preflight result only when the current APT source hash matches."""
+def recorded_probe_record(path: Path) -> tuple[bool, str, str, str | None] | None:
+    """Parse the latest recorded verdict and the source hash that verdict belongs to."""
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
     recorded_hash = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("apt_sources_sha256_before=")), None)
+    # A recheck verdict binds its own source hash, so a verdict can never be paired
+    # with the preflight hash of a different source state.
+    bound_hash = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_apt_sources_sha256=")), None)
+    if bound_hash is not None:
+        recorded_hash = bound_hash
     status = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe=")), None)
     reason = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_reason=")), "no probe reason recorded")
     cause = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_cause=")), "NETWORK_FAILURE")
-    if recorded_hash != apt_source_snapshot() or status not in ("PASS", "FAIL"):
+    if status not in ("PASS", "FAIL"):
         return None
-    return status == "PASS", reason, cause
+    return status == "PASS", reason, cause, recorded_hash
 
 
-def reusable_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
+def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
+    """Reuse a preflight result only when the current APT source hash matches."""
+    record = recorded_probe_record(path)
+    if record is None or record[3] != apt_source_snapshot():
+        return None
+    return record[0], record[1], record[2]
+
+
+def reusable_mirror_probe(path: Path, current_hash: str) -> tuple[bool, str, str] | None:
     """Reuse only a recorded PASS; a recorded FAIL must be re-diagnosed before APT.
 
     A preflight FAIL can be a transient DNS/TLS failure that cleared minutes later, so
     replaying it as a terminal verdict would fail closed for the wrong reason.
+
+    ``current_hash`` is the caller's single source snapshot, so the same value becomes
+    the runtime baseline and any later source change is detected against it.
     """
-    recorded = recorded_mirror_probe(path)
-    if recorded is None or not recorded[0]:
+    record = recorded_probe_record(path)
+    if record is None or record[3] != current_hash or not record[0]:
         return None
-    return recorded
+    return record[0], record[1], record[2]
 
 
 def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[bool, str, str]:
@@ -321,7 +349,18 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
     )
     reason = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
     cause = "NETWORK_FAILURE"
+    deadline = MONOTONIC() + MIRROR_PROBE_DEADLINE_SECONDS
     for attempt in range(1, MIRROR_PROBE_ATTEMPTS + 1):
+        if attempt > 1 and MONOTONIC() >= deadline:
+            append(
+                path,
+                "\n".join((
+                    "official_mirror_recheck_deadline_exceeded=true",
+                    f"official_mirror_recheck_deadline_seconds={MIRROR_PROBE_DEADLINE_SECONDS}",
+                    "official_mirror_recheck_exhausted=true",
+                )),
+            )
+            return False, reason, cause
         try:
             ok, _release, _architecture, _sources, details = probe_official_mirrors(runner)
             if ok:
@@ -332,6 +371,11 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
             ok = False
             details = [f"official_source_plan_unavailable={error}"]
             reason, cause = f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE"
+        except Exception as error:  # noqa: BLE001 - a probe crash must fail closed with evidence
+            ok = False
+            details = [f"official_mirror_recheck_unexpected_probe_error={type(error).__name__}: {error}"]
+            reason = f"official mirror probe raised {type(error).__name__}"
+            cause = "NETWORK_FAILURE"
         classes = probe_failure_classes(details)
         append(
             path,
@@ -340,7 +384,8 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 f"official_mirror_recheck attempt={attempt}/{MIRROR_PROBE_ATTEMPTS}",
                 f"official_mirror_recheck_result={'PASS' if ok else 'FAIL'}",
                 f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
-                f"official_mirror_probe={'PASS' if ok else 'FAIL'}",
+                "official_mirror_probe=" + ("PASS" if ok else "FAIL"),
+                f"official_mirror_probe_apt_sources_sha256={apt_source_snapshot()}",
                 f"official_mirror_probe_reason={reason}",
                 f"official_mirror_probe_cause={cause}",
             )),
@@ -521,7 +566,8 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         return record_failure(path, "DEPENDENCY_FAILURE", f"unresolved non-libpulse emulator libraries: {','.join(other_missing)}")
     if not pulse_missing:
         return record_failure(path, "HOST_INFRA", "runtime dependency state is inconsistent")
-    mirror_probe = reusable_mirror_probe(path)
+    source_hash_before = apt_source_snapshot()
+    mirror_probe = reusable_mirror_probe(path, source_hash_before)
     if mirror_probe is not None:
         append(path, "official_mirror_probe_reuse=RECORDED_PASS (recorded preflight PASS; APT sources unchanged)")
     else:
@@ -534,13 +580,13 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             f"APT not attempted: {mirror_probe[1]}",
             cause=mirror_probe[2],
         )
-    original_sources_hash = apt_source_snapshot()
+    original_sources_hash = source_hash_before
     append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}")
     try:
         source_file, source_options = official_fallback(path, api, runner)
     except RuntimeError as error:
         return record_failure(path, "DEPENDENCY_FAILURE", f"official Ubuntu source configuration unavailable: {error}")
-    update = apt_invocation((*source_options, "update"), timeout=APT_TIMEOUT_SECONDS, runner=runner)
+    update = apt_invocation((*source_options, *APT_UPDATE_STRICT_OPTIONS, "update"), timeout=APT_TIMEOUT_SECONDS, runner=runner)
     append(path, f"official apt-get update exit={update.returncode}\n{update.stdout}")
     if update.returncode != 0:
         append(path, f"apt_sources_sha256_after={apt_source_snapshot()}\napt_sources_after=system sources unchanged; temporary source was {source_file}")

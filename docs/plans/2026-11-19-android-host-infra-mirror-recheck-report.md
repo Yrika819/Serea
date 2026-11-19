@@ -64,8 +64,13 @@ official_https .../noble-security/InRelease: REACHABLE (HTTP 206; TLS verificati
 official_mirror_probe=PASS
 ```
 
-The only difference between the passing and failing hosts is a single transient
-endpoint timeout.
+All three endpoints were reachable on a host running image `20261116.133.1`
+with APT source hash `5f425af6…` (the same image and hash as failed identity
+attempt 1), in the same run as the failing identity job. Failed attempt 2 ran
+on image `20261111.127.1` with hash `2540850e…`, so the runner image and source
+state are not identical between all of these hosts. The decisive difference is
+that the failing hosts lost one endpoint per attempt, and a different endpoint
+on each attempt, while the passing host verified all three.
 
 ### 2.4 Timing proof of the defective path
 
@@ -155,13 +160,18 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
 2. `recheck_official_mirrors()` re-diagnoses the official mirrors with a bounded
    budget before any APT command:
    - `MIRROR_PROBE_ATTEMPTS = 3`, `MIRROR_PROBE_RETRY_DELAY_SECONDS = 5`
-   - worst added wall clock is bounded (`<= 120 s`, asserted by a unit test)
+   - `MIRROR_PROBE_DEADLINE_SECONDS = 90` is a hard wall-clock ceiling; the loop
+     stops at the deadline and records
+     `official_mirror_recheck_deadline_exceeded=true`
    - success requires **every** official `InRelease` endpoint to be reachable
-     with TLS verification enabled
+     with TLS verification enabled; a different endpoint failing in each round
+     never aggregates into a success
    - exhaustion records `official_mirror_recheck_exhausted=true` and returns
      `HOST_INFRA` without running APT
    - a deterministic `RuntimeError` (unsupported OS, architecture or missing
      Ubuntu keyring) is not retried and stays a dependency failure
+   - any unexpected probe exception is caught, recorded as
+     `official_mirror_recheck_unexpected_probe_error=` and fails closed
 3. Machine-readable diagnostics (`official_https_failure_classes=`) distinguish
    `DNS_FAILURE`, `TLS_VERIFICATION_FAILURE`, `HTTP_ERROR`, `TIMEOUT` and
    `CONNECTION_FAILURE`. Each recheck attempt appends
@@ -172,8 +182,20 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
    - `HTTPS_TIMEOUT_SECONDS`: 4 s -> 10 s per official endpoint.
    - `APT_TIMEOUT_SECONDS`: 45 s -> 180 s for the official `apt-get` invocation.
    `Acquire::http::Timeout=12`, `Acquire::https::Timeout=12` and
-   `Acquire::Retries=1` are unchanged, and the recheck total stays bounded
-   (`<= 300 s` worst case, asserted). No time limit becomes unlimited.
+   `Acquire::Retries=1` are unchanged. The recheck adds no retries to APT and
+   both the attempt budget and the wall-clock deadline are asserted by unit
+   tests, so no time limit becomes unlimited.
+5. Independent-review hardening (each with a regression test):
+   - a redirected or downgraded HTTPS response is rejected
+     (`REDIRECT_REJECTED`) instead of being accepted as an official-endpoint
+     `PASS`;
+   - `apt-get update` runs with `APT::Update::Error-Mode=any` so a partial index
+     fetch cannot continue to install;
+   - `reusable_mirror_probe()` takes the caller's single source snapshot, and
+     each recheck verdict writes `official_mirror_probe_apt_sources_sha256=`, so
+     a verdict is never paired with a hash from a different source state and a
+     change after cache validation is still detected;
+   - malformed HTTP responses are classified instead of escaping the recheck.
 
 ### 5.1 Unchanged safety properties
 
@@ -228,7 +250,12 @@ substance; 12 cases added):
 | TLS verification failure fails closed | `test_tls_verification_failure_is_classified_as_failure` |
 | Invalid OS/source plan fails without retry | `test_official_source_plan_unavailable_fails_closed_without_retry` |
 | Official source mutation detected | `test_system_apt_source_mutation_during_install_is_host_infra` |
-| Retry budget bounded | `test_recheck_policy_is_bounded` |
+| Retry budget bounded | `test_recheck_policy_is_bounded`, `test_recheck_stops_at_the_wall_clock_deadline`, `test_recheck_deadline_is_bounded` |
+| Redirect / malformed response rejected | `test_redirect_away_from_the_official_endpoint_is_rejected`, `test_malformed_http_response_is_classified_not_escaped`, `test_unexpected_probe_error_fails_closed_with_evidence` |
+| Every endpoint is probed for a PASS | `test_all_endpoints_must_be_probed_for_a_pass` |
+| Rotating endpoint failure never aggregates | `test_rotating_endpoint_failure_never_aggregates_into_success` |
+| Partial APT index fetch cannot continue | `test_apt_update_uses_strict_error_mode`, `test_official_apt_update_uses_strict_error_mode` |
+| Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected` |
 | Legacy detail lists tolerated | `test_probe_failure_classes_tolerates_legacy_detail_lists` |
 
 Pre-existing coverage retained: resolved QEMU libraries skip APT
@@ -245,7 +272,94 @@ The only edit to a pre-existing test adds `SLEEP` injection to
 (exit 1, APT not invoked, `result=HOST_INFRA`, `failure_cause=NETWORK_FAILURE`)
 are unchanged.
 
-## 8. Residual risk
+## 8. Verification on this PR's SHA
+
+Draft PR: #246 (`codex/android-host-mirror-recheck`)
+HEAD `e01a49263f990b9c3eff267218f8c87c8ea4ec77`, tree
+`5803533256e1b01ddce6d7bb86db9269819821b6`, base `main`
+`077246aeab909928fb57316f1f3aefc6be69c0b3`.
+
+Required checks (branch protection):
+
+| Check | Result |
+| --- | --- |
+| Linux fast checks | pass |
+| Linux stable full validation | pass |
+| Android Emulator Required Gate | pass |
+| Linux MSRV 1.89.0 | pass |
+
+The Required Gate re-verified every dependency on the same SHA
+(`BUILD_RESULT`, `HOST_PROBE_RESULT`, `UNIT_RESULT`, `INTEGRATION_RESULT`,
+`SECURITY_RESULT`, `EMULATOR_RESULT`, `BETA_IDENTITY_RESULT`, `AUDIT_RESULT`,
+`BUNDLE_RESULT` all `success`, `INSTRUMENTATION_RESULT: PASS` with 103/103 plus
+2/2 on both API levels).
+
+`Personal Beta Identity Isolation (temporary signing keys)` now passes
+(13m35s). It executed the disposable identity checks and produced
+temporary-key evidence:
+
+```
+application_id=app.serea.android.beta
+demo_and_beta_parallel_install=PASS
+demo_package_data_and_signer_unchanged=PASS
+beta_encrypted_room_data_after_emulator_reboot=PASS
+same_test_key_version_100_to_101_update=PASS
+different_test_key_version_102_update=INSTALL_FAILED_UPDATE_INCOMPATIBLE
+owner_signing_key_used=no
+demo_uninstall_attempted=no
+beta_native_library_exclusion_versionCode=99..102 result=PASS
+```
+
+Its host evidence recorded `official_mirror_probe=PASS`,
+`official apt-get update exit=0`, `official apt-get install exit=0`,
+`libpulse0_status_after=installed`, `result=HOST_READY` and
+`apt_signature_validation=enabled; tls_validation=enabled;
+third_party_repositories=none`.
+
+`Android Formal API 26` (20m12s) and `Android Formal API 35` (25m31s) pass on the
+same SHA.
+
+### 8.1 Non-Required failures on this SHA
+
+- `Build target, instrumentation, and Test IME APKs once`
+  (`android-api35-real-ime-independent-bc.yml`, explicitly "Diagnostic,
+  Non-Required") fails its own scope guard with "Verify source scope is limited to
+  this diagnostic harness". Its `paths:` trigger lists
+  `tools/android_ci_host.py` and `tools/test_android_ci_host.py`, but its
+  allowlist omits them, so any change to the helper trips the guard. The same job
+  also failed on the commit that last changed the helper (`b7fc506`, PR #231).
+  This is a pre-existing inconsistency in that diagnostic workflow and is not
+  modified here.
+- `API 35 focused Fake providers, local Chat and Tasks E2E` failed on an
+  external Maven Central artefact fetch
+  (`Could not download annotations-12.0.jar ... Repository MavenRepo is disabled
+  due to earlier error`) after its host preparation reached `HOST_READY`. The
+  same `:app:javaPreCompileDebug` KSP classpath fetch failure also hit
+  `Android Unit` and `Android Security Tests` on first attempt; both passed on a
+  same-SHA re-run with no code change, confirming an external infrastructure
+  flake rather than a regression.
+
+## 9. Independent review
+
+An independent review of the first head (`e01a4926`, tree `5803533256b0`)
+returned **Critical 0 / High 0**, with 5 Medium and 3 Low findings. All Medium
+findings were fixed in the second head with regression tests:
+
+| Finding | Resolution |
+| --- | --- |
+| Followed redirect could yield a plaintext/third-party `PASS` | redirect or downgrade is rejected (`REDIRECT_REJECTED`) |
+| `apt-get update` could return 0 on partial index failure | `APT::Update::Error-Mode=any` |
+| Source change between cache validation and runtime baseline escaped detection | single snapshot is both the reuse check and the runtime baseline; verdicts carry their own hash |
+| Attempt cap without a wall-clock ceiling | `MIRROR_PROBE_DEADLINE_SECONDS = 90` |
+| Malformed HTTP response escaped the retry and the evidence | classified and recorded, still fails closed |
+
+Low findings: the ordinary install-success branch reports on the loader result
+while dpkg state is recorded separately (accepted: loader resolution is the
+gating property); the non-Required Real IME diagnostic rejects this change
+through its pre-existing scope guard (documented in 8.1); and report wording
+about run comparability (corrected in 2.3).
+
+## 10. Residual risk
 
 - The bounded budget (3 attempts, 5 s apart) cannot defeat a genuinely
   persistent outage; such a host still fails closed as `HOST_INFRA` with a
@@ -264,7 +378,7 @@ are unchanged.
   external. The fix only prevents such transients from being recorded as a
   terminal verdict or being cut off by a marginal cap.
 
-## 9. Next steps
+## 11. Next steps
 
 1. Integrate this fix through its own Draft PR with Owner approval.
 2. Re-run the Required gates on PR #245 against the new `main`.

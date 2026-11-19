@@ -186,15 +186,23 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
    both the attempt budget and the wall-clock deadline are asserted by unit
    tests, so no time limit becomes unlimited.
 5. Independent-review hardening (each with a regression test):
-   - a redirected or downgraded HTTPS response is rejected
-     (`REDIRECT_REJECTED`) instead of being accepted as an official-endpoint
-     `PASS`;
+   - redirects are refused **before** they are followed (`NoRedirectHandler`),
+     so no probe can contact another host, and a 3xx or a final URL that is not
+     the requested official endpoint is `REDIRECT_REJECTED`;
+   - both APT commands run with `Acquire::http::AllowRedirect=false` and
+     `Acquire::https::AllowRedirect=false`, so APT cannot follow a cross-host
+     mirror redirect either;
    - `apt-get update` runs with `APT::Update::Error-Mode=any` so a partial index
      fetch cannot continue to install;
-   - `reusable_mirror_probe()` takes the caller's single source snapshot, and
-     each recheck verdict writes `official_mirror_probe_apt_sources_sha256=`, so
-     a verdict is never paired with a hash from a different source state and a
-     change after cache validation is still detected;
+   - `reusable_mirror_probe()` takes the caller's single source snapshot, each
+     recheck verdict writes `official_mirror_probe_apt_sources_sha256=` **taken
+     before** its probe, and only a completed verdict block is parsed, so a
+     verdict is never paired with a hash from a different source state;
+   - a source change detected across a recheck probe
+     (`official_mirror_recheck_source_changed_during_probe=true`) fails closed;
+   - a probe that only completes after the deadline cannot be recorded as
+     `PASS`, and the in-flight probe timeout is clamped to the remaining budget
+     (`official_mirror_recheck_https_timeout_seconds=`);
    - malformed HTTP responses are classified instead of escaping the recheck.
 
 ### 5.1 Unchanged safety properties
@@ -234,8 +242,10 @@ apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU
 
 ## 7. Regression tests
 
-`tools/test_android_ci_host.py` (19 existing cases retained unmodified in
-substance; 12 cases added):
+`tools/test_android_ci_host.py`: 49 cases (the 19 pre-existing cases retained;
+the only body changes are the pinned `APT_TIMEOUT_SECONDS == 45` becoming an
+asserted 45..180 bound and a `SLEEP` injection in the pre-existing unreachable-
+mirror test; 30 cases added):
 
 | Requirement | Test |
 | --- | --- |
@@ -255,7 +265,9 @@ substance; 12 cases added):
 | Every endpoint is probed for a PASS | `test_all_endpoints_must_be_probed_for_a_pass` |
 | Rotating endpoint failure never aggregates | `test_rotating_endpoint_failure_never_aggregates_into_success` |
 | Partial APT index fetch cannot continue | `test_apt_update_uses_strict_error_mode`, `test_official_apt_update_uses_strict_error_mode` |
-| Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected` |
+| Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected`, `test_source_change_after_cache_validation_is_detected`, `test_recheck_source_change_during_probe_fails_closed`, `test_verdict_block_is_bound_to_one_complete_record`, `test_incomplete_verdict_block_is_not_reused` |
+| Redirect refused before following | `test_redirect_is_refused_before_it_is_followed`, `test_redirect_away_from_the_official_endpoint_is_rejected` |
+| Deadline applies to in-flight PASS | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline` |
 | Legacy detail lists tolerated | `test_probe_failure_classes_tolerates_legacy_detail_lists` |
 
 Pre-existing coverage retained: resolved QEMU libraries skip APT
@@ -274,10 +286,13 @@ are unchanged.
 
 ## 8. Verification on this PR's SHA
 
-Draft PR: #246 (`codex/android-host-mirror-recheck`)
-HEAD `e01a49263f990b9c3eff267218f8c87c8ea4ec77`, tree
-`5803533256e1b01ddce6d7bb86db9269819821b6`, base `main`
+Draft PR: #246 (`codex/android-host-mirror-recheck`), base `main`
 `077246aeab909928fb57316f1f3aefc6be69c0b3`.
+
+The results below are recorded for head `e01a49263f990b9c3eff267218f8c87c8ea4ec77`
+(tree `5803533256e1b01ddce6d7bb86db9269819821b6`), the first head that carried
+the mirror-recheck fix. Later heads change only the probe hardening described in
+section 5 and 9, and must be re-verified on their own SHA before merge.
 
 Required checks (branch protection):
 
@@ -341,9 +356,11 @@ same SHA.
 
 ## 9. Independent review
 
-An independent review of the first head (`e01a4926`, tree `5803533256b0`)
-returned **Critical 0 / High 0**, with 5 Medium and 3 Low findings. All Medium
-findings were fixed in the second head with regression tests:
+Two independent review rounds were run. Both reported **Critical 0 / High 0**
+against a separate reviewer, not GitHub approval.
+
+Round 1 (head `e01a4926`, tree `5803533256b0`): 5 Medium, 3 Low. Medium findings
+and their first fixes:
 
 | Finding | Resolution |
 | --- | --- |
@@ -353,11 +370,22 @@ findings were fixed in the second head with regression tests:
 | Attempt cap without a wall-clock ceiling | `MIRROR_PROBE_DEADLINE_SECONDS = 90` |
 | Malformed HTTP response escaped the retry and the evidence | classified and recorded, still fails closed |
 
-Low findings: the ordinary install-success branch reports on the loader result
-while dpkg state is recorded separately (accepted: loader resolution is the
-gating property); the non-Required Real IME diagnostic rejects this change
-through its pre-existing scope guard (documented in 8.1); and report wording
-about run comparability (corrected in 2.3).
+Round 2 (head `eacf4a7b`, tree `eb835557ae`): 3 Medium, 4 Low. The round-1 fixes
+were judged incomplete in three respects, each fixed with a regression test:
+
+| Round-2 finding | Resolution |
+| --- | --- |
+| A probe that completed after the deadline could still be recorded `PASS` | `PASS` is rejected when the clock has passed the deadline, the in-flight probe timeout is clamped to the remaining budget, and `official_mirror_recheck_deadline_exceeded=true` is recorded |
+| A cached `PASS` could inherit a different block's source hash, and the recheck read the hash after probing | only a completed verdict block is parsed, the bound hash is taken before the probe, and a change across the probe fails closed |
+| `urlopen` still followed the redirect before the final-URL check | `NoRedirectHandler` refuses the redirect first, and both APT commands disable cross-host redirects |
+
+Low findings after round 2: the ordinary install-success branch reports on the
+loader result while dpkg state is recorded separately (accepted: loader
+resolution is the gating property); the non-Required Real IME diagnostic rejects
+this change through its pre-existing scope guard (documented in 8.1); one
+added test was vacuous as an invocation check (strengthened to assert the
+forwarded arguments); and report wording about run comparability and test
+counts (corrected in 2.3, 7 and 8).
 
 ## 10. Residual risk
 

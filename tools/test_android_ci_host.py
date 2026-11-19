@@ -518,6 +518,17 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             self.assertNotIn("result=HOST_READY", content)
 
 
+def fake_clock_after_first_call():
+    """First call establishes the deadline; every later call is already past it."""
+    calls = {"n": 0}
+
+    def clock() -> float:
+        calls["n"] += 1
+        return 0.0 if calls["n"] == 1 else host.MIRROR_PROBE_DEADLINE_SECONDS + 1.0
+
+    return clock
+
+
 class MirrorProbeDiagnosticsTests(unittest.TestCase):
     def test_partial_official_endpoint_reachability_fails_closed(self) -> None:
         plan = ("noble", "amd64", ("deb-line-1", "deb-line-2", "deb-line-3", *host.fallback_check_urls("noble", "amd64")))
@@ -559,11 +570,23 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
         import urllib.error
 
         error = urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))
-        with patch.object(host.urllib.request, "urlopen", side_effect=error):
+        with patch.object(host.OPENER, "open", side_effect=error):
             self.assertEqual(host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease"), (False, "UNREACHABLE (TLS_VERIFICATION_FAILURE; certificate verify failed)"))
         self.assertEqual(host.classify_https_failure("UNREACHABLE (HTTP Error 403: Forbidden)"), "HTTP_ERROR")
         self.assertEqual(host.classify_https_failure("UNREACHABLE (The handshake operation timed out)"), "TIMEOUT")
         self.assertEqual(host.classify_https_failure("UNREACHABLE (DNS resolution failed for archive.ubuntu.com)"), "DNS_FAILURE")
+
+    def test_redirect_is_refused_before_it_is_followed(self) -> None:
+        import urllib.error
+
+        redirect = urllib.error.HTTPError("https://archive.ubuntu.com/x", 301, "Moved Permanently", {}, None)
+        with patch.object(host.OPENER, "open", side_effect=redirect):
+            ok, detail = host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease")
+        self.assertFalse(ok)
+        self.assertIn("REDIRECT_REJECTED", detail)
+        handlers = [type(handler).__name__ for handler in host.OPENER.handlers]
+        self.assertIn("NoRedirectHandler", handlers)
+        self.assertNotIn("HTTPRedirectHandler", handlers, "a follow-redirect handler must not be installed")
 
     def test_probe_failure_classes_tolerates_legacy_detail_lists(self) -> None:
         self.assertEqual(host.probe_failure_classes(["official_https x: UNREACHABLE (DNS)"]), [])
@@ -586,7 +609,7 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
             def geturl(self):
                 return "http://example.invalid/ubuntu/dists/noble/InRelease"
 
-        with patch.object(host.urllib.request, "urlopen", return_value=Redirected()):
+        with patch.object(host.OPENER, "open", return_value=Redirected()):
             ok, detail = host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease")
         self.assertFalse(ok, "a redirected or downgraded response must never count as an official endpoint PASS")
         self.assertIn("REDIRECT_REJECTED", detail)
@@ -594,7 +617,7 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
     def test_malformed_http_response_is_classified_not_escaped(self) -> None:
         import http.client
 
-        with patch.object(host.urllib.request, "urlopen", side_effect=http.client.BadStatusLine("garbage")):
+        with patch.object(host.OPENER, "open", side_effect=http.client.BadStatusLine("garbage")):
             ok, detail = host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease")
         self.assertFalse(ok)
         self.assertIn("UNREACHABLE (", detail)
@@ -676,7 +699,7 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
                 host, "probe_official_mirrors", return_value=failing
             ) as probe, patch.object(
-                host, "MONOTONIC", side_effect=[0.0, host.MIRROR_PROBE_DEADLINE_SECONDS + 1.0]
+                host, "MONOTONIC", side_effect=fake_clock_after_first_call()
             ), patch.object(host, "SLEEP", side_effect=lambda _s: None), patch.object(
                 host, "apt_invocation", side_effect=AssertionError("APT must not run after the probe deadline")
             ):
@@ -725,7 +748,9 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             seen.append(list(args))
             return subprocess.CompletedProcess(args, 0, "ok")
 
-        host.apt_invocation(("update",), runner=fake_runner)
+        host.apt_invocation((*host.APT_UPDATE_STRICT_OPTIONS, "update"), runner=fake_runner)
+        self.assertIn("APT::Update::Error-Mode=any", seen[0], "the strict update option must reach the apt command line")
+        self.assertEqual(seen[0][-1], "update")
         self.assertEqual(host.APT_UPDATE_STRICT_OPTIONS, ("-o", "APT::Update::Error-Mode=any"))
         self.assertLessEqual(len(host.APT_UPDATE_STRICT_OPTIONS), 2, "strict update mode must not add retries or unbounded options")
 
@@ -796,6 +821,131 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 self.assertEqual(host.recorded_mirror_probe(evidence)[0], True)
             with patch.object(host, "apt_source_snapshot", return_value="hash-changed"):
                 self.assertIsNone(host.recorded_mirror_probe(evidence))
+
+
+    def test_pass_completed_after_the_deadline_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            passing = (
+                True,
+                "noble",
+                "amd64",
+                ["official source"],
+                ["official_https x: REACHABLE (HTTP 206; TLS verification enabled)", "official_https_failure_classes=none"],
+            )
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=passing
+            ), patch.object(
+                host, "MONOTONIC", side_effect=[0.0, host.MIRROR_PROBE_DEADLINE_SECONDS + 1.0, host.MIRROR_PROBE_DEADLINE_SECONDS + 2.0]
+            ), patch.object(host, "SLEEP", side_effect=lambda _s: None), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run after the probe deadline")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertNotIn("official_mirror_probe=PASS", content)
+            self.assertIn("official_mirror_recheck_deadline_exceeded=true", content)
+
+    def test_recheck_source_change_during_probe_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            passing = (
+                True,
+                "noble",
+                "amd64",
+                ["official source"],
+                ["official_https x: REACHABLE (HTTP 206; TLS verification enabled)", "official_https_failure_classes=none"],
+            )
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "apt_source_snapshot", side_effect=["hash-one", "hash-two"] * 8
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=passing
+            ), patch.object(host, "MONOTONIC", return_value=0.0), patch.object(
+                host, "SLEEP", side_effect=lambda _s: None
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run when the sources change during the probe")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official_mirror_recheck_source_changed_during_probe=true", content)
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertNotIn("result=HOST_READY", content)
+
+    def test_verdict_block_is_bound_to_one_complete_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            # A complete recheck verdict for hash B, then a preflight-style verdict block
+            # appended afterwards. The trailing block must not inherit B.
+            evidence.write_text(
+                "apt_sources_sha256_before=hash-c\n"
+                "official_mirror_probe=PASS\n"
+                "official_mirror_probe_apt_sources_sha256=hash-b\n"
+                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
+                "official_mirror_probe_cause=HOST_READY\n"
+                "official_mirror_probe=PASS\n"
+                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
+                "official_mirror_probe_cause=HOST_READY\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-b"))
+            with patch.object(host, "apt_source_snapshot", return_value="hash-c"):
+                self.assertEqual(host.reusable_mirror_probe(evidence, "hash-c")[0], True)
+
+    def test_incomplete_verdict_block_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            evidence.write_text(
+                "apt_sources_sha256_before=hash-c\n"
+                "official_mirror_probe=PASS\n"
+                "official_mirror_probe_apt_sources_sha256=hash-c\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"))
+            self.assertIsNone(host.recorded_mirror_probe(evidence))
+
+    def test_in_flight_probe_budget_is_capped_by_the_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            failing = (
+                False,
+                "noble",
+                "amd64",
+                ["official source"],
+                ["official_https x: UNREACHABLE (TIMEOUT; timed out)", "official_https_failure_classes=TIMEOUT"],
+            )
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=failing
+            ) as probe, patch.object(host, "MONOTONIC", return_value=0.0), patch.object(
+                host, "SLEEP", side_effect=lambda _s: None
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run")
+            ):
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertTrue(probe.call_args.kwargs.get("https_timeout"))
+            self.assertLessEqual(probe.call_args.kwargs["https_timeout"], host.HTTPS_TIMEOUT_SECONDS)
 
 
 if __name__ == "__main__":

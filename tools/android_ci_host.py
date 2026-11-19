@@ -20,9 +20,12 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-APT_TIMEOUT_SECONDS = 45
+APT_TIMEOUT_SECONDS = 180
 DNS_TIMEOUT_SECONDS = 3
-HTTPS_TIMEOUT_SECONDS = 4
+# A 4 s per-endpoint cap produced TLS handshake timeouts on degraded GitHub-hosted
+# runners while the same endpoint verified moments later; keep a hard cap but above
+# the observed handshake latency.
+HTTPS_TIMEOUT_SECONDS = 10
 # Bounded re-diagnosis budget for a transient official-mirror connectivity failure.
 # Worst case adds MIRROR_PROBE_ATTEMPTS * (3 probes) + (attempts - 1) * delay seconds.
 MIRROR_PROBE_ATTEMPTS = 3

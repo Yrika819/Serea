@@ -64,7 +64,16 @@ class AndroidCiHostTests(unittest.TestCase):
         self.assertIn("Acquire::Retries=1", host.APT_OPTIONS)
         self.assertIn("Acquire::http::Timeout=12", host.APT_OPTIONS)
         self.assertIn("Acquire::https::Timeout=12", host.APT_OPTIONS)
-        self.assertEqual(host.APT_TIMEOUT_SECONDS, 45)
+        # Index download on a degraded GitHub-hosted runner exceeded the previous 45 s
+        # budget while still progressing; the cap stays bounded and is asserted below.
+        self.assertGreaterEqual(host.APT_TIMEOUT_SECONDS, 45)
+        self.assertLessEqual(host.APT_TIMEOUT_SECONDS, 180)
+
+    def test_apt_execution_time_limits_remain_bounded(self) -> None:
+        self.assertLessEqual(host.APT_TIMEOUT_SECONDS, 180, "APT execution must keep a hard wall-clock cap")
+        self.assertLessEqual(host.HTTPS_TIMEOUT_SECONDS, 20, "per-endpoint HTTPS probe must keep a hard cap")
+        self.assertGreaterEqual(host.HTTPS_TIMEOUT_SECONDS, 10, "4 s per-endpoint TLS handshake budget was below observed runner latency")
+        self.assertEqual(host.DNS_TIMEOUT_SECONDS, 3)
 
     def test_apt_invocation_applies_retries_and_timeout_to_subprocess(self) -> None:
         seen = {}
@@ -453,7 +462,11 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
     def test_recheck_policy_is_bounded(self) -> None:
         self.assertEqual(host.MIRROR_PROBE_ATTEMPTS, 3)
         self.assertLessEqual(host.MIRROR_PROBE_RETRY_DELAY_SECONDS, 10)
-        self.assertLessEqual(host.MIRROR_PROBE_ATTEMPTS * (3 * host.HTTPS_TIMEOUT_SECONDS + 3 * host.DNS_TIMEOUT_SECONDS) + (host.MIRROR_PROBE_ATTEMPTS - 1) * host.MIRROR_PROBE_RETRY_DELAY_SECONDS, 120)
+        worst_case = (
+            host.MIRROR_PROBE_ATTEMPTS * (3 * host.HTTPS_TIMEOUT_SECONDS + 3 * host.DNS_TIMEOUT_SECONDS)
+            + (host.MIRROR_PROBE_ATTEMPTS - 1) * host.MIRROR_PROBE_RETRY_DELAY_SECONDS
+        )
+        self.assertLessEqual(worst_case, 300, "bounded recheck must keep a hard total wall-clock cap")
 
     def test_official_source_plan_unavailable_fails_closed_without_retry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

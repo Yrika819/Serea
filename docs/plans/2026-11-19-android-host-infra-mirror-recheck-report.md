@@ -78,6 +78,35 @@ endpoint timeout.
 three official endpoints cannot complete that fast, so the helper performed no
 re-diagnosis: it replayed the preflight `FAIL` verbatim.
 
+### 2.5 Two further transient modes in the same helper
+
+Validating the fix on the current runner fleet exposed two independent
+latencies in the same host-preparation path. Both are recorded in artifacts
+from run `44500277631`.
+
+**(a) Per-endpoint TLS handshake latency above the 4 s cap.**
+`serea-android-host-probe-attempt-1` shows `noble-updates` timing out at the
+4 s cap in the preflight and in recheck attempts 1 and 2, then verifying in
+attempt 3, after which the job reached `HOST_READY`. Across that run 5 of 12
+endpoint observations hit the 4 s cap while other observations of the same
+endpoints succeeded.
+
+**(b) `apt-get update` above the 45 s command cap.**
+`serea-android-host-api26-attempt-1` recorded a passing preflight probe, then:
+
+```
+official apt-get update exit=124
+Get:1 ... Get:21 https://security.ubuntu.com/ubuntu noble-security/universe amd64 c-n-f Metadata [24.2 kB]
+COMMAND TIMED OUT after 45s
+```
+
+The update was progressing normally (21 indexes, ~28 MB of official signed
+indexes, no error) when the 45 s wall-clock cap aborted it. The same steps took
+39 s and 52 s in run `44486655006`, so the budget was already marginal and the
+degraded host throughput pushed it over.
+
+Neither mode is a persistent outage and neither is a dependency failure.
+
 ## 3. Root cause
 
 In `tools/android_ci_host.py`:
@@ -138,6 +167,13 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
    `CONNECTION_FAILURE`. Each recheck attempt appends
    `official_mirror_recheck attempt=<n>/<max>`, its result and its failure
    classes to the same evidence file, so the deciding observation is auditable.
+4. Two bounded latency caps are re-based on the evidence in section 2.5, each
+   still hard-capped and asserted by unit tests:
+   - `HTTPS_TIMEOUT_SECONDS`: 4 s -> 10 s per official endpoint.
+   - `APT_TIMEOUT_SECONDS`: 45 s -> 180 s for the official `apt-get` invocation.
+   `Acquire::http::Timeout=12`, `Acquire::https::Timeout=12` and
+   `Acquire::Retries=1` are unchanged, and the recheck total stays bounded
+   (`<= 300 s` worst case, asserted). No time limit becomes unlimited.
 
 ### 5.1 Unchanged safety properties
 
@@ -187,6 +223,7 @@ substance; 12 cases added):
 | Only same APT sources may reuse a PASS | `test_reused_probe_requires_unchanged_apt_sources` |
 | Partial official endpoint reachability fails | `test_partial_official_endpoint_reachability_fails_closed` |
 | All endpoints reachable is the only success | `test_all_official_endpoints_reachable_is_the_only_success` |
+| Per-endpoint and APT caps stay bounded | `test_apt_execution_time_limits_remain_bounded`, `test_apt_policy_is_bounded`, `test_recheck_policy_is_bounded` |
 | DNS failure distinguished | `test_dns_failure_is_classified_without_attempting_https` |
 | TLS verification failure fails closed | `test_tls_verification_failure_is_classified_as_failure` |
 | Invalid OS/source plan fails without retry | `test_official_source_plan_unavailable_fails_closed_without_retry` |
@@ -212,16 +249,20 @@ are unchanged.
 
 - The bounded budget (3 attempts, 5 s apart) cannot defeat a genuinely
   persistent outage; such a host still fails closed as `HOST_INFRA` with a
-  classified cause.
-- `https_reachable` keeps a 4 s per-endpoint timeout; a very slow but working
-  endpoint could consume one attempt. The recheck budget accommodates this, but
-  a sustained slowdown still fails closed.
+  classified cause. Round semantics stay all-or-nothing: a partial success in
+  one round never aggregates into overall success
+  (`test_exhausted_recheck_stops_as_host_infra_without_apt`).
+- A slow but working endpoint can still consume an attempt, and `apt-get` can
+  still exceed 180 s on a severely throttled host. Both fail closed with a
+  classified cause rather than a false success.
 - Preflight evidence can record `FAIL` while the job proceeds after a recheck
   `PASS`. Both lines are retained in the same artifact with explicit
   `official_mirror_probe_reuse=` / `official_mirror_recheck` markers, so the
   decision sequence is unambiguous under review.
-- This change does not address why a single GitHub-hosted runner exhibited a
-  one-endpoint TLS handshake timeout; that remains an external transient.
+- This change does not address why individual GitHub-hosted runners exhibit
+  per-connection TLS handshake latency or throttled egress; that remains
+  external. The fix only prevents such transients from being recorded as a
+  terminal verdict or being cut off by a marginal cap.
 
 ## 9. Next steps
 

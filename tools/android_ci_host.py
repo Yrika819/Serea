@@ -313,6 +313,21 @@ def probe_official_mirrors(
     return not failure_classes, release, architecture, sources, details
 
 
+def plan_fingerprint(release: str, architecture: str, sources: Sequence[str]) -> str:
+    """Stable identity of the official endpoint plan a verdict was produced for."""
+    digest = hashlib.sha256()
+    digest.update(f"{release}/{architecture}".encode("utf-8"))
+    for line in sources:
+        digest.update(b"\0")
+        digest.update(line.encode("utf-8"))
+    return f"{release}/{architecture}/{digest.hexdigest()[:16]}"
+
+
+def current_plan_fingerprint() -> str:
+    release, architecture, plan = official_mirror_plan()
+    return plan_fingerprint(release, architecture, plan[:3])
+
+
 def probe_failure_classes(details: Sequence[str]) -> list[str]:
     for line in reversed(list(details)):
         if line.startswith("official_https_failure_classes="):
@@ -339,13 +354,14 @@ def _parse_bound_records(lines: Sequence[str]) -> list[dict[str, str]]:
             continue
         if line.startswith("official_mirror_probe_record_end="):
             kind = line.split("=", 1)[1].strip()
-            if kind and kind == current.get("kind") and {"probe", "hash", "reason"} <= current.keys():
+            if kind and kind == current.get("kind") and {"probe", "hash", "plan", "reason"} <= current.keys():
                 records.append(current)
             current = None
             continue
         for field, key in (
             ("official_mirror_probe=", "probe"),
             ("official_mirror_probe_apt_sources_sha256=", "hash"),
+            ("official_mirror_probe_plan=", "plan"),
             ("official_mirror_probe_reason=", "reason"),
             ("official_mirror_probe_cause=", "cause"),
         ):
@@ -398,12 +414,13 @@ def recorded_probe_record(path: Path) -> tuple[bool, str, str, str | None] | Non
     return record["probe"] == "PASS", record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE"), record["hash"]
 
 
-def verdict_record_lines(kind: str, probe: str, source_hash: str, reason: str, cause: str) -> list[str]:
+def verdict_record_lines(kind: str, probe: str, source_hash: str, reason: str, cause: str, plan: str = "") -> list[str]:
     """Emit one immutable, self-contained verdict record."""
     return [
         f"official_mirror_probe_record_start={kind}",
         f"official_mirror_probe={'PASS' if probe == 'PASS' else 'FAIL'}",
         f"official_mirror_probe_apt_sources_sha256={source_hash}",
+        f"official_mirror_probe_plan={plan}",
         f"official_mirror_probe_reason={reason}",
         f"official_mirror_probe_cause={cause}",
         f"official_mirror_probe_record_end={kind}",
@@ -418,7 +435,7 @@ def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
     return record[0], record[1], record[2]
 
 
-def reusable_mirror_probe(path: Path, current_hash: str) -> tuple[bool, str, str] | None:
+def reusable_mirror_probe(path: Path, current_hash: str, current_plan: str = "") -> tuple[bool, str, str] | None:
     """Reuse only a bound PASS record; anything else must be re-diagnosed before APT.
 
     A preflight FAIL can be a transient DNS/TLS failure that cleared minutes later, so
@@ -434,7 +451,7 @@ def reusable_mirror_probe(path: Path, current_hash: str) -> tuple[bool, str, str
     if not records:
         return None
     record = records[-1]
-    if record["probe"] != "PASS" or record["hash"] != current_hash:
+    if record["probe"] != "PASS" or record["hash"] != current_hash or record.get("plan", "") != current_plan:
         return None
     return True, record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE")
 
@@ -466,20 +483,27 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
             )
             return False, reason, cause
         source_hash_before_probe = apt_source_snapshot()
+        if MONOTONIC() >= deadline:
+            append(path, "official_mirror_recheck_deadline_exceeded=true\nofficial_mirror_recheck_exhausted=true")
+            return False, reason, cause
         # Three sequential endpoints must together fit the remaining budget.
         https_timeout = max(1, min(HTTPS_TIMEOUT_SECONDS, int(remaining) // 3)) if remaining > 0 else 1
         try:
-            ok, _release, _architecture, _sources, details = probe_official_mirrors(runner, https_timeout=https_timeout)
+            ok, probe_release, probe_architecture, probe_sources, details = probe_official_mirrors(runner, https_timeout=https_timeout)
+            probe_plan = plan_fingerprint(probe_release, probe_architecture, probe_sources)
             if ok:
                 reason, cause = "all official InRelease endpoints verified", "HOST_READY"
             else:
                 reason, cause = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable", "NETWORK_FAILURE"
+            probe_plan = ""
         except RuntimeError as error:
             ok = False
+            probe_plan = ""
             details = [f"official_source_plan_unavailable={error}"]
             reason, cause = f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE"
         except Exception as error:  # noqa: BLE001 - a probe crash must fail closed with evidence
             ok = False
+            probe_plan = ""
             details = [f"official_mirror_recheck_unexpected_probe_error={type(error).__name__}: {error}"]
             reason = f"official mirror probe raised {type(error).__name__}"
             cause = "NETWORK_FAILURE"
@@ -504,7 +528,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
                 f"official_mirror_recheck_source_changed_during_probe={'true' if source_changed else 'false'}",
                 f"official_mirror_recheck_https_timeout_seconds={https_timeout}",
-                *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause),
+                *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause, probe_plan),
             )),
         )
         if source_changed:
@@ -588,7 +612,12 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     lines.append("official_ubuntu_mirror_https:")
     probe_source_hash = apt_source_snapshot()
     try:
-        mirrors_ok, release, architecture, _sources, details = probe_official_mirrors(runner, dns_results)
+        probe_source_plan = current_plan_fingerprint()
+    except RuntimeError:
+        probe_source_plan = ""
+    try:
+        mirrors_ok, release, architecture, sources, details = probe_official_mirrors(runner, dns_results)
+        probe_source_plan = plan_fingerprint(release, architecture, sources)
         lines.extend((f"fallback_release={release}", f"fallback_architecture={architecture}"))
         lines.extend(details)
         lines.extend(verdict_record_lines(
@@ -597,6 +626,7 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             probe_source_hash,
             "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable",
             "HOST_READY" if mirrors_ok else "NETWORK_FAILURE",
+            probe_source_plan,
         ))
     except RuntimeError as error:
         lines.append(f"fallback_plan=UNAVAILABLE ({error})")
@@ -606,6 +636,7 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             probe_source_hash,
             f"official source plan unavailable: {error}",
             "DEPENDENCY_FAILURE",
+            probe_source_plan,
         ))
     lines.append(f"libpulse0_package={package_state(runner)}")
     ldconfig = command(("ldconfig", "-p"), timeout=10, runner=runner)
@@ -702,7 +733,12 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
     if not pulse_missing:
         return record_failure(path, "HOST_INFRA", "runtime dependency state is inconsistent")
     source_hash_before = apt_source_snapshot()
-    mirror_probe = reusable_mirror_probe(path, source_hash_before)
+    try:
+        reusable_plan = current_plan_fingerprint()
+    except RuntimeError:
+        # Without a plan the cached verdict cannot be bound to this host; force a recheck.
+        reusable_plan = None
+    mirror_probe = reusable_mirror_probe(path, source_hash_before, reusable_plan) if reusable_plan is not None else None
     if mirror_probe is not None:
         append(path, "official_mirror_probe_reuse=RECORDED_PASS (recorded preflight PASS; APT sources unchanged)")
     else:

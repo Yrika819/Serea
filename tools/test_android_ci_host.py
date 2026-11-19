@@ -414,11 +414,13 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             sdk = Path(temporary)
             evidence = self._install(sdk / "host-preflight.txt", sdk)
             evidence.write_text(
-                "\n".join(host.verdict_record_lines("preflight", "PASS", "sources-same", "all official InRelease endpoints verified", "HOST_READY")) + "\n",
+                "\n".join(host.verdict_record_lines("preflight", "PASS", "sources-same", "all official InRelease endpoints verified", "HOST_READY", "plan-under-test")) + "\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "apt_source_snapshot", return_value="sources-same"
+            ), patch.object(
+                host, "current_plan_fingerprint", return_value="plan-under-test"
             ), patch.object(
                 host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
             ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(
@@ -608,7 +610,7 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
             qemu.write_text("test binary placeholder", encoding="utf-8")
             qemu.chmod(0o755)
             evidence = sdk / "host-preflight.txt"
-            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(host, "current_plan_fingerprint", return_value="plan-under-test"), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
@@ -649,6 +651,8 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
             ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-from-verdict")
             ), patch.object(
+                host, "current_plan_fingerprint", return_value="plan-under-test"
+            ), patch.object(
                 host, "apt_source_snapshot", return_value="hash-at-handoff"
             ), patch.object(
                 host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
@@ -665,6 +669,78 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(host.probe_failure_classes(["official_https x: UNREACHABLE (DNS)"]), [])
         self.assertEqual(host.probe_failure_classes(["official_https_failure_classes=none"]), [])
         self.assertEqual(host.probe_failure_classes(["official_https_failure_classes=TIMEOUT,DNS_FAILURE"]), ["TIMEOUT", "DNS_FAILURE"])
+
+    def test_redirect_handler_refuses_instead_of_following(self) -> None:
+        handler = next(h for h in host.OPENER.handlers if type(h).__name__ == "NoRedirectHandler")
+        self.assertIsNone(
+            handler.redirect_request(None, None, 302, "Found", {}, "https://evil.invalid/x"),
+            "the installed handler must refuse to build a redirect request",
+        )
+        self.assertFalse(
+            any(type(h).__name__ == "HTTPRedirectHandler" for h in host.OPENER.handlers),
+            "a follow-redirect handler must not be installed",
+        )
+
+    def test_apt_refuses_redirects_for_every_official_host(self) -> None:
+        for expected in EXPECTED_REDIRECT_BANS:
+            self.assertIn(expected, host.APT_REDIRECT_OPTIONS, f"{expected} must be passed to apt")
+
+    def test_record_end_must_match_its_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            body = [
+                "official_mirror_probe_record_start=recheck",
+                "official_mirror_probe=PASS",
+                "official_mirror_probe_apt_sources_sha256=hash-a",
+                "official_mirror_probe_plan=plan-under-test",
+                "official_mirror_probe_reason=verified",
+                "official_mirror_probe_cause=HOST_READY",
+            ]
+            for end in ("", "preflight", "recheck "):
+                evidence.write_text("\n".join(body + [f"official_mirror_probe_record_end={end}"]) + "\n", encoding="utf-8")
+                if end.strip() == "recheck":
+                    self.assertEqual(host.reusable_mirror_probe(evidence, "hash-a", "plan-under-test")[0], True)
+                else:
+                    self.assertIsNone(
+                        host.reusable_mirror_probe(evidence, "hash-a", "plan-under-test"),
+                        f"an end marker of {end!r} must not terminate the record",
+                    )
+
+    def test_late_pass_after_a_started_probe_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            passing = (
+                True,
+                "noble",
+                "amd64",
+                ["official source"],
+                ["official_https x: REACHABLE (HTTP 206; TLS verification enabled)", "official_https_failure_classes=none"],
+            )
+            # The probe starts inside the budget and finishes after it.
+            late = host.MIRROR_PROBE_DEADLINE_SECONDS + 1.0
+            # deadline, remaining, entry check (all inside the budget), then after the probe.
+            clock = iter([0.0, 0.0, 0.0, late, late + 1.0])
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "probe_official_mirrors", return_value=passing
+            ) as probe, patch.object(
+                host, "MONOTONIC", side_effect=lambda: next(clock, host.MIRROR_PROBE_DEADLINE_SECONDS + 5.0)
+            ), patch.object(host, "SLEEP", side_effect=lambda _s: None), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run after a late PASS")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(probe.call_count, 1, "the late PASS must be rejected without another round")
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official_mirror_recheck_deadline_exceeded=true", content)
+            self.assertNotIn("official_mirror_probe=PASS", content)
+            self.assertNotIn("result=HOST_READY", content)
 
     def test_redirect_away_from_the_official_endpoint_is_rejected(self) -> None:
         class Redirected:
@@ -727,7 +803,9 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
                 return True, "HTTP 206; TLS verification enabled"
 
             def advancing(**_kwargs):
-                state["round"] = next(rounds)
+                # A different endpoint fails in each round, whichever call order the
+                # helper uses to establish the plan.
+                state["round"] = next(rounds) % 3
                 return plan
 
             sleeps: list[float] = []
@@ -835,7 +913,7 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             qemu.write_text("test binary placeholder", encoding="utf-8")
             qemu.chmod(0o755)
             evidence = sdk / "host-preflight.txt"
-            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(host, "current_plan_fingerprint", return_value="plan-under-test"), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
@@ -967,6 +1045,7 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 out = ["official_mirror_probe_record_start=recheck", f"official_mirror_probe={probe}"]
                 if bound is not None:
                     out.append(f"official_mirror_probe_apt_sources_sha256={bound}")
+                out.append("official_mirror_probe_plan=plan-under-test")
                 out.append("official_mirror_probe_reason=all official InRelease endpoints verified")
                 out.append("official_mirror_probe_cause=HOST_READY")
                 if close:
@@ -974,17 +1053,17 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 return "\n".join(out) + "\n"
 
             evidence.write_text(record("PASS", "hash-b") + record("PASS", "hash-c"), encoding="utf-8")
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-b"), "an older bound record must not authorize reuse")
-            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-c")[0], True)
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-b", "plan-under-test"), "an older bound record must not authorize reuse")
+            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-c", "plan-under-test")[0], True)
 
             evidence.write_text(record("PASS", "hash-b") + record("PASS", "hash-c", close=False), encoding="utf-8")
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "an unterminated record is not a verdict")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c", "plan-under-test"), "an unterminated record is not a verdict")
 
             evidence.write_text(record("PASS", None), encoding="utf-8")
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "a record without a bound hash is not reusable")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c", "plan-under-test"), "a record without a bound hash is not reusable")
 
             evidence.write_text(record("FAIL", "hash-c"), encoding="utf-8")
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c"), "a FAIL record is never reused")
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-c", "plan-under-test"), "a FAIL record is never reused")
 
     def test_orphan_hash_cannot_rebind_an_accepted_record(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -993,6 +1072,7 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 "official_mirror_probe_record_start=recheck\n"
                 "official_mirror_probe=PASS\n"
                 "official_mirror_probe_apt_sources_sha256=hash-b\n"
+                "official_mirror_probe_plan=plan-under-test\n"
                 "official_mirror_probe_reason=all official InRelease endpoints verified\n"
                 "official_mirror_probe_cause=HOST_READY\n"
                 "official_mirror_probe_apt_sources_sha256=hash-d\n"
@@ -1000,8 +1080,8 @@ class ProbeSafetyBoundTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(host.recorded_probe_record(evidence)[3], "hash-b", "the first bound hash must win")
-            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-b")[0], True)
-            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-d"))
+            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-b", "plan-under-test")[0], True)
+            self.assertIsNone(host.reusable_mirror_probe(evidence, "hash-d", "plan-under-test"))
 
     def test_bound_records_disable_the_legacy_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1043,8 +1123,13 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             self.assertIn("official_mirror_probe_record_start=preflight", content)
             self.assertIn("official_mirror_probe_apt_sources_sha256=hash-preflight", content)
             self.assertIn("official_mirror_probe_record_end=preflight", content)
-            with patch.object(host, "apt_source_snapshot", return_value="hash-preflight"):
-                self.assertEqual(host.reusable_mirror_probe(evidence, "hash-preflight")[0], True)
+            expected_plan = host.plan_fingerprint("noble", "amd64", ["source"])
+            self.assertIn(f"official_mirror_probe_plan={expected_plan}", content)
+            self.assertEqual(host.reusable_mirror_probe(evidence, "hash-preflight", expected_plan)[0], True)
+            self.assertIsNone(
+                host.reusable_mirror_probe(evidence, "hash-preflight", "other-plan"),
+                "a verdict must not authorize APT for a different official endpoint plan",
+            )
 
     def test_in_flight_probe_budget_is_capped_by_the_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

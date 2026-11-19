@@ -203,6 +203,11 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
      start kind counts, and reuse requires such a record: legacy
      header-only evidence is never reusable because it predates the redirect
      refusal and cannot prove which endpoint produced the verdict;
+   - a verdict is bound to the official endpoint **plan**, not only to the
+     system source hash (`official_mirror_probe_plan=`), so a verdict produced
+     for the amd64 archive/security plan cannot authorize a runtime whose
+     plan is `ports.ubuntu.com`; the plan is re-derived at the reuse site and
+     on mismatch the cached verdict is ignored;
    - a source change detected across a recheck probe
      (`official_mirror_recheck_source_changed_during_probe=true`) fails closed,
      and the runtime re-checks at the APT handoff that the verdict's bound hash
@@ -255,10 +260,10 @@ apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU
 
 ## 7. Regression tests
 
-`tools/test_android_ci_host.py`: 54 cases (the 19 pre-existing cases retained;
+`tools/test_android_ci_host.py`: 58 cases (the 19 pre-existing cases retained;
 the only body changes are the pinned `APT_TIMEOUT_SECONDS == 45` becoming an
 asserted 45..180 bound and a `SLEEP` injection in the pre-existing unreachable-
-mirror test; 35 cases added):
+mirror test; 39 cases added):
 
 | Requirement | Test |
 | --- | --- |
@@ -283,6 +288,9 @@ mirror test; 35 cases added):
 | Only a terminated bound record is reusable | `test_only_a_complete_bound_record_is_reusable`, `test_orphan_hash_cannot_rebind_an_accepted_record`, `test_bound_records_disable_the_legacy_fallback`, `test_preflight_writes_a_self_contained_bound_record` |
 | Deadline applies to in-flight PASS and to probe start | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline`, `test_recheck_stops_at_the_wall_clock_deadline` |
 | Legacy evidence never authorizes APT | `test_reused_probe_requires_unchanged_apt_sources` (legacy branch) |
+| A verdict is bound to the endpoint plan | `test_preflight_writes_a_self_contained_bound_record` |
+| A record needs a matching end kind | `test_record_end_must_match_its_start` |
+| The handler itself refuses to redirect | `test_redirect_handler_refuses_instead_of_following`, `test_apt_refuses_redirects_for_every_official_host` |
 | Verdict hash must survive to the APT handoff | `test_runtime_refuses_a_verdict_bound_to_a_stale_source_hash` |
 | Redirect ban reaches the real apt command line | `test_apt_commands_carry_every_redirect_ban`, `test_redirect_probe_makes_exactly_one_transport_call` |
 | Legacy detail lists tolerated | `test_probe_failure_classes_tolerates_legacy_detail_lists` |
@@ -414,9 +422,27 @@ controls were still bypassable in evidence-only paths, each fixed:
 | Probe work (plan/DNS) could start with the budget already consumed | no attempt starts once the deadline has passed, and the deadline scope is recorded explicitly |
 | The verdict hash could diverge from the runtime baseline before APT | the runtime verifies the verdict's bound hash against a fresh snapshot at the APT handoff |
 
-Two in-memory mutations were used to confirm the new tests are load-bearing
-(dropping every APT redirect flag, and restoring redirect-following in the
-handler): both are now detected.
+Round 5 (head `ec439744`, tree `56c8232eb6`): 3 Medium, 0 Low — all resolved.
+
+| Round-5 finding | Resolution |
+| --- | --- |
+| A cached PASS could authorize APT against a different mirror plan (amd64 verdict reused on an arm64 runtime with the same source hash) | verdicts now carry `official_mirror_probe_plan=` (release/arch plus a hash of the three endpoint URLs) and reuse requires equality with the freshly derived plan |
+| The deadline could be passed after the loop's budget sample, and the recorded scope overstated the guarantee | the deadline is re-checked immediately before probing, and the recorded scope says exactly what is enforced: no probe work starts after the deadline, total bounded by the deadline plus at most one in-flight attempt |
+| The suite did not detect a restored redirect-following handler, a mismatched/empty end kind, or a late PASS | added `test_redirect_handler_refuses_instead_of_following`, `test_apt_refuses_redirects_for_every_official_host`, `test_record_end_must_match_its_start`, `test_late_pass_after_a_started_probe_is_rejected` (probe starts inside the budget, finishes after it) |
+
+Eight code mutations were applied to a copy of the module and each must fail the
+suite. All eight are detected:
+
+| Mutation | Detected by |
+| --- | --- |
+| restore `HTTPRedirectHandler` behaviour | `test_redirect_handler_refuses_instead_of_following` |
+| drop every APT redirect key | `test_apt_commands_carry_every_redirect_ban` |
+| accept an end kind that differs from its start, or an empty one | `test_record_end_must_match_its_start` |
+| ignore the plan when reusing a verdict | `test_preflight_writes_a_self_contained_bound_record` |
+| accept a PASS that completed after the deadline | `test_late_pass_after_a_started_probe_is_rejected` |
+| drop the pre-probe deadline check | `test_late_pass_after_a_started_probe_is_rejected` |
+| reuse the first bound record instead of the last | `test_orphan_hash_cannot_rebind_an_accepted_record` |
+| re-admit legacy header-only evidence | `test_reused_probe_requires_unchanged_apt_sources` |
 
 Low findings after round 4: the ordinary install-success branch reports on the
 loader result while dpkg state is recorded separately (accepted: loader

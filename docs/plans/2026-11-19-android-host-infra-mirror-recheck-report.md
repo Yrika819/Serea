@@ -160,10 +160,13 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
 2. `recheck_official_mirrors()` re-diagnoses the official mirrors with a bounded
    budget before any APT command:
    - `MIRROR_PROBE_ATTEMPTS = 3`, `MIRROR_PROBE_RETRY_DELAY_SECONDS = 5`
-   - `MIRROR_PROBE_DEADLINE_SECONDS = 90` is a **cooperative** budget, not a hard
-     kernel-enforced ceiling: no new attempt is started after it and a probe that
-     finishes late cannot be recorded as `PASS`, but an attempt already in flight
-     can overrun by at most one endpoint timeout. Both facts are recorded
+   - `MIRROR_PROBE_DEADLINE_SECONDS = 90` is a **cooperative** budget, not a
+     supervisor-enforced ceiling: no new attempt is started after it and a probe
+     that finishes late cannot be recorded as `PASS`, but an attempt already
+     admitted still finishes its own plan lookup, DNS and endpoint checks (each
+     endpoint bounded by `min(10 s, remaining/3)`). Only the attempt count and
+     those per-endpoint timeouts bound the total; a hard ceiling would require a
+     supervising process, which this helper deliberately does not add. Both facts are recorded
      (`official_mirror_recheck_deadline_exceeded=true`,
      `official_mirror_recheck_deadline_enforcement=`); enforcing a hard ceiling
      would need a supervising process, which this helper deliberately does not
@@ -223,10 +226,9 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
      `remaining/3` as its own timeout so three sequential endpoints fit the
      remaining budget (`official_mirror_recheck_https_timeout_seconds=`), and the
      retry wait is clamped so it cannot sleep past the deadline, and the deadline
-     is re-checked immediately before each probe. The honest bound is therefore
-     `MIRROR_PROBE_DEADLINE_SECONDS` plus one in-flight attempt's own endpoint
-     timeouts (10 s each, at most three), recorded as
-     `official_mirror_recheck_deadline_scope=`;
+     is re-checked immediately before each probe. The recorded
+     `official_mirror_recheck_deadline_scope=` line states exactly this and
+     nothing stronger;
    - malformed HTTP responses are classified instead of escaping the recheck.
 
 ### 5.1 Unchanged safety properties
@@ -289,7 +291,7 @@ mirror test; 42 cases added):
 | Every endpoint is probed for a PASS | `test_all_endpoints_must_be_probed_for_a_pass` |
 | Rotating endpoint failure never aggregates | `test_rotating_endpoint_failure_never_aggregates_into_success` |
 | Partial APT index fetch cannot continue | `test_apt_update_uses_strict_error_mode`, `test_official_apt_update_uses_strict_error_mode` |
-| Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected`, `test_source_change_after_cache_validation_is_detected`, `test_recheck_source_change_during_probe_fails_closed`, `test_verdict_block_is_bound_to_one_complete_record`, `test_incomplete_verdict_block_is_not_reused` |
+| Verdict is bound to its own source hash | `test_recheck_verdict_carries_its_own_source_hash`, `test_source_change_after_cache_validation_is_detected`, `test_recheck_source_change_during_probe_fails_closed`, `test_record_end_must_match_its_start` |
 | Redirect refused before following | `test_redirect_is_refused_before_it_is_followed`, `test_redirect_handler_refuses_instead_of_following`, `test_redirect_away_from_the_official_endpoint_is_rejected`, `test_apt_refuses_redirects_for_every_official_host` |
 | Only a terminated bound record is reusable | `test_only_a_complete_bound_record_is_reusable`, `test_orphan_hash_cannot_rebind_an_accepted_record`, `test_bound_records_disable_the_legacy_fallback`, `test_preflight_writes_a_self_contained_bound_record` |
 | Deadline applies to in-flight PASS and to probe start | `test_pass_completed_after_the_deadline_is_rejected`, `test_in_flight_probe_budget_is_capped_by_the_deadline`, `test_recheck_stops_at_the_wall_clock_deadline` |
@@ -435,9 +437,10 @@ requires the verdict's plan as well as its source hash
 (`recorded_probe_plan()`), `official_fallback()` receives the verified plan and
 refuses to write sources for a different one
 (`official_mirror_plan_at_apt=`), the recorded deadline text says exactly what is
-enforced, and two tests now reach both APT calls (`test_source_mutation_after_both_apt_calls_is_host_infra`,
-`test_plan_drift_at_the_apt_boundary_blocks_installation`,
-`test_verdict_without_a_plan_cannot_authorize_apt`).
+enforced. Three tests pin the boundary: `test_source_mutation_after_both_apt_calls_is_host_infra`
+is the one that reaches both APT calls, while
+`test_plan_drift_at_the_apt_boundary_blocks_installation` and
+`test_verdict_without_a_plan_cannot_authorize_apt` assert that APT runs zero times.
 
 Round 5 (head `ec439744`, tree `56c8232eb6`): 3 Medium, 0 Low — all resolved.
 
@@ -458,7 +461,7 @@ suite. All twelve are detected:
 | ignore the plan when reusing a verdict | `test_preflight_writes_a_self_contained_bound_record` |
 | accept a PASS that completed after the deadline | `test_late_pass_after_a_started_probe_is_rejected` |
 | drop the pre-probe deadline check | `test_late_pass_after_a_started_probe_is_rejected` |
-| reuse the first bound record instead of the last | `test_orphan_hash_cannot_rebind_an_accepted_record` |
+| reuse the first bound record instead of the last | `test_only_a_complete_bound_record_is_reusable` |
 | re-admit legacy header-only evidence | `test_reused_probe_requires_unchanged_apt_sources` |
 | drop the verification that the fallback plan equals the verdict plan | `test_plan_drift_at_the_apt_boundary_blocks_installation` |
 | drop the requirement that a verdict carries a plan | `test_verdict_without_a_plan_cannot_authorize_apt` |

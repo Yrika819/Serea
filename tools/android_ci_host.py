@@ -31,8 +31,10 @@ HTTPS_TIMEOUT_SECONDS = 10
 # Worst case adds MIRROR_PROBE_ATTEMPTS * (3 probes) + (attempts - 1) * delay seconds.
 MIRROR_PROBE_ATTEMPTS = 3
 MIRROR_PROBE_RETRY_DELAY_SECONDS = 5
-# Hard wall-clock ceiling for one re-diagnosis, so a slow endpoint cannot extend the
-# bounded attempt budget indefinitely.
+# Cooperative budget for one re-diagnosis: no new attempt starts after it and a probe
+# that finishes late cannot be recorded as PASS. It is not a supervisor-enforced
+# ceiling; an admitted attempt still has to finish its own plan lookup, DNS and
+# endpoint checks, which the per-endpoint timeouts bound.
 MIRROR_PROBE_DEADLINE_SECONDS = 90
 SLEEP: Callable[[float], None] = time.sleep
 MONOTONIC: Callable[[], float] = time.monotonic
@@ -477,7 +479,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 "\n".join((
                     "official_mirror_recheck_deadline_exceeded=true",
                     f"official_mirror_recheck_deadline_seconds={MIRROR_PROBE_DEADLINE_SECONDS}",
-                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; an in-flight attempt may overrun by one endpoint timeout",
+                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; an admitted attempt still finishes its own bounded plan lookup, DNS and endpoint checks",
                     "official_mirror_recheck_exhausted=true",
                 )),
             )
@@ -526,7 +528,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 f"official_mirror_recheck_result={'PASS' if ok else 'FAIL'}",
                 f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
                 f"official_mirror_recheck_source_changed_during_probe={'true' if source_changed else 'false'}",
-                "official_mirror_recheck_deadline_enforcement=no new attempt starts after the deadline; one in-flight attempt may overrun by one endpoint timeout",
+                "official_mirror_recheck_deadline_enforcement=no new attempt starts after the deadline and a late PASS is rejected; an admitted attempt still finishes its own bounded plan lookup, DNS and endpoint checks",
                 f"official_mirror_recheck_https_timeout_seconds={https_timeout}",
                 *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause, probe_plan),
             )),

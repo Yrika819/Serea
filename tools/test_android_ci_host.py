@@ -167,7 +167,7 @@ class AndroidCiHostTests(unittest.TestCase):
                 return_value=(False, "noble", "amd64", ["official source"], ["archive.ubuntu.com: UNRESOLVED", "HTTPS: UNREACHABLE (DNS)"]),
             ), patch.object(
                 host, "apt_invocation", side_effect=AssertionError("APT must not run when official mirrors are unreachable")
-            ) as apt:
+            ) as apt, patch.object(host, "SLEEP", side_effect=lambda _seconds: None):
                 self.assertEqual(host.install_runtime(evidence, "35"), 1)
             self.assertEqual(apt.call_count, 0)
             self.assertIn("result=HOST_INFRA", evidence.read_text(encoding="utf-8"))
@@ -296,6 +296,265 @@ class AndroidCiHostTests(unittest.TestCase):
             ), patch.object(host, "package_state", return_value="libpulse0 1.0"):
                 self.assertEqual(host.install_runtime(evidence, "35"), 1)
             self.assertIn("result=DEPENDENCY_FAILURE", evidence.read_text(encoding="utf-8"))
+
+
+class RecordedMirrorProbeReuseTests(unittest.TestCase):
+    """A preflight FAIL must never be replayed as a final verdict."""
+
+    RECOVERED_FAIL = (
+        False,
+        "noble",
+        "amd64",
+        ["official source"],
+        [
+            "official_https https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease: UNREACHABLE (TIMEOUT; TLS handshake timed out)",
+            "official_https_failure_classes=TIMEOUT",
+        ],
+    )
+    PASS = (
+        True,
+        "noble",
+        "amd64",
+        ["official source"],
+        [
+            "official_https https://archive.ubuntu.com/ubuntu/dists/noble/InRelease: REACHABLE (HTTP 206; TLS verification enabled)",
+            "official_https_failure_classes=none",
+        ],
+    )
+
+    def _install(self, evidence: Path, sdk: Path):
+        qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+        qemu.parent.mkdir(parents=True, exist_ok=True)
+        qemu.write_text("test binary placeholder", encoding="utf-8")
+        qemu.chmod(0o755)
+        return evidence
+
+    def test_recorded_preflight_failure_is_re_diagnosed_and_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            evidence = self._install(sdk / "host-preflight.txt", sdk)
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-same\n"
+                "official_mirror_probe=FAIL\n"
+                "official_mirror_probe_reason=official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable\n"
+                "official_mirror_probe_cause=NETWORK_FAILURE\n",
+                encoding="utf-8",
+            )
+            sleeps: list[float] = []
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "apt_source_snapshot", return_value="sources-same"
+            ), patch.object(
+                host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
+            ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED (exit=1)", "libpulse0 1.0"]), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "probe_official_mirrors", side_effect=[self.RECOVERED_FAIL, self.PASS]
+            ) as probe, patch.object(
+                host, "SLEEP", side_effect=sleeps.append
+            ), patch.object(
+                host, "official_fallback", return_value=(sdk / "sources.list", ["-o", "source-options"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=[subprocess.CompletedProcess([], 0, "official update ok"), subprocess.CompletedProcess([], 0, "Setting up libpulse0")]
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 0)
+            self.assertEqual(probe.call_count, 2, "a recorded preflight FAIL must be re-diagnosed before APT")
+            self.assertEqual(apt.call_count, 2)
+            self.assertEqual(len(sleeps), 1)
+            self.assertLessEqual(sleeps[0], host.MIRROR_PROBE_RETRY_DELAY_SECONDS)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official_mirror_recheck attempt=1/", content)
+            self.assertIn("official_mirror_recheck_result=FAIL", content)
+            self.assertIn("official_mirror_recheck_failure_classes=TIMEOUT", content)
+            self.assertIn("official_mirror_recheck_result=PASS", content)
+            self.assertIn("official_mirror_probe=PASS", content)
+            self.assertIn("result=HOST_READY", content)
+            self.assertIn("apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU", content)
+
+    def test_exhausted_recheck_stops_as_host_infra_without_apt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            evidence = self._install(sdk / "host-preflight.txt", sdk)
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-same\nofficial_mirror_probe=FAIL\nofficial_mirror_probe_reason=transient\n",
+                encoding="utf-8",
+            )
+            sleeps: list[float] = []
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "apt_source_snapshot", return_value="sources-same"
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED (exit=1)"), patch.object(
+                host, "probe_official_mirrors", return_value=self.RECOVERED_FAIL
+            ) as probe, patch.object(
+                host, "SLEEP", side_effect=sleeps.append
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run after exhausted network recheck")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(probe.call_count, host.MIRROR_PROBE_ATTEMPTS)
+            self.assertEqual(len(sleeps), host.MIRROR_PROBE_ATTEMPTS - 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertIn("failure_cause=NETWORK_FAILURE", content)
+            self.assertIn(f"official_mirror_recheck attempt={host.MIRROR_PROBE_ATTEMPTS}/{host.MIRROR_PROBE_ATTEMPTS}", content)
+            self.assertIn("official_mirror_recheck_exhausted=true", content)
+
+    def test_successful_recorded_probe_is_still_reused_without_network_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            evidence = self._install(sdk / "host-preflight.txt", sdk)
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-same\n"
+                "official_mirror_probe=PASS\n"
+                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
+                "official_mirror_probe_cause=HOST_READY\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "apt_source_snapshot", return_value="sources-same"
+            ), patch.object(
+                host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
+            ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "probe_official_mirrors", side_effect=AssertionError("a recorded PASS must be reused, not re-probed")
+            ), patch.object(
+                host, "official_fallback", return_value=(sdk / "sources.list", ["-o", "source-options"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=[subprocess.CompletedProcess([], 0, "ok"), subprocess.CompletedProcess([], 0, "ok")]
+            ):
+                self.assertEqual(host.install_runtime(evidence, "35"), 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official_mirror_probe_reuse=RECORDED_PASS", content)
+            self.assertIn("result=HOST_READY", content)
+
+    def test_reused_probe_requires_unchanged_apt_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "host-preflight.txt"
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-a\n"
+                "official_mirror_probe=PASS\n"
+                "official_mirror_probe_reason=all official InRelease endpoints verified\n"
+                "official_mirror_probe_cause=HOST_READY\n",
+                encoding="utf-8",
+            )
+            with patch.object(host, "apt_source_snapshot", return_value="sources-a"):
+                self.assertEqual(host.reusable_mirror_probe(evidence), (True, "all official InRelease endpoints verified", "HOST_READY"))
+            with patch.object(host, "apt_source_snapshot", return_value="sources-b"):
+                self.assertIsNone(host.reusable_mirror_probe(evidence))
+            evidence.write_text(
+                "apt_sources_sha256_before=sources-a\nofficial_mirror_probe=FAIL\nofficial_mirror_probe_reason=transient\n",
+                encoding="utf-8",
+            )
+            with patch.object(host, "apt_source_snapshot", return_value="sources-a"):
+                self.assertIsNone(host.reusable_mirror_probe(evidence))
+
+    def test_recheck_policy_is_bounded(self) -> None:
+        self.assertEqual(host.MIRROR_PROBE_ATTEMPTS, 3)
+        self.assertLessEqual(host.MIRROR_PROBE_RETRY_DELAY_SECONDS, 10)
+        self.assertLessEqual(host.MIRROR_PROBE_ATTEMPTS * (3 * host.HTTPS_TIMEOUT_SECONDS + 3 * host.DNS_TIMEOUT_SECONDS) + (host.MIRROR_PROBE_ATTEMPTS - 1) * host.MIRROR_PROBE_RETRY_DELAY_SECONDS, 120)
+
+    def test_official_source_plan_unavailable_fails_closed_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            evidence = self._install(sdk / "host-preflight.txt", sdk)
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "reusable_mirror_probe", return_value=None
+            ), patch.object(
+                host, "probe_official_mirrors", side_effect=RuntimeError("official fallback supports Ubuntu 24.04 noble only; observed ID=debian codename=bookworm")
+            ) as probe, patch.object(
+                host, "SLEEP", side_effect=AssertionError("unsupported OS conditions must not be retried")
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run for an unsupported OS")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(probe.call_count, 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertIn("official_mirror_probe_cause=DEPENDENCY_FAILURE", content)
+            self.assertIn("failure_cause=DEPENDENCY_FAILURE", content)
+            self.assertNotIn("result=HOST_READY", content)
+            self.assertNotIn("official_mirror_recheck_exhausted=true", content)
+
+    def test_system_apt_source_mutation_during_install_is_host_infra(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            evidence = self._install(sdk / "host-preflight.txt", sdk)
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
+            ), patch.object(
+                host, "apt_source_snapshot", side_effect=["hash-before", "hash-after"]
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "official_fallback", return_value=(sdk / "sources.list", ["-o", "source-options"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=[subprocess.CompletedProcess([], 0, "ok"), subprocess.CompletedProcess([], 0, "ok")]
+            ):
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("result=HOST_INFRA", content)
+            self.assertIn("system APT source configuration changed", content)
+            self.assertNotIn("result=HOST_READY", content)
+
+
+class MirrorProbeDiagnosticsTests(unittest.TestCase):
+    def test_partial_official_endpoint_reachability_fails_closed(self) -> None:
+        plan = ("noble", "amd64", ("deb-line-1", "deb-line-2", "deb-line-3", *host.fallback_check_urls("noble", "amd64")))
+
+        def fake_reachable(url: str, timeout: int = host.HTTPS_TIMEOUT_SECONDS):
+            if "noble-security" in url:
+                return False, "UNREACHABLE (TIMEOUT; TLS handshake timed out)"
+            return True, "HTTP 206; TLS verification enabled"
+
+        with patch.object(host, "official_mirror_plan", return_value=plan), patch.object(
+            host, "resolve_host", return_value="192.0.2.10"
+        ), patch.object(host, "https_reachable", side_effect=fake_reachable):
+            ok, _release, _architecture, _sources, details = host.probe_official_mirrors()
+        self.assertFalse(ok, "every official InRelease endpoint must be reachable")
+        self.assertEqual(host.probe_failure_classes(details), ["TIMEOUT"])
+        self.assertIn("official_https_failure_classes=TIMEOUT", details)
+
+    def test_all_official_endpoints_reachable_is_the_only_success(self) -> None:
+        plan = ("noble", "amd64", ("deb-line-1", "deb-line-2", "deb-line-3", *host.fallback_check_urls("noble", "amd64")))
+        with patch.object(host, "official_mirror_plan", return_value=plan), patch.object(
+            host, "resolve_host", return_value="192.0.2.10"
+        ), patch.object(host, "https_reachable", return_value=(True, "HTTP 206; TLS verification enabled")):
+            ok, _release, _architecture, _sources, details = host.probe_official_mirrors()
+        self.assertTrue(ok)
+        self.assertEqual(host.probe_failure_classes(details), [])
+        self.assertIn("official_https_failure_classes=none", details)
+
+    def test_dns_failure_is_classified_without_attempting_https(self) -> None:
+        plan = ("noble", "amd64", ("deb-line-1", "deb-line-2", "deb-line-3", *host.fallback_check_urls("noble", "amd64")))
+        with patch.object(host, "official_mirror_plan", return_value=plan), patch.object(
+            host, "resolve_host", return_value="UNRESOLVED (exit=2; Temporary failure in name resolution)"
+        ), patch.object(host, "https_reachable", side_effect=AssertionError("HTTPS must not be attempted for unresolved DNS")):
+            ok, _release, _architecture, _sources, details = host.probe_official_mirrors()
+        self.assertFalse(ok)
+        self.assertEqual(host.probe_failure_classes(details), ["DNS_FAILURE"])
+
+    def test_tls_verification_failure_is_classified_as_failure(self) -> None:
+        import ssl
+        import urllib.error
+
+        error = urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))
+        with patch.object(host.urllib.request, "urlopen", side_effect=error):
+            self.assertEqual(host.https_reachable("https://archive.ubuntu.com/ubuntu/dists/noble/InRelease"), (False, "UNREACHABLE (TLS_VERIFICATION_FAILURE; certificate verify failed)"))
+        self.assertEqual(host.classify_https_failure("UNREACHABLE (HTTP Error 403: Forbidden)"), "HTTP_ERROR")
+        self.assertEqual(host.classify_https_failure("UNREACHABLE (The handshake operation timed out)"), "TIMEOUT")
+        self.assertEqual(host.classify_https_failure("UNREACHABLE (DNS resolution failed for archive.ubuntu.com)"), "DNS_FAILURE")
+
+    def test_probe_failure_classes_tolerates_legacy_detail_lists(self) -> None:
+        self.assertEqual(host.probe_failure_classes(["official_https x: UNREACHABLE (DNS)"]), [])
+        self.assertEqual(host.probe_failure_classes(["official_https_failure_classes=none"]), [])
+        self.assertEqual(host.probe_failure_classes(["official_https_failure_classes=TIMEOUT,DNS_FAILURE"]), ["TIMEOUT", "DNS_FAILURE"])
 
 
 if __name__ == "__main__":

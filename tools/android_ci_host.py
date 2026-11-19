@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -22,6 +23,25 @@ from typing import Callable, Sequence
 APT_TIMEOUT_SECONDS = 45
 DNS_TIMEOUT_SECONDS = 3
 HTTPS_TIMEOUT_SECONDS = 4
+# Bounded re-diagnosis budget for a transient official-mirror connectivity failure.
+# Worst case adds MIRROR_PROBE_ATTEMPTS * (3 probes) + (attempts - 1) * delay seconds.
+MIRROR_PROBE_ATTEMPTS = 3
+MIRROR_PROBE_RETRY_DELAY_SECONDS = 5
+SLEEP: Callable[[float], None] = time.sleep
+HTTPS_FAILURE_MARKERS = (
+    ("DNS_FAILURE", ("dns resolution failed", "name or service not known", "temporary failure in name resolution", "nodename nor servname", "getaddrinfo failed", "name resolution", "unresolved")),
+    ("TLS_VERIFICATION_FAILURE", ("certificate verify failed", "certificate_verify_failed", "self-signed certificate", "self signed certificate", "hostname mismatch", "unable to get local issuer", "unknown ca")),
+    ("HTTP_ERROR", ("http error", "http status")),
+    ("TIMEOUT", ("timed out", "timeout")),
+)
+HTTPS_FAILURE_REASONS = {
+    "DNS_FAILURE": "DNS resolution failed",
+    "TLS_VERIFICATION_FAILURE": "certificate verify failed",
+    "HTTP_ERROR": "HTTP status failure",
+    "TIMEOUT": "timed out",
+    "CONNECTION_FAILURE": "connection failed",
+}
+
 APT_OPTIONS = (
     "-o", "Acquire::Retries=1",
     "-o", "Acquire::http::Timeout=12",
@@ -192,14 +212,31 @@ def fallback_check_urls(release: str, architecture: str) -> tuple[str, ...]:
     )
 
 
+def classify_https_failure(detail: str) -> str:
+    """Map an HTTPS probe detail to a machine-readable network failure class."""
+    lowered = detail.lower()
+    for category, markers in HTTPS_FAILURE_MARKERS:
+        if any(marker in lowered for marker in markers):
+            return category
+    return "CONNECTION_FAILURE"
+
+
+def https_failure_detail(failure_class: str, status: int | None = None) -> str:
+    reason = f"HTTP status {status}" if status is not None else HTTPS_FAILURE_REASONS.get(failure_class, "connection failed")
+    return f"UNREACHABLE ({failure_class}; {reason})"
+
+
 def https_reachable(url: str, timeout: int = HTTPS_TIMEOUT_SECONDS) -> tuple[bool, str]:
     request = urllib.request.Request(url, method="GET", headers={"Range": "bytes=0-0", "User-Agent": "Serea-Android-CI-Host-Preflight"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             response.read(1)
-            return 200 <= response.status < 400, f"HTTP {response.status}; TLS verification enabled"
+            if 200 <= response.status < 400:
+                return True, f"HTTP {response.status}; TLS verification enabled"
+            return False, https_failure_detail("HTTP_ERROR", status=response.status)
     except (urllib.error.URLError, TimeoutError, OSError) as error:
-        return False, f"UNREACHABLE ({error})"
+        # TLS verification is never disabled: certificate failures are terminal FAIL results.
+        return False, https_failure_detail(classify_https_failure(str(error)))
 
 
 def probe_official_mirrors(
@@ -212,22 +249,34 @@ def probe_official_mirrors(
     urls = list(plan[3:])
     resolved = dns_cache if dns_cache is not None else {}
     details: list[str] = []
+    failure_classes: list[str] = []
     hosts = sorted({urlparse(url).hostname or "" for url in urls} - {""})
     for host in hosts:
         if host not in resolved:
             resolved[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
         details.append(f"official_dns {host}: {resolved[host]}")
-    ok = True
     for url in urls:
         host = urlparse(url).hostname or ""
         if "UNRESOLVED" in resolved.get(host, "UNRESOLVED"):
             reachable = False
-            detail = f"UNREACHABLE (DNS resolution failed for {host})"
+            detail = f"UNREACHABLE (DNS_FAILURE; DNS resolution failed for {host})"
         else:
             reachable, detail = https_reachable(url, timeout=HTTPS_TIMEOUT_SECONDS)
         details.append(f"official_https {url}: {'REACHABLE' if reachable else 'UNREACHABLE'} ({detail})")
-        ok = ok and reachable
-    return ok, release, architecture, sources, details
+        if not reachable:
+            failure_classes.append(classify_https_failure(detail))
+    details.append("official_https_failure_classes=" + (",".join(sorted(set(failure_classes))) if failure_classes else "none"))
+    return not failure_classes, release, architecture, sources, details
+
+
+def probe_failure_classes(details: Sequence[str]) -> list[str]:
+    for line in reversed(list(details)):
+        if line.startswith("official_https_failure_classes="):
+            value = line.split("=", 1)[1].strip()
+            if value in ("", "none"):
+                return []
+            return [part for part in value.split(",") if part]
+    return []
 
 
 def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
@@ -243,6 +292,66 @@ def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
     if recorded_hash != apt_source_snapshot() or status not in ("PASS", "FAIL"):
         return None
     return status == "PASS", reason, cause
+
+
+def reusable_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
+    """Reuse only a recorded PASS; a recorded FAIL must be re-diagnosed before APT.
+
+    A preflight FAIL can be a transient DNS/TLS failure that cleared minutes later, so
+    replaying it as a terminal verdict would fail closed for the wrong reason.
+    """
+    recorded = recorded_mirror_probe(path)
+    if recorded is None or not recorded[0]:
+        return None
+    return recorded
+
+
+def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[bool, str, str]:
+    """Re-diagnose the official mirrors with a bounded retry budget, fail-closed."""
+    append(
+        path,
+        "\n".join((
+            f"official_mirror_recheck_policy=attempts={MIRROR_PROBE_ATTEMPTS}; delay_seconds={MIRROR_PROBE_RETRY_DELAY_SECONDS}",
+            "official_mirror_recheck_success_requires=every official InRelease endpoint reachable over TLS-verified HTTPS",
+            "official_mirror_recheck_tls_validation=enabled",
+        )),
+    )
+    reason = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
+    cause = "NETWORK_FAILURE"
+    for attempt in range(1, MIRROR_PROBE_ATTEMPTS + 1):
+        try:
+            ok, _release, _architecture, _sources, details = probe_official_mirrors(runner)
+            if ok:
+                reason, cause = "all official InRelease endpoints verified", "HOST_READY"
+            else:
+                reason, cause = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable", "NETWORK_FAILURE"
+        except RuntimeError as error:
+            ok = False
+            details = [f"official_source_plan_unavailable={error}"]
+            reason, cause = f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE"
+        classes = probe_failure_classes(details)
+        append(
+            path,
+            "\n".join((
+                *details,
+                f"official_mirror_recheck attempt={attempt}/{MIRROR_PROBE_ATTEMPTS}",
+                f"official_mirror_recheck_result={'PASS' if ok else 'FAIL'}",
+                f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
+                f"official_mirror_probe={'PASS' if ok else 'FAIL'}",
+                f"official_mirror_probe_reason={reason}",
+                f"official_mirror_probe_cause={cause}",
+            )),
+        )
+        if ok:
+            return True, reason, cause
+        if cause == "DEPENDENCY_FAILURE":
+            # Unsupported OS/architecture/keyring is deterministic; retrying cannot help.
+            return False, reason, cause
+        if attempt < MIRROR_PROBE_ATTEMPTS:
+            append(path, f"official_mirror_recheck_wait_seconds={MIRROR_PROBE_RETRY_DELAY_SECONDS}")
+            SLEEP(MIRROR_PROBE_RETRY_DELAY_SECONDS)
+    append(path, "official_mirror_recheck_exhausted=true")
+    return False, reason, cause
 
 
 def qemu_binaries(sdk: Path) -> list[Path]:
@@ -409,17 +518,12 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         return record_failure(path, "DEPENDENCY_FAILURE", f"unresolved non-libpulse emulator libraries: {','.join(other_missing)}")
     if not pulse_missing:
         return record_failure(path, "HOST_INFRA", "runtime dependency state is inconsistent")
-    mirror_probe = recorded_mirror_probe(path)
-    if mirror_probe is None:
-        try:
-            probe_ok, _release, _architecture, _sources, details = probe_official_mirrors(runner)
-            probe_reason = "all official InRelease endpoints verified" if probe_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
-            probe_cause = "HOST_READY" if probe_ok else "NETWORK_FAILURE"
-            append(path, "\n".join(details) + f"\nofficial_mirror_probe={'PASS' if probe_ok else 'FAIL'}\nofficial_mirror_probe_reason={probe_reason}\nofficial_mirror_probe_cause={probe_cause}")
-            mirror_probe = (probe_ok, probe_reason, probe_cause)
-        except RuntimeError as error:
-            mirror_probe = (False, f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE")
-            append(path, f"official_mirror_probe=FAIL\nofficial_mirror_probe_reason={mirror_probe[1]}\nofficial_mirror_probe_cause={mirror_probe[2]}")
+    mirror_probe = reusable_mirror_probe(path)
+    if mirror_probe is not None:
+        append(path, "official_mirror_probe_reuse=RECORDED_PASS (recorded preflight PASS; APT sources unchanged)")
+    else:
+        append(path, "official_mirror_probe_reuse=NONE (no reusable PASS; preflight FAIL or changed APT sources must be re-diagnosed)")
+        mirror_probe = recheck_official_mirrors(path, runner)
     if not mirror_probe[0]:
         return record_failure(
             path,

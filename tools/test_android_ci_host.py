@@ -501,6 +501,8 @@ class RecordedMirrorProbeReuseTests(unittest.TestCase):
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
+            ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-before")
             ), patch.object(
                 host, "apt_source_snapshot", side_effect=["hash-before", "hash-before", "hash-after"]
@@ -613,6 +615,8 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(host, "current_plan_fingerprint", return_value="plan-under-test"), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
             ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
+            ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
             ), patch.object(
                 host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
@@ -648,6 +652,8 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
             evidence = sdk / "host-preflight.txt"
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
+            ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
             ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-from-verdict")
             ), patch.object(
@@ -705,6 +711,105 @@ class MirrorProbeDiagnosticsTests(unittest.TestCase):
                         host.reusable_mirror_probe(evidence, "hash-a", "plan-under-test"),
                         f"an end marker of {end!r} must not terminate the record",
                     )
+
+    def test_source_mutation_after_both_apt_calls_is_host_infra(self) -> None:
+        """The final integrity check, not the pre-APT gates, must catch this."""
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            # probe, handoff gate, and the check after installation.
+            snapshots = ["hash-before", "hash-before", "hash-after"]
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "current_plan_fingerprint", return_value="plan-under-test"
+            ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
+            ), patch.object(
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-before")
+            ), patch.object(
+                host, "reusable_mirror_probe", return_value=(True, "verified", "HOST_READY")
+            ), patch.object(
+                host, "apt_source_snapshot", side_effect=lambda: snapshots.pop(0)
+            ), patch.object(
+                host, "library_report", side_effect=[(["libpulse.so.0 => not found"], ["libpulse.so.0"]), (["libpulse.so.0 => /lib/libpulse.so.0"], [])]
+            ), patch.object(host, "package_state", side_effect=["NOT_INSTALLED", "libpulse0 1.0"]), patch.object(
+                host, "package_installed", return_value=True
+            ), patch.object(
+                host, "official_fallback", return_value=(sdk / "sources.list", ["-o", "s"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=[subprocess.CompletedProcess([], 0, "update ok"), subprocess.CompletedProcess([], 0, "install ok")]
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 2, "both APT commands must have run before the integrity check fires")
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("system APT source configuration changed during temporary package installation", content)
+            self.assertNotIn("result=HOST_READY", content)
+
+    def test_verdict_without_a_plan_cannot_authorize_apt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            evidence.write_text(
+                "\n".join(host.verdict_record_lines("preflight", "PASS", "hash-before", "verified", "HOST_READY", "")) + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "current_plan_fingerprint", return_value="plan-under-test"
+            ), patch.object(
+                # Reuse is permitted here so the handoff guard itself is exercised.
+                host, "reusable_mirror_probe", return_value=(True, "verified", "HOST_READY")
+            ), patch.object(
+                host, "apt_source_snapshot", return_value="hash-before"
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run for an unplanned verdict")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("not bound to an official endpoint plan", content)
+            self.assertNotIn("result=HOST_READY", content)
+
+    def test_plan_drift_at_the_apt_boundary_blocks_installation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            qemu = sdk / "emulator/qemu/linux-x86_64/qemu-system-x86_64"
+            qemu.parent.mkdir(parents=True)
+            qemu.write_text("test binary placeholder", encoding="utf-8")
+            qemu.chmod(0o755)
+            evidence = sdk / "host-preflight.txt"
+            with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(
+                host, "current_plan_fingerprint", return_value="plan-under-test"
+            ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
+            ), patch.object(
+                host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", "hash-before")
+            ), patch.object(
+                host, "reusable_mirror_probe", return_value=(True, "verified", "HOST_READY")
+            ), patch.object(
+                host, "apt_source_snapshot", return_value="hash-before"
+            ), patch.object(
+                host, "library_report", return_value=(["libpulse.so.0 => not found"], ["libpulse.so.0"])
+            ), patch.object(host, "package_state", return_value="NOT_INSTALLED"), patch.object(
+                # The runtime re-derives the plan for APT and must reject a verdict
+                # produced for a different one.
+                host, "official_mirror_plan", return_value=("noble", "arm64", ["deb https://ports.ubuntu.com/ubuntu-ports noble main"])
+            ), patch.object(
+                host, "apt_invocation", side_effect=AssertionError("APT must not run for an unverified plan")
+            ) as apt:
+                self.assertEqual(host.install_runtime(evidence, "35"), 1)
+            self.assertEqual(apt.call_count, 0)
+            content = evidence.read_text(encoding="utf-8")
+            self.assertIn("official mirror plan changed before APT", content)
+            self.assertNotIn("result=HOST_READY", content)
 
     def test_late_pass_after_a_started_probe_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -915,6 +1020,8 @@ class ProbeSafetyBoundTests(unittest.TestCase):
             evidence = sdk / "host-preflight.txt"
             with patch.dict(os.environ, {"ANDROID_HOME": str(sdk), "RUNNER_TEMP": temporary}), patch.object(host, "current_plan_fingerprint", return_value="plan-under-test"), patch.object(
                 host, "reusable_mirror_probe", return_value=(True, "all official InRelease endpoints verified", "HOST_READY")
+            ), patch.object(
+                host, "recorded_probe_plan", return_value="plan-under-test"
             ), patch.object(
                 host, "recorded_probe_record", return_value=(True, "verified", "HOST_READY", host.apt_source_snapshot())
             ), patch.object(

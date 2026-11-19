@@ -477,7 +477,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 "\n".join((
                     "official_mirror_recheck_deadline_exceeded=true",
                     f"official_mirror_recheck_deadline_seconds={MIRROR_PROBE_DEADLINE_SECONDS}",
-                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; total is bounded by the deadline plus at most one in-flight attempt",
+                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; an in-flight attempt may overrun by one endpoint timeout",
                     "official_mirror_recheck_exhausted=true",
                 )),
             )
@@ -495,7 +495,6 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 reason, cause = "all official InRelease endpoints verified", "HOST_READY"
             else:
                 reason, cause = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable", "NETWORK_FAILURE"
-            probe_plan = ""
         except RuntimeError as error:
             ok = False
             probe_plan = ""
@@ -527,6 +526,7 @@ def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[
                 f"official_mirror_recheck_result={'PASS' if ok else 'FAIL'}",
                 f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
                 f"official_mirror_recheck_source_changed_during_probe={'true' if source_changed else 'false'}",
+                "official_mirror_recheck_deadline_enforcement=no new attempt starts after the deadline; one in-flight attempt may overrun by one endpoint timeout",
                 f"official_mirror_recheck_https_timeout_seconds={https_timeout}",
                 *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause, probe_plan),
             )),
@@ -694,8 +694,24 @@ def runtime_install_args(package: str) -> tuple[str, ...]:
     return tuple(args)
 
 
-def official_fallback(path: Path, api: str, runner: RUN = subprocess.run) -> tuple[Path, list[str]]:
+def recorded_probe_plan(path: Path) -> str | None:
+    """Return the official endpoint plan a reusable verdict was produced for."""
+    records = _parse_bound_records(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    if not records:
+        return None
+    return records[-1].get("plan") or None
+
+
+def official_fallback(
+    path: Path, api: str, runner: RUN = subprocess.run, verified_plan: str | None = None
+) -> tuple[Path, list[str]]:
     release, architecture, plan = official_mirror_plan()
+    resolved_plan = plan_fingerprint(release, architecture, plan[:3])
+    if verified_plan is not None and resolved_plan != verified_plan:
+        raise RuntimeError(
+            f"official mirror plan changed before APT (verified {verified_plan}, resolved {resolved_plan})"
+        )
+    append(path, f"official_mirror_plan_at_apt={resolved_plan}")
     lines = list(plan[:3])
     append(path, f"fallback_release={release}\nfallback_architecture={architecture}\napt_sources_fallback_before_update:\n" + "\n".join(lines))
     runner_temp = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
@@ -752,6 +768,7 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             cause=mirror_probe[2],
         )
     verdict = recorded_probe_record(path)
+    verdict_plan = recorded_probe_plan(path)
     current_sources_hash = apt_source_snapshot()
     if verdict is None or not verdict[0] or verdict[3] != current_sources_hash:
         return record_failure(
@@ -760,10 +777,17 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             "official mirror verdict is not bound to the current APT source state",
             cause="NETWORK_FAILURE",
         )
+    if verdict_plan is None:
+        return record_failure(
+            path,
+            "HOST_INFRA",
+            "official mirror verdict is not bound to an official endpoint plan",
+            cause="NETWORK_FAILURE",
+        )
     original_sources_hash = verdict[3]
     append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}\napt_sources_sha256_at_handoff={current_sources_hash}")
     try:
-        source_file, source_options = official_fallback(path, api, runner)
+        source_file, source_options = official_fallback(path, api, runner, verdict_plan)
     except RuntimeError as error:
         return record_failure(path, "DEPENDENCY_FAILURE", f"official Ubuntu source configuration unavailable: {error}")
     apt_policy_options = (*source_options, *APT_REDIRECT_OPTIONS)

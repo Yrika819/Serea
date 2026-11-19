@@ -160,9 +160,14 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
 2. `recheck_official_mirrors()` re-diagnoses the official mirrors with a bounded
    budget before any APT command:
    - `MIRROR_PROBE_ATTEMPTS = 3`, `MIRROR_PROBE_RETRY_DELAY_SECONDS = 5`
-   - `MIRROR_PROBE_DEADLINE_SECONDS = 90` is a hard wall-clock ceiling; the loop
-     stops at the deadline and records
-     `official_mirror_recheck_deadline_exceeded=true`
+   - `MIRROR_PROBE_DEADLINE_SECONDS = 90` is a **cooperative** budget, not a hard
+     kernel-enforced ceiling: no new attempt is started after it and a probe that
+     finishes late cannot be recorded as `PASS`, but an attempt already in flight
+     can overrun by at most one endpoint timeout. Both facts are recorded
+     (`official_mirror_recheck_deadline_exceeded=true`,
+     `official_mirror_recheck_deadline_enforcement=`); enforcing a hard ceiling
+     would need a supervising process, which this helper deliberately does not
+     add
    - success requires **every** official `InRelease` endpoint to be reachable
      with TLS verification enabled; a different endpoint failing in each round
      never aggregates into a success
@@ -217,9 +222,10 @@ Minimal, fail-closed changes in `tools/android_ci_host.py` only.
      `PASS`; **no probe work is started after the deadline**, each endpoint gets
      `remaining/3` as its own timeout so three sequential endpoints fit the
      remaining budget (`official_mirror_recheck_https_timeout_seconds=`), and the
-     retry wait is clamped so it cannot sleep past the deadline. The honest bound
-     is therefore `MIRROR_PROBE_DEADLINE_SECONDS` plus at most one in-flight
-     attempt, recorded as
+     retry wait is clamped so it cannot sleep past the deadline, and the deadline
+     is re-checked immediately before each probe. The honest bound is therefore
+     `MIRROR_PROBE_DEADLINE_SECONDS` plus one in-flight attempt's own endpoint
+     timeouts (10 s each, at most three), recorded as
      `official_mirror_recheck_deadline_scope=`;
    - malformed HTTP responses are classified instead of escaping the recheck.
 
@@ -260,10 +266,10 @@ apt_result=INSTALLED_SIGNED_OFFICIAL_UBUNTU
 
 ## 7. Regression tests
 
-`tools/test_android_ci_host.py`: 58 cases (the 19 pre-existing cases retained;
+`tools/test_android_ci_host.py`: 61 cases (the 19 pre-existing cases retained;
 the only body changes are the pinned `APT_TIMEOUT_SECONDS == 45` becoming an
 asserted 45..180 bound and a `SLEEP` injection in the pre-existing unreachable-
-mirror test; 39 cases added):
+mirror test; 42 cases added):
 
 | Requirement | Test |
 | --- | --- |
@@ -422,16 +428,27 @@ controls were still bypassable in evidence-only paths, each fixed:
 | Probe work (plan/DNS) could start with the budget already consumed | no attempt starts once the deadline has passed, and the deadline scope is recorded explicitly |
 | The verdict hash could diverge from the runtime baseline before APT | the runtime verifies the verdict's bound hash against a fresh snapshot at the APT handoff |
 
+Round 6 (head `f9488f03`, tree `0961d538d6`) found that the plan was re-derived
+after the handoff, the deadline wording overstated the guarantee, and the
+post-install integrity check had no test that reached it. Fixed: the handoff now
+requires the verdict's plan as well as its source hash
+(`recorded_probe_plan()`), `official_fallback()` receives the verified plan and
+refuses to write sources for a different one
+(`official_mirror_plan_at_apt=`), the recorded deadline text says exactly what is
+enforced, and two tests now reach both APT calls (`test_source_mutation_after_both_apt_calls_is_host_infra`,
+`test_plan_drift_at_the_apt_boundary_blocks_installation`,
+`test_verdict_without_a_plan_cannot_authorize_apt`).
+
 Round 5 (head `ec439744`, tree `56c8232eb6`): 3 Medium, 0 Low — all resolved.
 
 | Round-5 finding | Resolution |
 | --- | --- |
-| A cached PASS could authorize APT against a different mirror plan (amd64 verdict reused on an arm64 runtime with the same source hash) | verdicts now carry `official_mirror_probe_plan=` (release/arch plus a hash of the three endpoint URLs) and reuse requires equality with the freshly derived plan |
+| A cached PASS could authorize APT against a different mirror plan (amd64 verdict reused on an arm64 runtime with the same source hash) | verdicts now carry `official_mirror_probe_plan=` (release, architecture and a SHA-256 of the three verified `deb` source lines) and reuse requires equality with the freshly derived plan |
 | The deadline could be passed after the loop's budget sample, and the recorded scope overstated the guarantee | the deadline is re-checked immediately before probing, and the recorded scope says exactly what is enforced: no probe work starts after the deadline, total bounded by the deadline plus at most one in-flight attempt |
 | The suite did not detect a restored redirect-following handler, a mismatched/empty end kind, or a late PASS | added `test_redirect_handler_refuses_instead_of_following`, `test_apt_refuses_redirects_for_every_official_host`, `test_record_end_must_match_its_start`, `test_late_pass_after_a_started_probe_is_rejected` (probe starts inside the budget, finishes after it) |
 
-Eight code mutations were applied to a copy of the module and each must fail the
-suite. All eight are detected:
+Twelve code mutations were applied to a copy of the module and each must fail the
+suite. All twelve are detected:
 
 | Mutation | Detected by |
 | --- | --- |
@@ -443,6 +460,10 @@ suite. All eight are detected:
 | drop the pre-probe deadline check | `test_late_pass_after_a_started_probe_is_rejected` |
 | reuse the first bound record instead of the last | `test_orphan_hash_cannot_rebind_an_accepted_record` |
 | re-admit legacy header-only evidence | `test_reused_probe_requires_unchanged_apt_sources` |
+| drop the verification that the fallback plan equals the verdict plan | `test_plan_drift_at_the_apt_boundary_blocks_installation` |
+| drop the requirement that a verdict carries a plan | `test_verdict_without_a_plan_cannot_authorize_apt` |
+| drop the post-install source-integrity comparison | `test_source_mutation_after_both_apt_calls_is_host_infra` |
+| accept an empty end kind | `test_record_end_must_match_its_start` |
 
 Low findings after round 4: the ordinary install-success branch reports on the
 loader result while dpkg state is recorded separately (accepted: loader

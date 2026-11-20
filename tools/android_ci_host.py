@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import http.client
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
@@ -19,13 +21,59 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-APT_TIMEOUT_SECONDS = 45
+APT_TIMEOUT_SECONDS = 180
 DNS_TIMEOUT_SECONDS = 3
-HTTPS_TIMEOUT_SECONDS = 4
+# A 4 s per-endpoint cap produced TLS handshake timeouts on degraded GitHub-hosted
+# runners while the same endpoint verified moments later; keep a hard cap but above
+# the observed handshake latency.
+HTTPS_TIMEOUT_SECONDS = 10
+# Bounded re-diagnosis budget for a transient official-mirror connectivity failure.
+# Worst case adds MIRROR_PROBE_ATTEMPTS * (3 probes) + (attempts - 1) * delay seconds.
+MIRROR_PROBE_ATTEMPTS = 3
+MIRROR_PROBE_RETRY_DELAY_SECONDS = 5
+# Cooperative budget for one re-diagnosis: no new attempt starts after it and a probe
+# that finishes late cannot be recorded as PASS. It is not a supervisor-enforced
+# ceiling; an admitted attempt still has to finish its own plan lookup, DNS and
+# endpoint checks, which the per-endpoint timeouts bound.
+MIRROR_PROBE_DEADLINE_SECONDS = 90
+SLEEP: Callable[[float], None] = time.sleep
+MONOTONIC: Callable[[], float] = time.monotonic
+HTTPS_FAILURE_MARKERS = (
+    ("DNS_FAILURE", ("dns resolution failed", "name or service not known", "temporary failure in name resolution", "nodename nor servname", "getaddrinfo failed", "name resolution", "unresolved")),
+    ("TLS_VERIFICATION_FAILURE", ("certificate verify failed", "certificate_verify_failed", "self-signed certificate", "self signed certificate", "hostname mismatch", "unable to get local issuer", "unknown ca")),
+    ("HTTP_ERROR", ("http error", "http status")),
+    ("TIMEOUT", ("timed out", "timeout")),
+)
+HTTPS_FAILURE_REASONS = {
+    "DNS_FAILURE": "DNS resolution failed",
+    "TLS_VERIFICATION_FAILURE": "certificate verify failed",
+    "HTTP_ERROR": "HTTP status failure",
+    "REDIRECT_REJECTED": "response was redirected away from the official endpoint",
+    "TIMEOUT": "timed out",
+    "CONNECTION_FAILURE": "connection failed",
+}
+
 APT_OPTIONS = (
     "-o", "Acquire::Retries=1",
     "-o", "Acquire::http::Timeout=12",
     "-o", "Acquire::https::Timeout=12",
+)
+# Index fetch warnings must fail the update instead of continuing with partial indexes.
+APT_UPDATE_STRICT_OPTIONS = ("-o", "APT::Update::Error-Mode=any")
+# Never follow a mirror redirect to another host; official sources only. The
+# generic keys are repeated per official host because APT resolves host-specific
+# Acquire settings before the generic ones.
+OFFICIAL_SOURCE_HOSTS = ("archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com")
+APT_REDIRECT_OPTIONS = tuple(
+    ["-o", "Acquire::http::AllowRedirect=false", "-o", "Acquire::https::AllowRedirect=false"]
+    + [
+        option
+        for host in OFFICIAL_SOURCE_HOSTS
+        for option in (
+            "-o", f"Acquire::http::{host}::AllowRedirect=false",
+            "-o", f"Acquire::https::{host}::AllowRedirect=false",
+        )
+    ]
 )
 NETWORK_FAILURE_MARKERS = (
     "temporary failure resolving",
@@ -192,19 +240,54 @@ def fallback_check_urls(release: str, architecture: str) -> tuple[str, ...]:
     )
 
 
+def classify_https_failure(detail: str) -> str:
+    """Map an HTTPS probe detail to a machine-readable network failure class."""
+    lowered = detail.lower()
+    for category, markers in HTTPS_FAILURE_MARKERS:
+        if any(marker in lowered for marker in markers):
+            return category
+    return "CONNECTION_FAILURE"
+
+
+def https_failure_detail(failure_class: str, status: int | None = None) -> str:
+    reason = f"HTTP status {status}" if status is not None else HTTPS_FAILURE_REASONS.get(failure_class, "connection failed")
+    return f"UNREACHABLE ({failure_class}; {reason})"
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects instead of following them to another host or scheme."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401 - urllib hook
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirectHandler)
+
+
 def https_reachable(url: str, timeout: int = HTTPS_TIMEOUT_SECONDS) -> tuple[bool, str]:
     request = urllib.request.Request(url, method="GET", headers={"Range": "bytes=0-0", "User-Agent": "Serea-Android-CI-Host-Preflight"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with OPENER.open(request, timeout=timeout) as response:
+            # Defence in depth: only the exact requested official URL may be a PASS.
+            if response.geturl().split("#", 1)[0] != url:
+                return False, https_failure_detail("REDIRECT_REJECTED")
             response.read(1)
-            return 200 <= response.status < 400, f"HTTP {response.status}; TLS verification enabled"
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
-        return False, f"UNREACHABLE ({error})"
+            if 200 <= response.status < 400:
+                return True, f"HTTP {response.status}; TLS verification enabled"
+            return False, https_failure_detail("HTTP_ERROR", status=response.status)
+    except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            return False, https_failure_detail("REDIRECT_REJECTED")
+        return False, https_failure_detail("HTTP_ERROR", status=error.code)
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
+        # TLS verification is never disabled: certificate failures are terminal FAIL results.
+        return False, https_failure_detail(classify_https_failure(f"{type(error).__name__}: {error}"))
 
 
 def probe_official_mirrors(
     runner: RUN = subprocess.run,
     dns_cache: dict[str, str] | None = None,
+    https_timeout: int = HTTPS_TIMEOUT_SECONDS,
 ) -> tuple[bool, str, str, list[str], list[str]]:
     """Check DNS and TLS-verified HTTPS for every official InRelease endpoint."""
     release, architecture, plan = official_mirror_plan()
@@ -212,37 +295,264 @@ def probe_official_mirrors(
     urls = list(plan[3:])
     resolved = dns_cache if dns_cache is not None else {}
     details: list[str] = []
+    failure_classes: list[str] = []
     hosts = sorted({urlparse(url).hostname or "" for url in urls} - {""})
     for host in hosts:
         if host not in resolved:
             resolved[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
         details.append(f"official_dns {host}: {resolved[host]}")
-    ok = True
     for url in urls:
         host = urlparse(url).hostname or ""
         if "UNRESOLVED" in resolved.get(host, "UNRESOLVED"):
             reachable = False
-            detail = f"UNREACHABLE (DNS resolution failed for {host})"
+            detail = f"UNREACHABLE (DNS_FAILURE; DNS resolution failed for {host})"
         else:
-            reachable, detail = https_reachable(url, timeout=HTTPS_TIMEOUT_SECONDS)
+            reachable, detail = https_reachable(url, timeout=https_timeout)
         details.append(f"official_https {url}: {'REACHABLE' if reachable else 'UNREACHABLE'} ({detail})")
-        ok = ok and reachable
-    return ok, release, architecture, sources, details
+        if not reachable:
+            failure_classes.append(classify_https_failure(detail))
+    details.append("official_https_failure_classes=" + (",".join(sorted(set(failure_classes))) if failure_classes else "none"))
+    return not failure_classes, release, architecture, sources, details
 
 
-def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
-    """Reuse a preflight result only when the current APT source hash matches."""
+def plan_fingerprint(release: str, architecture: str, sources: Sequence[str]) -> str:
+    """Stable identity of the official endpoint plan a verdict was produced for."""
+    digest = hashlib.sha256()
+    digest.update(f"{release}/{architecture}".encode("utf-8"))
+    for line in sources:
+        digest.update(b"\0")
+        digest.update(line.encode("utf-8"))
+    return f"{release}/{architecture}/{digest.hexdigest()[:16]}"
+
+
+def current_plan_fingerprint() -> str:
+    release, architecture, plan = official_mirror_plan()
+    return plan_fingerprint(release, architecture, plan[:3])
+
+
+def probe_failure_classes(details: Sequence[str]) -> list[str]:
+    for line in reversed(list(details)):
+        if line.startswith("official_https_failure_classes="):
+            value = line.split("=", 1)[1].strip()
+            if value in ("", "none"):
+                return []
+            return [part for part in value.split(",") if part]
+    return []
+
+
+def _parse_bound_records(lines: Sequence[str]) -> list[dict[str, str]]:
+    """Parse only complete ``record_start``/``record_end`` verdict records.
+
+    Fields are first-wins, so a later orphan hash line can never rebind an
+    accepted verdict, and a record without an end marker is not a verdict at all.
+    """
+    records: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in lines:
+        if line.startswith("official_mirror_probe_record_start="):
+            current = {"kind": line.split("=", 1)[1]}
+            continue
+        if current is None:
+            continue
+        if line.startswith("official_mirror_probe_record_end="):
+            kind = line.split("=", 1)[1].strip()
+            if kind and kind == current.get("kind") and {"probe", "hash", "plan", "reason"} <= current.keys():
+                records.append(current)
+            current = None
+            continue
+        for field, key in (
+            ("official_mirror_probe=", "probe"),
+            ("official_mirror_probe_apt_sources_sha256=", "hash"),
+            ("official_mirror_probe_plan=", "plan"),
+            ("official_mirror_probe_reason=", "reason"),
+            ("official_mirror_probe_cause=", "cause"),
+        ):
+            if line.startswith(field):
+                current.setdefault(key, line.split("=", 1)[1])
+                break
+    return records
+
+
+def _parse_legacy_records(lines: Sequence[str]) -> list[dict[str, str]]:
+    """Parse the pre-record-marker form: header, then probe/reason[/cause] adjacent."""
+    records: list[dict[str, str]] = []
+    preflight_hash: str | None = None
+    for index, line in enumerate(lines):
+        if line.startswith("apt_sources_sha256_before="):
+            preflight_hash = line.split("=", 1)[1]
+            continue
+        if not line.startswith("official_mirror_probe=") or preflight_hash is None:
+            continue
+        reason_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if not reason_line.startswith("official_mirror_probe_reason="):
+            continue
+        cause_line = lines[index + 2] if index + 2 < len(lines) else ""
+        records.append({
+            "kind": "legacy",
+            "probe": line.split("=", 1)[1],
+            "hash": preflight_hash,
+            "reason": reason_line.split("=", 1)[1],
+            "cause": cause_line.split("=", 1)[1] if cause_line.startswith("official_mirror_probe_cause=") else "NETWORK_FAILURE",
+        })
+    return records
+
+
+def recorded_probe_record(path: Path) -> tuple[bool, str, str, str | None] | None:
+    """Return the last usable verdict and the source hash it is bound to.
+
+    Once any bound record exists the legacy header form is ignored, so a
+    header-less verdict can never inherit an unrelated source state.
+    """
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
-    recorded_hash = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("apt_sources_sha256_before=")), None)
-    status = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe=")), None)
-    reason = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_reason=")), "no probe reason recorded")
-    cause = next((line.split("=", 1)[1] for line in reversed(lines) if line.startswith("official_mirror_probe_cause=")), "NETWORK_FAILURE")
-    if recorded_hash != apt_source_snapshot() or status not in ("PASS", "FAIL"):
+    records = _parse_bound_records(lines) or _parse_legacy_records(lines)
+    if not records:
         return None
-    return status == "PASS", reason, cause
+    record = records[-1]
+    if record["probe"] not in ("PASS", "FAIL"):
+        return None
+    return record["probe"] == "PASS", record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE"), record["hash"]
+
+
+def verdict_record_lines(kind: str, probe: str, source_hash: str, reason: str, cause: str, plan: str = "") -> list[str]:
+    """Emit one immutable, self-contained verdict record."""
+    return [
+        f"official_mirror_probe_record_start={kind}",
+        f"official_mirror_probe={'PASS' if probe == 'PASS' else 'FAIL'}",
+        f"official_mirror_probe_apt_sources_sha256={source_hash}",
+        f"official_mirror_probe_plan={plan}",
+        f"official_mirror_probe_reason={reason}",
+        f"official_mirror_probe_cause={cause}",
+        f"official_mirror_probe_record_end={kind}",
+    ]
+
+
+def recorded_mirror_probe(path: Path) -> tuple[bool, str, str] | None:
+    """Reuse a preflight result only when the current APT source hash matches."""
+    record = recorded_probe_record(path)
+    if record is None or record[3] != apt_source_snapshot():
+        return None
+    return record[0], record[1], record[2]
+
+
+def reusable_mirror_probe(path: Path, current_hash: str, current_plan: str = "") -> tuple[bool, str, str] | None:
+    """Reuse only a bound PASS record; anything else must be re-diagnosed before APT.
+
+    A preflight FAIL can be a transient DNS/TLS failure that cleared minutes later, so
+    replaying it as a terminal verdict would fail closed for the wrong reason. Legacy
+    header-only evidence is never reusable either: it predates the redirect refusal
+    and cannot prove which endpoint produced the verdict.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    records = _parse_bound_records(lines)
+    if not records:
+        return None
+    record = records[-1]
+    if record["probe"] != "PASS" or record["hash"] != current_hash or record.get("plan", "") != current_plan:
+        return None
+    return True, record.get("reason", "no probe reason recorded"), record.get("cause", "NETWORK_FAILURE")
+
+
+def recheck_official_mirrors(path: Path, runner: RUN = subprocess.run) -> tuple[bool, str, str]:
+    """Re-diagnose the official mirrors with a bounded retry budget, fail-closed."""
+    append(
+        path,
+        "\n".join((
+            f"official_mirror_recheck_policy=attempts={MIRROR_PROBE_ATTEMPTS}; delay_seconds={MIRROR_PROBE_RETRY_DELAY_SECONDS}",
+            "official_mirror_recheck_success_requires=every official InRelease endpoint reachable over TLS-verified HTTPS",
+            "official_mirror_recheck_tls_validation=enabled",
+        )),
+    )
+    reason = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
+    cause = "NETWORK_FAILURE"
+    deadline = MONOTONIC() + MIRROR_PROBE_DEADLINE_SECONDS
+    for attempt in range(1, MIRROR_PROBE_ATTEMPTS + 1):
+        remaining = deadline - MONOTONIC()
+        if remaining <= 0:
+            append(
+                path,
+                "\n".join((
+                    "official_mirror_recheck_deadline_exceeded=true",
+                    f"official_mirror_recheck_deadline_seconds={MIRROR_PROBE_DEADLINE_SECONDS}",
+                    "official_mirror_recheck_deadline_scope=no probe work is started after the deadline; an admitted attempt still finishes its own bounded plan lookup, DNS and endpoint checks",
+                    "official_mirror_recheck_exhausted=true",
+                )),
+            )
+            return False, reason, cause
+        source_hash_before_probe = apt_source_snapshot()
+        if MONOTONIC() >= deadline:
+            append(path, "official_mirror_recheck_deadline_exceeded=true\nofficial_mirror_recheck_exhausted=true")
+            return False, reason, cause
+        # Three sequential endpoints must together fit the remaining budget.
+        https_timeout = max(1, min(HTTPS_TIMEOUT_SECONDS, int(remaining) // 3)) if remaining > 0 else 1
+        try:
+            ok, probe_release, probe_architecture, probe_sources, details = probe_official_mirrors(runner, https_timeout=https_timeout)
+            probe_plan = plan_fingerprint(probe_release, probe_architecture, probe_sources)
+            if ok:
+                reason, cause = "all official InRelease endpoints verified", "HOST_READY"
+            else:
+                reason, cause = "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable", "NETWORK_FAILURE"
+        except RuntimeError as error:
+            ok = False
+            probe_plan = ""
+            details = [f"official_source_plan_unavailable={error}"]
+            reason, cause = f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE"
+        except Exception as error:  # noqa: BLE001 - a probe crash must fail closed with evidence
+            ok = False
+            probe_plan = ""
+            details = [f"official_mirror_recheck_unexpected_probe_error={type(error).__name__}: {error}"]
+            reason = f"official mirror probe raised {type(error).__name__}"
+            cause = "NETWORK_FAILURE"
+        source_hash_after_probe = apt_source_snapshot()
+        source_changed = source_hash_after_probe != source_hash_before_probe
+        deadline_exceeded = ok and MONOTONIC() >= deadline
+        if source_changed:
+            ok = False
+            reason = "system APT source configuration changed during the official mirror probe"
+            cause = "DEPENDENCY_FAILURE"
+        elif deadline_exceeded:
+            ok = False
+            reason = "official mirror recheck exceeded its wall-clock deadline"
+            cause = "HOST_DEADLINE_EXCEEDED"
+        classes = probe_failure_classes(details)
+        append(
+            path,
+            "\n".join((
+                *details,
+                f"official_mirror_recheck attempt={attempt}/{MIRROR_PROBE_ATTEMPTS}",
+                f"official_mirror_recheck_result={'PASS' if ok else 'FAIL'}",
+                f"official_mirror_recheck_failure_classes={','.join(classes) if classes else 'none'}",
+                f"official_mirror_recheck_source_changed_during_probe={'true' if source_changed else 'false'}",
+                "official_mirror_recheck_deadline_enforcement=no new attempt starts after the deadline and a late PASS is rejected; an admitted attempt still finishes its own bounded plan lookup, DNS and endpoint checks",
+                f"official_mirror_recheck_https_timeout_seconds={https_timeout}",
+                *verdict_record_lines("recheck", "PASS" if ok else "FAIL", source_hash_before_probe, reason, cause, probe_plan),
+            )),
+        )
+        if source_changed:
+            append(path, "official_mirror_recheck_exhausted=true")
+            return False, reason, cause
+        if deadline_exceeded:
+            append(path, "official_mirror_recheck_deadline_exceeded=true\nofficial_mirror_recheck_exhausted=true")
+            return False, reason, cause
+        if ok:
+            return True, reason, cause
+        if cause == "DEPENDENCY_FAILURE":
+            # Unsupported OS/architecture/keyring is deterministic; retrying cannot help.
+            return False, reason, cause
+        if attempt < MIRROR_PROBE_ATTEMPTS:
+            wait_seconds = min(MIRROR_PROBE_RETRY_DELAY_SECONDS, max(0.0, deadline - MONOTONIC()))
+            if wait_seconds <= 0:
+                append(path, "official_mirror_recheck_deadline_exceeded=true\nofficial_mirror_recheck_exhausted=true")
+                return False, reason, cause
+            append(path, f"official_mirror_recheck_wait_seconds={wait_seconds}")
+            SLEEP(wait_seconds)
+    append(path, "official_mirror_recheck_exhausted=true")
+    return False, reason, cause
 
 
 def qemu_binaries(sdk: Path) -> list[Path]:
@@ -302,19 +612,34 @@ def preflight(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         dns_results[host] = resolve_host(host, runner, timeout=DNS_TIMEOUT_SECONDS)
         lines.append(f"{host}: {dns_results[host]}")
     lines.append("official_ubuntu_mirror_https:")
+    probe_source_hash = apt_source_snapshot()
     try:
-        mirrors_ok, release, architecture, _sources, details = probe_official_mirrors(runner, dns_results)
+        probe_source_plan = current_plan_fingerprint()
+    except RuntimeError:
+        probe_source_plan = ""
+    try:
+        mirrors_ok, release, architecture, sources, details = probe_official_mirrors(runner, dns_results)
+        probe_source_plan = plan_fingerprint(release, architecture, sources)
         lines.extend((f"fallback_release={release}", f"fallback_architecture={architecture}"))
         lines.extend(details)
-        lines.append(f"official_mirror_probe={'PASS' if mirrors_ok else 'FAIL'}")
-        probe_reason = "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
-        lines.append(f"official_mirror_probe_reason={probe_reason}")
-        lines.append(f"official_mirror_probe_cause={'HOST_READY' if mirrors_ok else 'NETWORK_FAILURE'}")
+        lines.extend(verdict_record_lines(
+            "preflight",
+            "PASS" if mirrors_ok else "FAIL",
+            probe_source_hash,
+            "all official InRelease endpoints verified" if mirrors_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable",
+            "HOST_READY" if mirrors_ok else "NETWORK_FAILURE",
+            probe_source_plan,
+        ))
     except RuntimeError as error:
         lines.append(f"fallback_plan=UNAVAILABLE ({error})")
-        lines.append("official_mirror_probe=FAIL")
-        lines.append(f"official_mirror_probe_reason=official source plan unavailable: {error}")
-        lines.append("official_mirror_probe_cause=DEPENDENCY_FAILURE")
+        lines.extend(verdict_record_lines(
+            "preflight",
+            "FAIL",
+            probe_source_hash,
+            f"official source plan unavailable: {error}",
+            "DEPENDENCY_FAILURE",
+            probe_source_plan,
+        ))
     lines.append(f"libpulse0_package={package_state(runner)}")
     ldconfig = command(("ldconfig", "-p"), timeout=10, runner=runner)
     lines.append("ldconfig_pulse_entries:")
@@ -371,8 +696,24 @@ def runtime_install_args(package: str) -> tuple[str, ...]:
     return tuple(args)
 
 
-def official_fallback(path: Path, api: str, runner: RUN = subprocess.run) -> tuple[Path, list[str]]:
+def recorded_probe_plan(path: Path) -> str | None:
+    """Return the official endpoint plan a reusable verdict was produced for."""
+    records = _parse_bound_records(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    if not records:
+        return None
+    return records[-1].get("plan") or None
+
+
+def official_fallback(
+    path: Path, api: str, runner: RUN = subprocess.run, verified_plan: str | None = None
+) -> tuple[Path, list[str]]:
     release, architecture, plan = official_mirror_plan()
+    resolved_plan = plan_fingerprint(release, architecture, plan[:3])
+    if verified_plan is not None and resolved_plan != verified_plan:
+        raise RuntimeError(
+            f"official mirror plan changed before APT (verified {verified_plan}, resolved {resolved_plan})"
+        )
+    append(path, f"official_mirror_plan_at_apt={resolved_plan}")
     lines = list(plan[:3])
     append(path, f"fallback_release={release}\nfallback_architecture={architecture}\napt_sources_fallback_before_update:\n" + "\n".join(lines))
     runner_temp = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
@@ -409,17 +750,18 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
         return record_failure(path, "DEPENDENCY_FAILURE", f"unresolved non-libpulse emulator libraries: {','.join(other_missing)}")
     if not pulse_missing:
         return record_failure(path, "HOST_INFRA", "runtime dependency state is inconsistent")
-    mirror_probe = recorded_mirror_probe(path)
-    if mirror_probe is None:
-        try:
-            probe_ok, _release, _architecture, _sources, details = probe_official_mirrors(runner)
-            probe_reason = "all official InRelease endpoints verified" if probe_ok else "official Ubuntu DNS or TLS-verified HTTPS endpoint unavailable"
-            probe_cause = "HOST_READY" if probe_ok else "NETWORK_FAILURE"
-            append(path, "\n".join(details) + f"\nofficial_mirror_probe={'PASS' if probe_ok else 'FAIL'}\nofficial_mirror_probe_reason={probe_reason}\nofficial_mirror_probe_cause={probe_cause}")
-            mirror_probe = (probe_ok, probe_reason, probe_cause)
-        except RuntimeError as error:
-            mirror_probe = (False, f"official source plan unavailable: {error}", "DEPENDENCY_FAILURE")
-            append(path, f"official_mirror_probe=FAIL\nofficial_mirror_probe_reason={mirror_probe[1]}\nofficial_mirror_probe_cause={mirror_probe[2]}")
+    source_hash_before = apt_source_snapshot()
+    try:
+        reusable_plan = current_plan_fingerprint()
+    except RuntimeError:
+        # Without a plan the cached verdict cannot be bound to this host; force a recheck.
+        reusable_plan = None
+    mirror_probe = reusable_mirror_probe(path, source_hash_before, reusable_plan) if reusable_plan is not None else None
+    if mirror_probe is not None:
+        append(path, "official_mirror_probe_reuse=RECORDED_PASS (recorded preflight PASS; APT sources unchanged)")
+    else:
+        append(path, "official_mirror_probe_reuse=NONE (no reusable PASS; preflight FAIL or changed APT sources must be re-diagnosed)")
+        mirror_probe = recheck_official_mirrors(path, runner)
     if not mirror_probe[0]:
         return record_failure(
             path,
@@ -427,20 +769,38 @@ def install_runtime(path: Path, api: str, runner: RUN = subprocess.run) -> int:
             f"APT not attempted: {mirror_probe[1]}",
             cause=mirror_probe[2],
         )
-    original_sources_hash = apt_source_snapshot()
-    append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}")
+    verdict = recorded_probe_record(path)
+    verdict_plan = recorded_probe_plan(path)
+    current_sources_hash = apt_source_snapshot()
+    if verdict is None or not verdict[0] or verdict[3] != current_sources_hash:
+        return record_failure(
+            path,
+            "HOST_INFRA",
+            "official mirror verdict is not bound to the current APT source state",
+            cause="NETWORK_FAILURE",
+        )
+    if verdict_plan is None:
+        return record_failure(
+            path,
+            "HOST_INFRA",
+            "official mirror verdict is not bound to an official endpoint plan",
+            cause="NETWORK_FAILURE",
+        )
+    original_sources_hash = verdict[3]
+    append(path, f"apt_source_policy=temporary official Ubuntu 24.04 source only; existing system sources unchanged\napt_sources_sha256_before_runtime={original_sources_hash}\napt_sources_sha256_at_handoff={current_sources_hash}")
     try:
-        source_file, source_options = official_fallback(path, api, runner)
+        source_file, source_options = official_fallback(path, api, runner, verdict_plan)
     except RuntimeError as error:
         return record_failure(path, "DEPENDENCY_FAILURE", f"official Ubuntu source configuration unavailable: {error}")
-    update = apt_invocation((*source_options, "update"), timeout=APT_TIMEOUT_SECONDS, runner=runner)
+    apt_policy_options = (*source_options, *APT_REDIRECT_OPTIONS)
+    update = apt_invocation((*apt_policy_options, *APT_UPDATE_STRICT_OPTIONS, "update"), timeout=APT_TIMEOUT_SECONDS, runner=runner)
     append(path, f"official apt-get update exit={update.returncode}\n{update.stdout}")
     if update.returncode != 0:
         append(path, f"apt_sources_sha256_after={apt_source_snapshot()}\napt_sources_after=system sources unchanged; temporary source was {source_file}")
         cause = "NETWORK_FAILURE" if is_network_failure(update.stdout) or "command timed out after" in update.stdout.lower() else "DEPENDENCY_FAILURE"
         category = "HOST_INFRA" if cause == "NETWORK_FAILURE" else "DEPENDENCY_FAILURE"
         return record_failure(path, category, "official Ubuntu apt-get update failed", cause=cause)
-    install = apt_invocation((*source_options, *runtime_install_args(package)), timeout=APT_TIMEOUT_SECONDS, runner=runner)
+    install = apt_invocation((*apt_policy_options, *runtime_install_args(package)), timeout=APT_TIMEOUT_SECONDS, runner=runner)
     append(path, f"official apt-get install exit={install.returncode}\n{install.stdout}")
     after, still_missing = library_report(sdk, runner)
     package_after = package_state(runner)

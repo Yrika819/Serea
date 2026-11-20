@@ -75,7 +75,7 @@ internal data class PendingGoogleAccountSelection(val requestId: Long, val gener
 /**
  * Private-variant-only authorization UI state. Public variants never construct a real gateway;
  * the normal Private Beta configuration also stays Mock-only unless its explicit local build flag
- * is enabled. Provider composition in this phase is deliberately Fake-only, even after consent.
+ * is enabled. Product provider composition stays Fake-only, independently of OAuth consent.
  */
 internal class PrivateGoogleAuthorizationViewModel(
     context: Context?,
@@ -89,9 +89,18 @@ internal class PrivateGoogleAuthorizationViewModel(
             selectedAccount = Account(accountName, GOOGLE_ACCOUNT_TYPE),
         )
     },
+    private val calendarGatewayForTests: GoogleAuthorizationGateway? = null,
+    calendarCompositionFactory: () -> PrivateGoogleCalendarComposition = { PrivateGoogleCalendarComposition() },
 ) : ViewModel() {
+    init {
+        check(calendarGatewayForTests == null || BuildConfig.BUILD_TYPE == "isolated") {
+            "Synthetic Calendar authorization gateways are restricted to the isolated variant."
+        }
+    }
+
     private val appContext = context?.applicationContext
-    private val calendarComposition = PrivateGoogleCalendarComposition()
+    private val calendarComposition = calendarCompositionFactory()
+    val opensGoogleProvider: Boolean get() = calendarComposition.opensGoogleProvider
     private var fakeGateway = fakeGatewayFactory()
     private var realGateway: PrivateGoogleRealAuthorizationGateway? = null
     private val consentIdentityGate = PrivateGoogleConsentIdentityGate()
@@ -453,13 +462,19 @@ internal class PrivateGoogleAuthorizationViewModel(
         )
     }
 
-    /** Opens only a synthetic Calendar session. Real HTTP stays disabled in this phase. */
-    fun openFakePrimaryCalendarPreview(): CalendarProviderSession? {
+    /** Opens the authorized primary provider; product HTTP remains disabled. */
+    fun openPrimaryCalendar(): CalendarProviderSession? {
         if (mutableState.value.status != PrivateGoogleAuthStatus.AUTHORIZED) return null
-        val gateway: GoogleAuthorizationGateway = if (realOAuthEnabled) realGateway ?: return null else fakeGateway
+        val gateway: GoogleAuthorizationGateway = calendarGatewayForTests
+            ?: if (realOAuthEnabled) realGateway ?: return null else fakeGateway
         closeCalendarSession()
-        return calendarComposition.openAuthorizedPreview(gateway).also {
-            mutableCalendarSession.value = it
+        return try {
+            calendarComposition.openAuthorizedPrimary(gateway).also {
+                mutableCalendarSession.value = it
+            }
+        } catch (_: Exception) {
+            setFailure("Primary Calendarを安全に開けませんでした。認可状態を再確認してください。", generation)
+            null
         }
     }
 
@@ -558,7 +573,7 @@ internal class PrivateGoogleAuthorizationViewModel(
 
     private fun markAuthorized(gateway: GoogleAuthorizationGateway, requestGeneration: Long) {
         if (requestGeneration != generation) return
-        // Provider session is deliberately not opened until the user asks for the Mock preview.
+        // Provider session is deliberately not opened until the user explicitly opens the calendar.
         val scopes = PrivatePrimaryCalendarScopeContract.scopes
         val status = gateway.status(scopes)
         if (!status.permits(scopes)) {

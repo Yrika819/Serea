@@ -98,6 +98,32 @@ class CalendarAgendaUiControllerTest {
         controller.close()
     }
 
+    @Test fun loadingProviderLabelUsesSessionKindAndDefaultsToFictional() {
+        assertFalse(isDemoProviderWhileLoading(app.serea.android.calendar.CalendarProviderKind.GOOGLE_READ_ONLY))
+        assertTrue(isDemoProviderWhileLoading(app.serea.android.calendar.CalendarProviderKind.FAKE))
+        assertTrue(isDemoProviderWhileLoading(null))
+    }
+
+    @Test fun manualRefreshReloadsTheSelectedAgenda() = runTest {
+        val provider = fakeProvider(
+            listOf(calendar("primary")),
+            listOf(timedEvent("primary", "event", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")),
+        )
+        val readPort = CalendarAgendaUiFake(provider)
+        val controller = CalendarAgendaUiController(
+            readPort, readPort, UI_TEST_CLOCK, ZoneId.of("UTC"), this, primaryCalendarOnly = true,
+        )
+        advanceUntilIdle()
+        assertEquals(listOf("primary"), readPort.pageCalendarIds)
+
+        controller.refreshAgenda()
+        advanceUntilIdle()
+
+        assertEquals(listOf("primary", "primary"), readPort.pageCalendarIds)
+        assertEquals(listOf("event"), agenda(controller).events.map { it.key.eventId.value })
+        controller.close()
+    }
+
     @Test fun primaryOnlyRejectsForgedNonPrimaryDetailBeforeProviderAccess() = runTest {
         val provider = fakeProvider(
             listOf(calendar("primary")),
@@ -477,6 +503,9 @@ class CalendarAgendaUiControllerTest {
             val failure = assertFailure(controller, expected)
             val message = CalendarAgendaJapaneseText.safeMessage(failure.reason)
             assertFalse(message.contains("title-must-not-leak"))
+            if (expected == CalendarAgendaFailure.EXPIRED) {
+                assertTrue("Expired Google authorization must prompt for reauthorization", message.contains("再認可"))
+            }
             controller.close()
         }
     }

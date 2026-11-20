@@ -9,6 +9,7 @@ import org.junit.Test
 class PrivateBuildOAuthGateTest {
     @Test fun oauthGateRequiresBothPrivateVariantAndCallsiteOptIn() {
         assertFalse(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
+        assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
         assertEquals(BuildConfig.BUILD_TYPE == "privateBeta", BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED)
         assertEquals(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED, ownerPrivateGoogleOAuthEnabled(true))
         assertFalse(ownerPrivateGoogleOAuthEnabled(requestedByLocalPrivateBuild = false))

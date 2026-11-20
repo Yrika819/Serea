@@ -17,7 +17,7 @@ import org.junit.Test
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-class IsolatedGoogleCalendarTestCompositionTest {
+class PrivateGoogleCalendarCompositionTest {
     @Test
     fun isolatedBuildKeepsProductHttpGateOff() {
         assertEquals("isolated", BuildConfig.BUILD_TYPE)

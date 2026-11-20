@@ -59,3 +59,9 @@ Process death must not restore an authenticated Live session from stale UI state
 - Privacy tests: log capture contains no token, code, account identity or event content; no Calendar-to-Cloud-AI dispatch path.
 
 No production gate is enabled by this design. H4-E2 must run relevant Android unit/integration/security tests plus required variant/CI checks and review current source. H4-F real connection is separate and requires the approvals in the [gate matrix](../../plans/h4-e1-to-h4-f-gate-matrix.md).
+
+## 2026-11-20 H4-E2 implementation addendum
+
+This design is now implemented in the H4-E2 worktree with the following deliberate adjustment: the existing `privateBeta` variant is retained, and no Live-capable true-valued product variant is introduced. The HTTP BuildConfig remains `false` in default, Beta, and Private Beta; OAuth is independently gated. Product composition has no URL/client/runtime override injection. MockWebServer and synthetic gateway dependencies live in isolated test composition only. The implementation and validation ledger is [here](../../security/h4-e2-private-calendar-live-gate-implementation.md).
+
+The proposal's references to a future Private `true` build configuration remain a separate Owner-approved change, not an H4-E2 output. H4-E2 has not performed real OAuth, Google HTTP, Cloud configuration, signing, or APK/device operations. API 26/35 Formal and same-SHA CI must be recorded on the resulting Draft PR before H4-F proceeds.

@@ -77,6 +77,58 @@ class PrivateGoogleAuthorizationViewModelTest {
         }
     }
 
+    @Test
+    fun authorizedDebugCompositionRemainsFakeAndClosesSessions() = runTest(mainDispatcher.dispatcher) {
+        val gateway = RevokeFixtureGateway()
+        val viewModel = PrivateGoogleAuthorizationViewModel(
+            context = null,
+            enabledInThisVariant = true,
+            realOAuthEnabled = true,
+            realGatewayFactory = { _, _ -> gateway },
+        )
+        assertNull(viewModel.openPrimaryCalendar())
+        assertFalse(viewModel.opensGoogleProvider)
+        selectFixtureAccount(viewModel)
+        viewModel.requestPrimaryCalendarConsent()
+        advanceUntilIdle()
+
+        val first = checkNotNull(viewModel.openPrimaryCalendar())
+        assertEquals(CalendarProviderKind.FAKE, first.kind)
+        assertTrue(first.primaryCalendarOnly)
+        val second = checkNotNull(viewModel.openPrimaryCalendar())
+        assertTrue(runCatching { first.status() }.isFailure)
+        viewModel.disconnectCalendarInApp()
+        assertNull(viewModel.calendarSession.value)
+        assertTrue(runCatching { second.status() }.isFailure)
+    }
+
+    @Test
+    fun providerConstructionFailureIsRedactedAndClosesPreviousSession() = runTest(mainDispatcher.dispatcher) {
+        val gateway = RevokeFixtureGateway()
+        var rejectStatus = false
+        val real = object : PrivateGoogleRealAuthorizationGateway by gateway {
+            override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+                if (rejectStatus) error("synthetic-secret-token owner@example.invalid")
+                return gateway.status(scopes)
+            }
+        }
+        val viewModel = PrivateGoogleAuthorizationViewModel(
+            context = null, enabledInThisVariant = true, realOAuthEnabled = true,
+            realGatewayFactory = { _, _ -> real },
+        )
+        selectFixtureAccount(viewModel)
+        viewModel.requestPrimaryCalendarConsent()
+        advanceUntilIdle()
+        val session = checkNotNull(viewModel.openPrimaryCalendar())
+        rejectStatus = true
+        assertNull(viewModel.openPrimaryCalendar())
+        assertNull(viewModel.calendarSession.value)
+        assertEquals(PrivateGoogleAuthStatus.ERROR, viewModel.state.value.status)
+        assertFalse(viewModel.state.value.message.contains("synthetic-secret-token"))
+        assertFalse(viewModel.state.value.message.contains("owner@example.invalid"))
+        assertTrue(runCatching { session.status() }.isFailure)
+    }
+
     private fun selectFixtureAccount(viewModel: PrivateGoogleAuthorizationViewModel) {
         val request = checkNotNull(viewModel.beginRealAccountSelection())
         viewModel.onRealAccountSelected(
@@ -89,6 +141,21 @@ class PrivateGoogleAuthorizationViewModelTest {
     fun publicDebugBuildDoesNotExposePrivateGoogleAuthorizationUi() {
         assertFalse(BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED)
         assertFalse(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
+        assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
+    }
+
+    @Test
+    fun debugBuildRejectsSyntheticCalendarGatewayInjection() {
+        val failure = runCatching {
+            PrivateGoogleAuthorizationViewModel(
+                context = null,
+                enabledInThisVariant = true,
+                realOAuthEnabled = false,
+                calendarGatewayForTests = RevokeFixtureGateway(),
+            )
+        }.exceptionOrNull()
+
+        assertTrue("Synthetic gateways are test-only and must be rejected in debug", failure is IllegalStateException)
     }
 
     @Test
@@ -102,7 +169,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             selectFixtureAccount(viewModel)
             viewModel.requestPrimaryCalendarConsent()
             advanceUntilIdle()
-            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+            val session = checkNotNull(viewModel.openPrimaryCalendar())
 
             assertTrue(viewModel.requestGoogleGrantRevoke())
             assertEquals(0, gateway.revokeCalls)
@@ -157,7 +224,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             viewModel.requestPrimaryCalendarConsent()
             advanceUntilIdle()
             assertEquals(PrivateGoogleAuthStatus.AUTHORIZED, viewModel.state.value.status)
-            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+            val session = checkNotNull(viewModel.openPrimaryCalendar())
 
             viewModel.requestPrimaryCalendarConsent()
             advanceUntilIdle()
@@ -214,7 +281,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             assertEquals(PrivateGoogleAuthStatus.AUTHORIZED, viewModel.state.value.status)
             assertTrue(viewModel.state.value.message.contains("架空データ"))
 
-            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+            val session = checkNotNull(viewModel.openPrimaryCalendar())
             assertEquals(CalendarProviderKind.FAKE, session.kind)
             assertEquals(CalendarAuthorizationState.MOCK_ONLY, session.status().state)
 
@@ -245,7 +312,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             advanceUntilIdle()
 
             assertEquals(PrivateGoogleAuthStatus.AUTHORIZED, viewModel.state.value.status)
-            val session = checkNotNull(viewModel.openFakePrimaryCalendarPreview())
+            val session = checkNotNull(viewModel.openPrimaryCalendar())
             assertEquals(CalendarProviderKind.FAKE, session.kind)
             session.close()
         }
@@ -269,7 +336,7 @@ class PrivateGoogleAuthorizationViewModelTest {
 
             assertEquals(PrivateGoogleAuthStatus.ACCOUNT_SELECTED, viewModel.state.value.status)
             assertNull(viewModel.state.value.pendingMockConsent)
-            assertNull(viewModel.openFakePrimaryCalendarPreview())
+            assertNull(viewModel.openPrimaryCalendar())
         }
 
     @Test
@@ -286,7 +353,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             val preview = checkNotNull(viewModel.state.value.pendingMockConsent)
             viewModel.cancelMockConsent(preview)
             assertEquals(PrivateGoogleAuthStatus.CANCELLED, viewModel.state.value.status)
-            assertNull(viewModel.openFakePrimaryCalendarPreview())
+            assertNull(viewModel.openPrimaryCalendar())
 
             viewModel.selectSyntheticAccount(SyntheticGoogleAccount.B)
             viewModel.requestPrimaryCalendarConsent()
@@ -312,7 +379,7 @@ class PrivateGoogleAuthorizationViewModelTest {
             assertFalse(viewModel.state.value.hasSelectedAccount)
             assertEquals(PrivateGoogleAuthStatus.DISCONNECTED, viewModel.state.value.status)
             assertNull(viewModel.state.value.pendingMockConsent)
-            assertNull(viewModel.openFakePrimaryCalendarPreview())
+            assertNull(viewModel.openPrimaryCalendar())
         }
 
     @Test
@@ -506,7 +573,7 @@ class PrivateGoogleAuthorizationViewModelTest {
                 }
             }
 
-            val session = PrivateGoogleCalendarComposition().openAuthorizedPreview(gateway)
+            val session = PrivateGoogleCalendarComposition().openAuthorizedPrimary(gateway)
 
             assertEquals(CalendarProviderKind.FAKE, session.kind)
             assertTrue(session.primaryCalendarOnly)

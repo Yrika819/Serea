@@ -19,6 +19,8 @@ fi
 evidence="app/build/outputs/androidTest-results/functional-api${api_level}"
 filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges,app.serea.android.SereaAppShellTest#chatTasksBackReturnsToTheSameChatViewModel,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable,app.serea.android.ChatScreenTest#fontScaleTwoKeepsDeletionActionsReachableAndTappable,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant,app.serea.android.GoogleTrustedHandoffUiTest#fakeGmailPreviewCanBeCancelledOrConfirmedForLocalChat,app.serea.android.GoogleTrustedHandoffUiTest#fakeCalendarPreviewCanBeCancelledOrConfirmedForLocalChat,app.serea.android.GoogleTrustedHandoffUiTest#gmailOutOfOrderPreviewCallbackCannotReplaceNewestSelection,app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClosedAndDialogRemainsCancellable,app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview,app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend,app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend,app.serea.android.LocalModelChatViewModelIntegrationAndroidTest'
 
+filter="${filter},app.serea.android.PrivateGoogleCalendarLoopbackUiTest#privateAuthorizationUiReadsPagedPrimaryEventsDetailsRefreshAndClosesSession,app.serea.android.PrivateGoogleCalendarLoopbackUiTest#selectedLiveTransportFailureStaysAnErrorWithoutFakeFallback,app.serea.android.PrivateGoogleCalendarLoopbackUiTest#leavingDuringLiveReadCancelsTheHttpCallWithoutShowingFakeSuccess,app.serea.android.PrivateGoogleCalendarLoopbackUiTest#productDefaultCompositionKeepsPrivateUiAndAgendaExplicitlyFictional"
+
 if [[ -e "$evidence" || -e app/build/outputs/androidTest-results/connected ]]; then
   echo 'Refusing to reuse stale Focused evidence or connected instrumentation results.' >&2
   exit 2
@@ -216,7 +218,7 @@ done
 
 if [ -d "$evidence/junit" ]; then
   if python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-    --minimum 43 --exact-count 43 \
+    --minimum 47 --exact-count 47 \
     --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
     --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
     --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
@@ -260,6 +262,10 @@ if [ -d "$evidence/junit" ]; then
     --require-test app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#explicitlySelectedFakeRouteSendsOnceAndSettlesUsage \
     --require-test app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#missingConsentFailsBeforeUsageAndBackendDispatch \
     --require-test app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#cancellationDuringFakeGenerationDoesNotPersistAssistantReply \
+    --require-test app.serea.android.PrivateGoogleCalendarLoopbackUiTest#privateAuthorizationUiReadsPagedPrimaryEventsDetailsRefreshAndClosesSession \
+    --require-test app.serea.android.PrivateGoogleCalendarLoopbackUiTest#selectedLiveTransportFailureStaysAnErrorWithoutFakeFallback \
+    --require-test app.serea.android.PrivateGoogleCalendarLoopbackUiTest#leavingDuringLiveReadCancelsTheHttpCallWithoutShowingFakeSuccess \
+    --require-test app.serea.android.PrivateGoogleCalendarLoopbackUiTest#productDefaultCompositionKeepsPrivateUiAndAgendaExplicitlyFictional \
     > "$evidence/verification.log" 2>&1; then
     verify_status=0
   else

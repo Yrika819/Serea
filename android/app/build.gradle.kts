@@ -94,6 +94,7 @@ android {
         buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
         buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
         buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
+        buildConfigField("boolean", "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED", "false")
         if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
             ndk { abiFilters += nativeRuntimeAbi }
             externalNativeBuild {
@@ -148,6 +149,7 @@ android {
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
+            buildConfigField("boolean", "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED", "false")
             signingConfig = null
         }
         create("privateBeta") {
@@ -163,6 +165,7 @@ android {
                 ownerPrivateBetaGoogleEnabled.toString(),
             )
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "true")
+            buildConfigField("boolean", "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED", "false")
             signingConfig = null
         }
     }

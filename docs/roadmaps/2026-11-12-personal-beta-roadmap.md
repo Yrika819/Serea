@@ -117,3 +117,10 @@
 - [Gmail API Scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
 
 *外部Google要件は変更される可能性があるため、実設定の前に公式資料を再確認すること。*
+
+
+## 2026-11-20 H4-E1 Personal mode decision addendum
+
+The Owner has formally selected Google Auth Platform **Personal** for the one-account Personal Beta Calendar lane. This dated decision supersedes earlier forward-looking External/Testing assumptions for this lane only; historical status entries remain unchanged. Personal is limited to the Google Account that creates the app. Google says Personal cannot be changed to External or Internal, and existing External/Internal projects cannot be changed to Personal; future multi-user use requires a separate Cloud project and OAuth design. Prefer a new Personal project; do not assume an existing External/Internal project can be converted. No Cloud operation, OAuth client, API enablement, real connection, or Live HTTP activation is authorized by this decision. See [decision](../plans/2026-11-20-h4-e1-personal-mode-decision.md), [audit](../security/h4-e1-google-personal-readiness-audit.md), and [H4-E1→H4-F gates](../plans/h4-e1-to-h4-f-gate-matrix.md).
+
+The target schedule remains H4-E1 Nov 24, H4-E2 Nov 28, H4-F Dec 4, Feature Freeze Dec 10, Security Review Dec 17, RC Dec 24, and GO/NO-GO Dec 31, 2026. Dates do not relax safety or Required CI. If Live is not ready, preserve a clearly Fake-labeled Demo Beta. Gmail, Cloud AI and Tasks lanes are unchanged.

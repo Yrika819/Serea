@@ -86,3 +86,12 @@ Google requirements may change. The Owner must re-check official guidance before
 - [Google OAuth 2.0 security best practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices)
 - [Google Calendar API authorization scopes](https://developers.google.com/workspace/calendar/api/auth)
 - [Google Calendar API events list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)
+
+
+## 2026-11-20 Personal-mode decision addendum (current for future activation)
+
+The Owner selected Google Auth Platform **Personal** for the single creating Google Account. This addendum supersedes older External/Testing assumptions in this checklist for the initial Personal Calendar lane; prior entries are retained as historical records. Google says Personal cannot be changed to External or Internal, and existing External/Internal projects cannot be changed to Personal. Prefer a new Personal project. Another account, including a project Owner/Editor, is not eligible; `client_user_mismatch` is expected. Personal’s exemption from External/Testing seven-day test-user token expiry does not make tokens permanent.
+
+Before any future activation, verify the exact signed, installable APK package (`app.serea.android.privatebeta`) and signing certificate with `apksigner verify --verbose --print-certs <apk>`; compare signer SHA-1 against the Android OAuth client and record/compare SHA-256 for independent identity verification. Fail closed for verification failure, ambiguous/multiple unexpected signers, or fingerprint mismatch; `keytool -printcert -jarfile` is supplementary only. Do not substitute CI ephemeral, Debug, Disposable fixture or future Production signing identities. The approved first grant is only `https://www.googleapis.com/auth/calendar.events.readonly`, and application access is only `primary`; reject CalendarList, non-primary IDs and writes before token/network use. Keep OAuth and HTTP gates independent; Public/Beta/Debug remain unable to use Google product HTTP, and Live failure must not silently fall back to Fake.
+
+No Cloud project/client/API change, OAuth, real API request, signing, APK distribution, or Live Gate activation is authorized by this addendum. Follow the [Personal Owner runbook](../plans/h4-e1-personal-cloud-owner-runbook.md), [H4-E2 gate design](../superpowers/specs/h4-e2-private-calendar-live-gate-design.md), and [approval matrix](../plans/h4-e1-to-h4-f-gate-matrix.md) after obtaining fresh, scoped Owner approvals.

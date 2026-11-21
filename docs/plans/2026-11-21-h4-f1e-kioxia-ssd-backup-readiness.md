@@ -284,3 +284,15 @@ The image is only usable for future key data if encryption is independently conf
 | Real APK and certificate SHA-1/SHA-256 | `NOT_VERIFIED` |
 
 Gate 2 is independent of Approval B and may be considered as a media-only preparation after the existing-data protection question is answered. Gate 2 approval does not authorize Approval B. Approval B remains blocked from GO until Gate 2 is completed, a physically independent second medium is selected and prepared, and prior-installation/data-continuity questions are resolved.
+
+## H4-F1F-R1 addendum — Owner-reported existing-data backup (2026-11-21 JST)
+
+This dated note records the Owner's explicit conversation report that a separate-location backup of existing KIOXIA SSD data exists. It updates only the prior unknown existence status; no earlier F1E/F1F observation is rewritten.
+
+- Existing-data backup existence: `OWNER_REPORTED_BACKUP_EXISTS`.
+- Backup completeness, integrity, and restoration/recovery capability: `NOT_VERIFIED`.
+- Owner report date: 2026-11-21 JST.
+
+No backup contents were accessed, no files were opened, and no restore or integrity test was performed. The Owner's report establishes that a separate copy is said to exist; it does not independently establish coverage, integrity, or recoverability. No location or identifying information about that backup is recorded.
+
+The earlier F1F-R1 statement that the existence of a separate backup was unconfirmed is retained as the status at that earlier point. As of this additional report, existence is Owner-reported; adequacy and recoverability remain unverified. Gate 2 remains `NOT_AUTHORIZED` until a separate exact limited approval is given. This report does not authorize SSD writes, image creation/mount, key generation, or any other operation.

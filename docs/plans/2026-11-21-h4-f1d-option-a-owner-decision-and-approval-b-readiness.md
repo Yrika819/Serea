@@ -142,6 +142,7 @@ This is a future, Owner-only sequence, not authorized for execution in F1D:
 - F1A and F1B retain their dated audit/CI snapshots as historical evidence; this record is the current Owner decision for Approval A and supersedes their then-pending state only for that decision.
 - No F1C report or validation claim is upgraded to a formal PR/CI record by being summarized here.
 - The Gradle unsigned-build/signing boundary and Public/Production key separation remain unchanged.
+- H4-F1E records the KIOXIA-named SSD as a backup candidate only; macOS did not verify its manufacturer or encryption state. See the [H4-F1E SSD and Approval B readiness report](2026-11-21-h4-f1e-kioxia-ssd-backup-readiness.md). It does not amend Approval A or authorize encrypted image/key backup creation. Backup 2 remains `BACKUP_2_PENDING_OWNER`.
 - No production code, build configuration, CI protection, OAuth/HTTP gate or key material is changed or accessed by this documentation decision.
 
 ## 7. Authority and record integrity

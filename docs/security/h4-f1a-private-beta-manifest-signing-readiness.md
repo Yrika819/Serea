@@ -1,6 +1,6 @@
 # H4-F1A — Private Beta Manifest & Signing Readiness
 
-**State:** `F1A_READY_FOR_OWNER_REVIEW` (documentation plus one minimal manifest-label correction; no signing, APK, device, Cloud, OAuth, or Calendar operation). Based on clean worktree branch `docs/h4-f1a-private-beta-manifest-signing-readiness`, from `origin/main` HEAD `6557af533d83e4a1f643fcb308e5356087422410`, Tree `63e76bea7dfa53342a095c0789f8c9a5e614a0ee`. This report was first committed as `c4b9ee59af32c1fa845b3767957d2aff98bb7261` before PR creation; **current PR #250 is Draft**: https://github.com/Yrika819/Serea/pull/250. Its live status is summarized below and must be read against the exact HEAD recorded for each check snapshot.
+**State:** `F1A_READY_FOR_OWNER_REVIEW` (historical F1A documentation and manifest-label correction; no signing, APK, device, Cloud, OAuth, or Calendar operation). Based on clean worktree branch `docs/h4-f1a-private-beta-manifest-signing-readiness`, from `origin/main` HEAD `6557af533d83e4a1f643fcb308e5356087422410`, Tree `63e76bea7dfa53342a095c0789f8c9a5e614a0ee`. This report was first committed as `c4b9ee59af32c1fa845b3767957d2aff98bb7261` before PR creation. At the original report snapshot, PR #250 was Draft; it was later merged on 2026-11-21: https://github.com/Yrika819/Serea/pull/250. The check statuses below remain tied to their exact historical HEADs and are not live status. The later Owner decision `APPROVAL A — APPROVED (2026-11-21)` and current key/Approval B boundaries are recorded in the [H4-F1D decision record](../plans/2026-11-21-h4-f1d-option-a-owner-decision-and-approval-b-readiness.md); this does not authorize B–E.
 
 ## Executive result
 
@@ -8,7 +8,7 @@
 - Re-running with Temurin JDK `17.0.21`, the existing SDK, existing caches and two Gradle workers succeeded twice for Private Beta manifest processing and once for Public Beta. No CI environment variable or OAuth opt-in was set. No APK task was run.
 - Inspection exposed a real label mismatch: the Private Beta source had no label override and merged `Serea Demo`. The minimal, authorized correction is in `android/app/src/privateBeta/AndroidManifest.xml`; after the fix, Private Beta and Public Beta both merge `Serea Personal Beta`. The source correction does not change either application ID or build gates.
 - Source and merged-manifest evidence supports keeping Private Beta ID `app.serea.android.privatebeta`. Current source defaults (`versionCode=2`, `versionName=0.1.0-demo`) are not an Owner-approved artifact version.
-- No formal Private signing identity is configured or selected. The F0 recommendation, a fixed Owner-managed Private Beta-only certificate, remains a proposal pending Owner decision. No key was generated, searched for, read, copied, or used.
+- The fixed Owner-managed Private Beta-only signing identity (Option A) was formally adopted under Approval A on 2026-11-21; its key parameters, generation and custody setup remain subject to Approval B. No key was generated, searched for, read, copied, or used in F1A or by this later decision.
 - OAuth and Calendar HTTP remain separate and default-off; HTTP remains hardcoded false in build configuration. Cloud/project/client/API state is unconfirmed. APK signing, provenance, fingerprints, install/update compatibility and device data retention remain `NOT_VERIFIED`.
 
 ## Scope and evidence
@@ -81,9 +81,9 @@ Source review of `android/app/build.gradle.kts` confirmed:
 
 ## Signing design and Owner decisions
 
-Option A, a fixed Owner-managed Private Beta-only certificate, remains the preferred proposal, not an adopted identity. Full Owner-only preparation, including key generation/signing commands for later separately approved execution, is in [the H4-F1A signing and APK verification runbook](../plans/h4-f1a-owner-private-signing-and-apk-verification-runbook.md).
+- Option A, a fixed Owner-managed Private Beta-only certificate, was formally adopted by Approval A on 2026-11-21; specific parameters and key generation remain pending Approval B. Full Owner-only preparation is in [the H4-F1A signing and APK verification runbook](../plans/h4-f1a-owner-private-signing-and-apk-verification-runbook.md) and the dated [H4-F1D decision/readiness record](../plans/2026-11-21-h4-f1d-option-a-owner-decision-and-approval-b-readiness.md).
 
-Before any key/artifact action, the Owner must explicitly decide: (1) whether to adopt A; (2) custody and offline encrypted backup/recovery design; (3) key validity/algorithm and signing tools; (4) private artifact provenance and approved versionCode; (5) whether a prior Private APK exists and how its signer/update chain will be independently verified; (6) acceptable key-loss, suspected-leak and rotation response; and (7) the exact APK/device actions, if any, to authorize. Do not find or inspect a prior key or APK without separate tightly scoped authorization.
+Before any key/artifact action, the Owner must complete Approval B's final key-parameter, host, custody, backup and recovery decisions, and separately decide the approved versionCode and exact later artifact/device actions. Approval A (adopting Option A) is already recorded; it does not authorize key generation, artifact access/build/signing, device operations or Cloud activity. Do not find or inspect a prior key or APK without separate, tightly scoped authorization.
 
 ## Google Cloud / OAuth handoff prerequisites
 

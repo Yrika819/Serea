@@ -1,22 +1,22 @@
 # H4-F1A — Owner-only Private Beta signing and APK verification runbook
 
-**Owner-run preparation only.** This is not authorization to generate/read/copy a key, build or sign an APK, install or distribute an artifact, use a device, open Google Cloud Console, authenticate, or contact Google Calendar. Each such operation requires a fresh, exact Owner approval. The agent must not carry out these procedures or handle key material/passwords. The suggested design below is not adopted until the Owner decides.
+**Current decision:** Option A was formally adopted by Owner decision `APPROVED — 2026-11-21`; see the [H4-F1D decision and Approval B readiness record](2026-11-21-h4-f1d-option-a-owner-decision-and-approval-b-readiness.md). This runbook remains Owner-run preparation only. Approval A does not authorize Approval B or any key generation/read/copy/backup/restore, APK build/signing, installation/distribution, device, Google Cloud, OAuth or Calendar operation. Each operation requires its own exact Owner approval. The agent must not handle key material/passwords.
 
-## 1. Proposed signing identity (Owner decision pending)
+## 1. Adopted identity model and pending key parameters
 
-F0 recommends option A: one fixed Owner-managed certificate dedicated to `app.serea.android.privatebeta`, separate from Public Beta and any future production key. This supports a stable Android OAuth package/SHA-1 identity and an update chain without exposing a production key. It also creates a critical recovery dependency: loss of the only usable private key may prevent compatible updates; compromise can require a new package or a supported signing lineage and may disrupt user data continuity.
+Owner adopted Option A: one fixed Owner-managed certificate dedicated to `app.serea.android.privatebeta`, separate from Public Beta and any future Production key. This supports a stable Android OAuth package/SHA-1 identity and an update chain without exposing a Production key. It also creates a critical recovery dependency: loss of the only usable private key may prevent compatible updates; compromise can require a new package or a supported signing lineage and may disrupt user-data continuity. The specific key-generation parameters remain subject to Owner's Approval B.
 
 Do not adopt a public test certificate, Debug signer, CI/ephemeral signer or a key discovered in an existing workspace as the official Private identity. Existing key material has not been inspected. If an earlier Private APK exists, pause: the Owner must separately authorize artifact access and determine its signer before selecting/generating a replacement. A new certificate will not make an old differently signed package update-compatible.
 
 ### Proposed format and cryptographic choices
 
-For an Android APK key held by the Owner, prefer a PKCS#12 keystore (`.p12`/`.pfx`) with a dedicated RSA 2048-bit or stronger key using SHA-256 with RSA (`SHA256withRSA`); use a long validity (at least 25 years, subject to current Android/Google requirements and Owner policy). Do not use MD5/SHA-1 signatures or reuse a personal TLS, production, or unrelated signing key. Check current Android official guidance at execution time. The certificate validity date is not a substitute for backup or key continuity. If Owner's security policy requires a different supported algorithm/format, pause and record the decision before generating anything.
+Preferred candidates are a PKCS#12 keystore (`.p12`/`.pfx`), RSA 3072-bit key, `SHA256withRSA`, and validity of at least 25 years, subject to current Android guidance and Owner policy. These are not final key-parameter approvals: the Owner must confirm exact format, key length, signature algorithm, validity, alias, minimal Subject, host and tools in Approval B. If API 26+ compatibility or policy is uncertain, pause and present RSA 2048-bit as an alternative; do not switch without Owner approval. Do not use MD5/SHA-1 signatures or reuse a personal TLS, Production, or unrelated signing key. The certificate validity date is not a substitute for backup or key continuity.
 
 ## 2. Owner decision and preparation checklist
 
 Before key generation, Owner privately decides and records:
 
-- [ ] Official identity is explicitly selected as a fixed Private Beta-only certificate (or a separately reviewed alternative).
+- [ ] Confirm the recorded Approval A decision: fixed Owner-managed Private Beta-only identity for `app.serea.android.privatebeta`; do not reinterpret Approval A as Approval B.
 - [ ] Package identity remains `app.serea.android.privatebeta`.
 - [ ] Whether an older approved Private APK exists, and separate authorization/procedure to inspect it without accessing any key.
 - [ ] Keystore format, algorithm, validity, alias naming policy, custodian and access policy.
@@ -38,7 +38,7 @@ keytool -genkeypair \
   -storetype PKCS12 \
   -alias serea-private-beta \
   -keyalg RSA \
-  -keysize 2048 \
+  -keysize 3072 \
   -sigalg SHA256withRSA \
   -validity <owner-approved-days>
 ```
@@ -50,7 +50,7 @@ The placeholder is instructional, not a value to submit literally. Choose the va
 1. Keep the primary keystore encrypted at rest in an access-controlled Owner location outside the repository, developer shared folders and general cloud-sync storage. Restrict read access to the Owner and avoid unattended CI access.
 2. Create at least two encrypted backups on independent media/storage failure domains. Protect the backup encryption key separately from the backup; do not place the password alongside its keystore.
 3. Document the non-secret recovery inventory (copy locations under Owner control, custodian, last check date, approved recovery steps) privately. Do not disclose exact storage paths publicly.
-4. Perform a recovery rehearsal only under separate Owner approval, using a controlled copy and verifying that the restored key can sign a disposable, non-release test artifact. Keep that test artifact and certificate data private; do not install/distribute it or use it for OAuth registration.
+4. Perform a backup restoration/integrity rehearsal only when the exact restoration check is included in a separately approved Owner operation. It may verify that a controlled restored copy contains the same public certificate and matches the primary copy, without exposing the private key. Do not sign or generate an APK/test artifact as part of Approval B; any test signing or artifact generation requires its own explicit approval. Do not install/distribute test artifacts or use them for OAuth registration.
 5. Re-seal/re-encrypt the restored copy, remove temporary copies securely under Owner policy, and document result without disclosing key material.
 6. Do not use GitHub Actions/CI secrets or a committed/local project keystore as the long-term custody plan. If automated signing is ever proposed, it needs a distinct threat model, approval, access controls, audit, and recovery review.
 

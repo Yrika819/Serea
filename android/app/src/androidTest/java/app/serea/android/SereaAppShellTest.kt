@@ -1838,7 +1838,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             runCatching {
                 compose.onNodeWithText("Demo Work").assertIsSelected()
-                compose.onNodeWithText("今後").assertIsEnabled()
+                compose.onNodeWithText("今後7日間").assertIsEnabled()
             }.isSuccess
         }
         val afterCalendarSelection = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
@@ -1849,12 +1849,12 @@ class SereaAppShellTest {
                 "firstVisible=$calendarSelectionPosition",
         )
         assertEquals("Calendar selection must reset the first visible list position", 0 to 0, calendarSelectionPosition)
-        compose.onNodeWithText("今後").performClick()
+        compose.onNodeWithText("今後7日間").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Demo Work").assertIsSelected()
-        compose.onNodeWithText("今後").assertIsSelected()
+        compose.onNodeWithText("今後7日間").assertIsSelected()
         compose.waitUntil(10_000) {
             runCatching {
                 val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
@@ -1979,7 +1979,7 @@ class SereaAppShellTest {
         calendarTargetTextNode("Fictional paged event 64").assertIsDisplayed()
         val workOffsetBeforeCalendarChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertTrue("calendar switch test must start below the first Work event", checkNotNull(workOffsetBeforeCalendarChange.scrollValue) > 0f)
-        compose.onNodeWithText("今後").performClick()
+        compose.onNodeWithText("今後7日間").performClick()
         compose.onNodeWithText("Demo Global").performClick()
         compose.waitUntil(10_000) {
             runCatching {

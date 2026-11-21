@@ -18,7 +18,6 @@ import app.serea.android.calendar.EventTime
 import app.serea.android.calendar.CalendarDescriptor
 import app.serea.android.calendar.CalendarId
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -448,7 +447,10 @@ internal fun calendarAgendaRange(query: CalendarAgendaQuery, clock: Clock, zone:
         CalendarAgendaMode.TODAY -> localDayRange(now.atZone(zone).toLocalDate(), zone)
         CalendarAgendaMode.TOMORROW -> localDayRange(now.atZone(zone).toLocalDate().plusDays(1), zone)
         CalendarAgendaMode.DATE -> localDayRange(checkNotNull(query.selectedDate), zone)
-        CalendarAgendaMode.UPCOMING -> CalendarDateRange(now, now.plus(Duration.ofDays(30)))
+        CalendarAgendaMode.UPCOMING -> {
+            val today = now.atZone(zone).toLocalDate()
+            CalendarDateRange(today.atStartOfDay(zone).toInstant(), today.plusDays(7).atStartOfDay(zone).toInstant())
+        }
     }
 }
 
@@ -464,8 +466,8 @@ private fun localDayRange(date: LocalDate, zone: ZoneId) = CalendarDateRange(
 private fun isInAgenda(event: CalendarEvent, query: CalendarAgendaQuery, clock: Clock, @Suppress("UNUSED_PARAMETER") displayZone: ZoneId): Boolean =
     when (query.mode) {
         CalendarAgendaMode.UPCOMING -> when (val time = event.time) {
-            is EventTime.Timed -> time.start >= clock.instant()
-            is EventTime.AllDay -> time.startDate.atStartOfDay(time.timeZone).toInstant() >= clock.instant()
+            is EventTime.Timed -> time.end > clock.instant()
+            is EventTime.AllDay -> time.endDateExclusive.atStartOfDay(time.timeZone).toInstant() > clock.instant()
             null -> false
         }
         else -> event.status != EventStatus.CANCELLED && event.time != null
@@ -496,7 +498,7 @@ object CalendarAgendaJapaneseText {
     fun agendaHeading(query: CalendarAgendaQuery, clock: Clock, zone: ZoneId): String = when (query.mode) {
         CalendarAgendaMode.TODAY -> "今日の予定 · ${date(clock.instant().atZone(zone).toLocalDate())}"
         CalendarAgendaMode.TOMORROW -> "明日の予定 · ${date(clock.instant().atZone(zone).toLocalDate().plusDays(1))}"
-        CalendarAgendaMode.UPCOMING -> "今後の予定"
+        CalendarAgendaMode.UPCOMING -> "今後7日間の予定"
         CalendarAgendaMode.DATE -> "${date(checkNotNull(query.selectedDate))}の予定"
     }
 

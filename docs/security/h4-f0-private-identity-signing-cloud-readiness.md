@@ -4,7 +4,7 @@
 
 ## Executive result
 
-- The configured Private Beta identity is `app.serea.android.privatebeta`; no Application ID change is recommended. Actual merged manifest output was **NOT_VERIFIED** because the targeted Gradle task failed before producing it.
+- The configured Private Beta identity is `app.serea.android.privatebeta`; no Application ID change is recommended. At F0, merged manifest output was **NOT_VERIFIED** because the targeted Gradle task failed before producing it. F1A later generated and inspected the merged manifests; see the [H4-F1A report](h4-f1a-private-beta-manifest-signing-readiness.md).
 - Build configuration deliberately leaves `beta` and `privateBeta` unsigned. The committed source does not establish the signer or certificate of any existing APK. Current versionCode default for Private Beta is `2` (Gradle property override permitted); `versionName` inherits `0.1.0-demo`.
 - Recommend **A: a fixed, Owner-managed Private Beta-only signing certificate**, subject to Owner decision and approved recovery/backup plan. No key was generated, searched for, read, copied, or used.
 - OAuth and Calendar HTTP are independent gates. The source-level OAuth opt-in is Private-only and default-off. The product HTTP gate is literal false; Private composition opens a Primary-only Fake provider. No real OAuth, token acquisition, Calendar traffic, or Live path was exercised.
@@ -29,7 +29,7 @@ The request called out `PlayServicesGoogleAuthorizationGateway` as a separate pa
 | Public Beta identity | suffix `.beta` | Verified in Gradle source |
 | Private Beta versionCode | defaults to `2`; `sereaPrivateBetaVersionCode` can override, valid range `2..2,100,000,000` | Verified in Gradle source; packaged APK not checked |
 | versionName | inherits default `0.1.0-demo`; no Private Beta override found | Verified in Gradle source; packaged APK not checked |
-| Manifest merge | Main manifest has INTERNET permission, `allowBackup=false`, `usesCleartextTraffic=false`, exported launcher `MainActivity`; Private Beta source manifest changes app label to “Serea Personal Beta”. | Merge **NOT_VERIFIED** |
+| Manifest merge (F0 source note corrected by F1A) | Main manifest has INTERNET permission, `allowBackup=false`, `usesCleartextTraffic=false`, exported launcher `MainActivity`. The F0 note incorrectly attributed the “Serea Personal Beta” label override to `src/privateBeta`; it was in `src/beta`, while Private Beta inherited “Serea Demo”. F1A re-ran and inspected the merged manifests; see the [F1A report](h4-f1a-private-beta-manifest-signing-readiness.md). | F0 merge **NOT_VERIFIED at F0**; F1A merge **VERIFIED** |
 | OAuth BuildConfig | Base false; Beta false; Private Beta UI true, OAuth true only when `SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED=true`; gateway additionally checks the generated gate | Source reviewed; real authorization not tested |
 | HTTP BuildConfig | false in default, Beta, and Private Beta configuration; Private product composition also uses compile-time ID/build/UI checks | Source reviewed; no activation authorized |
 | Signing | Beta and Private Beta clear inherited signing config; a conditional ephemeral update-test config is only for a test variant. No Private signer is configured. | Source reviewed; actual APK signer **NOT_VERIFIED** |
@@ -85,7 +85,7 @@ Never fill these fields from a Gradle signing report, debug/CI key, unsigned APK
 
 - **Critical — none identified** in this bounded source review.
 - **High — no currently identified source defect.** Real access is deliberately unavailable, so H4-F is blocked until code/Cloud/artifact/Owner gates are separately completed. This is an approval dependency, not a request to enable HTTP.
-- **Medium — artifact identity not established.** No approved signed APK, signer fingerprint, version in artifact, update chain, or successful merged manifest is verified. The Gradle manifest task failed before output. This blocks OAuth client registration and F1 real-access readiness.
+- **Medium — artifact identity not established at F0.** No approved signed APK, signer fingerprint, version in artifact, or update chain was verified. The F0 Gradle manifest task failed before output; F1A later verified merged XML but did not build or inspect an APK. Artifact identity still blocks OAuth client registration and real-access readiness.
 - **Medium — real-account lifecycle remains unverified.** The code has request/session invalidation paths, but real Play Services account switch/removal/revocation and API behavior have not run. H4-F must require authorized, bounded validation only after the proper approvals.
 - **Low — historical roadmap text is stale for this lane.** The 2026-11-12 roadmap’s External/Testing and OD-H4-03 proposal predates the 2026-11-20 Personal decision. The dated Personal decision/addenda and Owner instruction take precedence for this one-account lane; keep old text as history, not current setup guidance. Future multi-user use needs a separate project/design.
 
@@ -111,6 +111,6 @@ Before any F1 real-access operation, the Owner and authorized implementers must 
 
 - Source and required design-document review: performed read-only.
 - Google official documentation: re-fetched on 2026-11-21 (links above).
-- `:app:processPrivateBetaManifest`: attempted once; **FAILED before merged output** with Gradle error text `26.0.2.1`; merged manifest remains **NOT_VERIFIED**.
+- `:app:processPrivateBetaManifest`: at F0, attempted once; **FAILED before merged output** with Gradle error text `26.0.2.1`; merged manifest was **NOT_VERIFIED at F0**. F1A later diagnosed the likely JDK/runtime mismatch and verified merged manifests; see the [F1A report](h4-f1a-private-beta-manifest-signing-readiness.md).
 - APK build/signing, Android Formal, device tests, real OAuth, real Calendar HTTP, Google Cloud, key access: **NOT_RUN / NOT_AUTHORIZED**.
 - H4-E2 local/CI results: historical evidence in the E2 record/PR #248 only; not represented as new F0 validation. PR #248’s historical check set includes non-Required failure and cancellation; consult live GitHub status before relying on any CI claim.

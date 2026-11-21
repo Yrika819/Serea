@@ -125,3 +125,174 @@ Recheck current UI and documentation immediately before future Owner execution:
 - Android, [Sign your app](https://developer.android.com/studio/publish/app-signing) and [`apksigner`](https://developer.android.com/tools/apksigner).
 
 Local `hdiutil create -help` (read-only help output only; no `create` operation was run) listed `AES-256` as recommended and listed sparsebundle creation types. This confirms available tool options on this Mac, not that the KIOXIA candidate accepts the image or that an image has been created.
+
+## H4-F1F addendum — media finalization and Approval B execution gate (2026-11-21 JST)
+
+This dated addendum preserves the F1E observations above as historical. It records a new read-only macOS snapshot and a future-owner approval package only. F1F performed no disk writes, image creation/mount, key operation, backup, APK/device operation, or Cloud action.
+
+### A. New read-only external SSD snapshot
+
+The external physical-disk list showed a 1.0 TB USB SSD reporting model `EXCERIA PLUS` and a mounted volume named `KIOXIA`. The metadata was read-only; no volume contents were examined. Current observed values:
+
+| Property | 2026-11-21 observation | Interpretation |
+|---|---|---|
+| Physical device | External, USB, solid-state; model string `EXCERIA PLUS`; approximately 1.0 TB | Consistent with the Owner-described candidate, but not independent proof of manufacturer/ownership. |
+| Mounted volume | Label `KIOXIA`; mounted and not read-only | A label alone does not identify the physical product. |
+| Filesystem | `File System Personality: ExFAT`; partition-type metadata says `Windows_NTFS` | ExFAT is the mounted filesystem; the partition-type label is not evidence the volume is NTFS. |
+| Used / free | Approximately 536.3 GB used / 463.9 GB free | Current snapshot only; recheck in the Owner's UI immediately before any separately approved write. |
+| Encryption | ExFAT does not provide native volume encryption; hardware encryption is not established by the inspected metadata | Keep the whole-volume state `UNVERIFIED`; do not store key material directly on it. |
+
+The F1E snapshot (approximately 740.4 GB used / 259.7 GB free) remains a historical observation and is not overwritten by this newer reading. macOS did not expose a manufacturer attribute sufficient to authenticate the physical product. Gate 1 therefore remains `OWNER_PHYSICAL_CONFIRMATION_REQUIRED`: Owner must compare the physical product/label and connector to the intended device and confirm the on-screen model/capacity before selecting it in Disk Utility. No serial, UUID, transient device node, mount path, or other external disk's metadata was recorded. The Owner did not designate a second medium; `BACKUP_2_PENDING_OWNER` remains.
+
+### B. Encrypted-image design and ExFAT assessment
+
+An unencrypted ExFAT volume is intended to support an **encrypted disk-image container** as a new file/package without changing its filesystem; this combination remains an untested candidate on this particular SSD until separately approved Gate 2 succeeds. When the image is closed/ejected, its contents remain encrypted; when mounted and unlocked, the image contents are accessible as plaintext to the logged-in system. AES-256 image encryption therefore protects a lost/offline container, not a mounted session, compromised Mac, weak/reused password, or password stored alongside/in Keychain. Use a strong unique image password, enter it only in the UI prompt, do not save it to Keychain, and keep it separately in Owner-controlled password custody. No password or actual storage location belongs in this repository.
+
+| Disk Utility image format | Storage behavior | F1F assessment |
+|---|---|---|
+| Sparse Bundle Image (`UDSB`) | Read/write; grows with stored data in multiple band files | **Preferred candidate, not yet tested.** Sparse Bundle is listed in Apple's general blank-image format choices and local `hdiutil` help. Apple describes it as a read/write image that grows across multiple files; this does not mean Apple specifically certifies the encrypted sparse-bundle/APFS/ExFAT combination or prescribes it in the secure-image steps. It avoids allocating the entire virtual size immediately. Its many-file bundle needs reliable ExFAT directory/file operations and safe ejects. |
+| Apple Sparse Image (`ASIF`) | Modern sparse read/write image; allocated space follows stored data | Apple documents it, but this workflow does not select it because F1E's local `hdiutil` help did not list it and it has not been exercised here. Do not silently substitute it. |
+| Sparse Image (`UDSP`) | Sparse read/write image represented as an image file | Could be more compact than fixed-size read/write, but unlike the bundle uses a single image file; no evidence here establishes it as safer on this exact ExFAT device. Not the selected format. |
+| Read/write (`UDRW`) | Read/write image with its virtual capacity allocated as a regular image | Simpler single-file structure but consumes the full chosen size and is not the preferred growing format. Do not fall back without fresh Owner review. |
+
+Apple's guidance recommends APFS inside a disk image used with macOS 10.13 or later and identifies sparse bundles as growing, multi-file read/write images. The Owner-managed Mac use case calls for APFS inside the image. ExFAT's lack of APFS semantics is not itself a reason to rule out a container file holding an APFS image, but this particular combination is **not established** by Apple documentation and must be treated as a candidate pending Gate 2. Gate 2's empty-image create/eject/reopen test checks basic compatibility; it is not a long-term reliability test or backup-integrity proof. The current 463.9 GB free snapshot is ample for a 1 GB *virtual* image as displayed by Disk Utility; allocated space should grow with content, but actual units, free space, and allocation are time-varying and must be checked in the UI.
+
+Do not enable whole-SSD encryption, erase/reformat, repartition, convert filesystems, or use “Image from Device.” The container is an additional file/package; it is not a reason to modify existing data. Unclean removal or filesystem/media failure can still corrupt new container files or other data. Owner must confirm important existing SSD data is backed up and the disk is healthy before Gate 2; if errors, disconnects, or repair prompts occur, cancel and stop.
+
+### C. Owner approval package — Gate 1 through Gate 4
+
+These gates are sequential and separately authorized. Passing one does not approve the next. F1F provides no write authorization.
+
+#### Gate 1 — confirm the physical medium
+
+Owner compares the physical product/label and connector with the intended 1 TB KIOXIA SSD, then confirms the current Disk Utility device model/capacity and mounted ExFAT volume. Check available capacity and confirm existing data is protected by an independent backup. Do not browse existing files, change settings, test-write, or treat the volume label alone as identity. If any attribute mismatches, the disk is unhealthy, important data is not backed up, or identity is ambiguous, stop. Gate 1 completion is an Owner confirmation, not an agent claim.
+
+#### Gate 2 — separately approve and create an empty encrypted image only
+
+**Required limited Owner authorization:** explicitly approve creation, automatic initial mount, metadata/password-prompt verification, eject/reopen verification, and final eject of one **empty** image on the visually confirmed KIOXIA ExFAT volume. The approval should specify a virtual size of **1 GB as displayed by Disk Utility** (do not silently substitute GiB), APFS (non-case-sensitive), single GUID partition, AES-256 encryption, Sparse Bundle Image (`UDSB`), and that no key or other file is to be copied into it. This is a media-preparation authorization, **not Approval B**.
+
+**Owner-run Disk Utility sequence after that separate authorization:**
+
+1. Reconfirm the physical SSD in Gate 1 and select the existing mounted ExFAT volume as the save destination. Choose a new Owner-selected image filename that does not already exist; never overwrite an existing item. Do not include personal paths or device IDs in any report.
+2. Open Disk Utility and choose **File > New Image > Blank Image**. Select the verified ExFAT volume as the destination. Enter a unique image filename and an innocuous internal volume name.
+3. Set **Size: 1 GB** using Disk Utility's displayed unit (virtual capacity; do not substitute GiB), **Format: APFS**, **Partitions: Single partition - GUID Partition Map**, **Encryption: AES-256**, and **Image Format: Sparse Bundle Image**. Use the local password prompt and do not save the password in Keychain. If AES-256 or Sparse Bundle is unavailable, or Disk Utility proposes erasing/reformatting/changing the physical volume, cancel without writing and stop for Owner review; do not choose a substitute format.
+4. Save the blank image. Disk Utility normally mounts it after creation. Confirm in Disk Utility that the mounted inner volume is APFS and has the expected bounded capacity. Do not copy any file into it. Keep any displayed paths/output private.
+5. Eject the image. Use the read-only `hdiutil isencrypted -verbose <Owner-selected-image>` and `hdiutil imageinfo -verbose <Owner-selected-image>` locally to inspect encryption and image-format metadata. Confirm `isencrypted` reports the image encrypted and `imageinfo` identifies its sparse-bundle format. Local `hdiutil` documentation says `isencrypted` prints additional details for encrypted images, but does not guarantee that every output version identifies the cipher by name: if AES-256 is not explicitly reported, record the UI's AES-256 selection but mark the cipher `NOT_INDEPENDENTLY_VERIFIED`, stop, and do not use the image for key data. Keep output private. Reopen the image from Finder without Keychain assistance; confirm this reopen prompts for the image password and the Owner can unlock and mount it. That prompt shows it did not silently unlock in this check; it does not prove the password is absent from every Keychain or establish content integrity/recoverability.
+6. Finally eject the image, confirm it is no longer mounted, then safely eject the external SSD. Keep the container offline; do not add it to Login Items, scripts, or an automounter. The password-prompt observation from step 5 is the only Keychain-related check; do not claim it proves the credential is absent from Keychain.
+
+**Gate 2 success evidence:** Owner privately confirms the image was newly created on the physically checked SSD, requested settings were selected, metadata reports encryption and sparse-bundle format, the image's configured AES-256 setting is recorded from Disk Utility, the inner APFS volume mounted at the expected displayed 1 GB capacity, reopening required the password and succeeded, and both image and physical volume were ejected. If `isencrypted` does not identify AES-256, report `NOT_INDEPENDENTLY_VERIFIED`; do not claim that the cipher was independently confirmed or use the image for key data pending Owner-approved resolution. Public report contains only pass/fail/not-run, with no path, password, serial, UUID or device identifier. No existing file is intentionally modified; only the new uniquely named image bundle is created. This does not establish media reliability under failure or recovery of future key data.
+
+**Stop/failed-create behavior:** cancel on identity/space mismatch, warning to erase/reformat, UI option mismatch, unexpected auto-unlock, metadata inconsistency, mount/password failure, filesystem errors, disconnect, or any existing-name collision. Do not retry with changed layout/format, repair, delete partial files, overwrite, or move existing data. Leave any partial new item untouched, eject/unmount only if the UI safely allows it, and ask Owner to decide next steps. A cleanup/removal operation requires separate authorization.
+
+#### Gate 3 — choose a second independent backup medium
+
+`BACKUP_2_PENDING_OWNER`. Recommended: a separate, quality external SSD or dependable removable USB medium sized for small encrypted files, with a separate AES-256 encrypted container or a dedicated encrypted macOS-compatible volume, chosen by the Owner. For long-term storage, prefer a reputable SSD over an inexpensive generic thumb drive; flash retention, controller failure and loss remain risks. Keep it physically separate from the KIOXIA device (ideally a separate storage location), offline/ejected, with the recovery password managed separately. A second partition on KIOXIA, Mac internal disk folder, or same physical device is not independent. No unspecified personal medium was examined. Gate 3 completion requires Owner designation and a separate read-only metadata check only if Owner identifies the device; no formatting or encryption change without its own scope.
+
+#### Gate 4 — Approval B is still a separate future decision
+
+Approval B remains `NOT_AUTHORIZED`. It is not granted by Gate 2, Gate 3, or this document. Before considering B, Owner must:
+
+- Resolve whether any other device, Android user/work profile, prior formal same-package APK, signer, versionCode, or app data requires update continuity. Pixel 7a remains `OWNER_REPORTED_NOT_INSTALLED`; agent/ADB confirmation remains `NOT_RUN`. If prior APK/data continuity may matter, stop until resolved through a separately approved method.
+- Designate the second physical backup medium and accept custody, password-separation, offline-storage, and recovery-read limitations.
+- Confirm the final key parameters: Option A; PKCS#12; RSA 3072-bit candidate; `SHA256withRSA`; at least 25 years, with exact validity-days and minimal Subject selected privately; alias `serea-private-beta`; Owner-controlled Mac and Temurin JDK 17. API 26+ real APK-signature compatibility remains **unverified**. No key is generated by this gate.
+- Explicitly state that Approval B authorizes Owner-only key generation at the approved encrypted/restricted primary location and copy of the resulting keystore into the two approved encrypted independent backups, plus exactly which non-signing `keytool -list` checks may be done. Keytool read/certificate comparison does not prove signing usability or end-to-end recovery.
+- Keep `VERSION_CODE_PROPOSED_43 / NOT_APPROVED`; APK build/signing/version adoption remain separate; Google Cloud/OAuth remains `BLOCKED_BY_SIGNING_IDENTITY`; certificate fingerprints and signed APK remain `NOT_VERIFIED`.
+
+### D. Current gate state after F1F
+
+| Gate / decision | State |
+|---|---|
+| Gate 1 physical media confirmation | `OWNER_PHYSICAL_CONFIRMATION_REQUIRED` |
+| Gate 2 empty AES-256 image preparation | `NOT_AUTHORIZED — OWNER_APPROVAL_REQUIRED` |
+| Gate 3 second independent medium | `BACKUP_2_PENDING_OWNER` |
+| Approval A | `APPROVED — 2026-11-21` |
+| Approval B | `NOT_AUTHORIZED` |
+| Approval C / D / E | `NOT_AUTHORIZED` |
+| Pixel 7a | `OWNER_REPORTED_NOT_INSTALLED`; independent check `NOT_RUN` |
+| Other installs, old APK/signer, data continuity | `UNCONFIRMED` |
+| versionCode | `VERSION_CODE_PROPOSED_43 / NOT_APPROVED` |
+| Google Cloud/OAuth | `BLOCKED_BY_SIGNING_IDENTITY` |
+| Real APK and certificate SHA-1/SHA-256 | `NOT_VERIFIED` |
+
+### E. Official references checked for F1F
+
+- Apple, [Create a disk image using Disk Utility on Mac](https://support.apple.com/guide/disk-utility/create-a-disk-image-dskutl11888/mac): distinguishes the general blank-image format choices (including sparse bundle) from the secure-image procedure (blank read/write image with encryption). The selected sparse-bundle/APFS/AES-256 combination is this runbook's untested candidate, not an Apple-certified ExFAT recipe; the guide recommends APFS for modern macOS use and notes new images are mounted.
+- Apple, [File system formats available in Disk Utility](https://support.apple.com/guide/disk-utility/file-system-formats-dsku19ed921c/mac): APFS is the macOS 10.13+ filesystem and ExFAT is a Windows-compatible filesystem; this does not establish container-on-ExFAT compatibility.
+- Apple, [Disk Utility User Guide](https://support.apple.com/guide/disk-utility/welcome/mac): device/file-system, image and eject topics. Apple's erase/reformat procedure is explicitly not part of these gates.
+- Oracle, [JDK 17 `keytool` manual](https://docs.oracle.com/en/java/javase/17/docs/specs/man/keytool.html): `-genkeypair`, `-keyalg`, `-keysize`, `-sigalg`, `-validity`, `-storetype`, `-list -v`; omitted passwords prompt interactively; RSA 3072 defaults to `SHA256withRSA` but explicit values remain subject to Owner approval.
+- Android, [Sign your app](https://developer.android.com/studio/publish/app-signing): at least 25-year validity guidance and same-certificate update continuity. It does not verify this key's compatibility on API 26.
+
+The local macOS `hdiutil create -help`, `hdiutil imageinfo -help`, and `hdiutil isencrypted -help` were read only. Help lists `SPARSEBUNDLE`/`UDSB`, `SPARSE`/`UDSP`, `UDRW`, and `AES-256` (recommended), and documents read-only metadata/encryption inspection. No create/attach/convert command was run. Apple documentation and help establish available formats, not successful operation on this particular ExFAT SSD. Gate 2 remains a separately approved empty-image compatibility check.
+
+## H4-F1F-R1 addendum — Owner physical confirmation and Gate 1 status (2026-11-21 JST)
+
+This addendum records the Owner's explicit physical-model confirmation in the current conversation. It supplements the F1F observations and does not alter or delete the F1E/F1F historical snapshots.
+
+### Owner confirmation
+
+- Target: Owner-described KIOXIA 1 TB external SSD.
+- Owner reports that the physical SSD enclosure bears the model marking `EXCERIA PLUS`.
+- The F1F macOS snapshot reported model `EXCERIA PLUS`, volume label `KIOXIA`, approximately 1 TB capacity, and ExFAT filesystem.
+- Owner's physical model observation matches the macOS model display: `OWNER_PHYSICAL_MODEL_MATCH_CONFIRMED`.
+
+This is Owner confirmation of the model marking/display match only. It is not manufacturer authenticity certification, serial-number verification, a device-health test, or independent agent inspection of the product. No serial number or persistent device identifier is requested or recorded.
+
+### Gate 1 result and remaining preconditions
+
+**Gate 1 model/volume identification: `OWNER_CONFIRMED`.** This resolves the earlier `OWNER_PHYSICAL_CONFIRMATION_REQUIRED` status for the physical model/display match only. The F1E and F1F snapshots remain historical records; the approximate 463.9 GB free value is from the F1F snapshot and is not a current free-space guarantee.
+
+Still unconfirmed before any Gate 2 write:
+
+- Whether existing SSD data has an independent backup and is protected against loss.
+- Current SSD health; no health test was performed, and SMART was not supported by the F1F metadata query.
+- Free space at the time Gate 2 might later be separately approved.
+- Whether an encrypted sparse-bundle can be created, mounted, verified and safely ejected on this specific ExFAT volume.
+- Whether the new empty encrypted container will operate normally; no image exists and no compatibility test has been performed.
+
+**Do not execute Gate 2 until the Owner confirms that important existing SSD data is independently backed up and protected, and the Owner separately approves the exact Gate 2 scope.** If the medium reports errors, disconnects, or a repair/format prompt, stop without retrying or changing it.
+
+### Gate 2 limited approval package (still not authorized)
+
+The proposed scope remains one empty disk image on the Owner-confirmed KIOXIA SSD, preserving the existing ExFAT filesystem:
+
+- Disk Utility displayed virtual size: `1 GB`.
+- Image format: Sparse Bundle Image (`UDSB`).
+- Inner filesystem: APFS (non-case-sensitive).
+- Partition map: Single partition - GUID Partition Map.
+- Encryption selection: AES-256; Owner enters the password locally and does not save it in Keychain.
+- After separate authorization: create and initial auto-mount, inspect image/encryption metadata, eject, re-open with Owner password entry, verify, and final eject of both image and SSD.
+- No keystore, private key, other file, APK, or password is placed in or copied to the image.
+
+The image is only usable for future key data if encryption is independently confirmed as AES-256, the basic mount/reopen checks succeed, and the Owner separately decides to proceed. If local metadata does not identify the cipher, record it `NOT_INDEPENDENTLY_VERIFIED`, do not place key material in the image, and stop for Owner decision. Do not erase/reformat/repartition the SSD, inspect existing files, remove a partial image, or retry using another format.
+
+### Gate and approval state after F1F-R1
+
+| Gate / decision | State |
+|---|---|
+| Approval A — Option A formal adoption | `APPROVED` |
+| Gate 1 — physical model/display match | `OWNER_CONFIRMED` (`OWNER_PHYSICAL_MODEL_MATCH_CONFIRMED`) |
+| Gate 2 — empty image creation / mount / verification | `NOT_AUTHORIZED` |
+| Gate 3 — second independent medium | `PENDING_OWNER` (`BACKUP_2_PENDING_OWNER`) |
+| Approval B — private key generation and backups | `NOT_AUTHORIZED` |
+| Approval C — unsigned APK | `NOT_AUTHORIZED` |
+| Approval D — APK signing | `NOT_AUTHORIZED` |
+| Approval E — installation | `NOT_AUTHORIZED` |
+| versionCode 43 | `VERSION_CODE_PROPOSED_43 / NOT_APPROVED` |
+| Pixel 7a installation | `OWNER_REPORTED_NOT_INSTALLED`; independent device check `NOT_RUN` |
+| Other devices/profiles, previous formal APK/signer, data continuity | `UNCONFIRMED` |
+| Google Cloud/OAuth | `BLOCKED_BY_SIGNING_IDENTITY` |
+| Real APK and certificate SHA-1/SHA-256 | `NOT_VERIFIED` |
+
+Gate 2 is independent of Approval B and may be considered as a media-only preparation after the existing-data protection question is answered. Gate 2 approval does not authorize Approval B. Approval B remains blocked from GO until Gate 2 is completed, a physically independent second medium is selected and prepared, and prior-installation/data-continuity questions are resolved.
+
+## H4-F1F-R1 addendum — Owner-reported existing-data backup (2026-11-21 JST)
+
+This dated note records the Owner's explicit conversation report that a separate-location backup of existing KIOXIA SSD data exists. It updates only the prior unknown existence status; no earlier F1E/F1F observation is rewritten.
+
+- Existing-data backup existence: `OWNER_REPORTED_BACKUP_EXISTS`.
+- Backup completeness, integrity, and restoration/recovery capability: `NOT_VERIFIED`.
+- Owner report date: 2026-11-21 JST.
+
+No backup contents were accessed, no files were opened, and no restore or integrity test was performed. The Owner's report establishes that a separate copy is said to exist; it does not independently establish coverage, integrity, or recoverability. No location or identifying information about that backup is recorded.
+
+The earlier F1F-R1 statement that the existence of a separate backup was unconfirmed is retained as the status at that earlier point. As of this additional report, existence is Owner-reported; adequacy and recoverability remain unverified. Gate 2 remains `NOT_AUTHORIZED` until a separate exact limited approval is given. This report does not authorize SSD writes, image creation/mount, key generation, or any other operation.

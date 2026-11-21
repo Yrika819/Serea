@@ -223,3 +223,64 @@ Approval B remains `NOT_AUTHORIZED`. It is not granted by Gate 2, Gate 3, or thi
 - Android, [Sign your app](https://developer.android.com/studio/publish/app-signing): at least 25-year validity guidance and same-certificate update continuity. It does not verify this key's compatibility on API 26.
 
 The local macOS `hdiutil create -help`, `hdiutil imageinfo -help`, and `hdiutil isencrypted -help` were read only. Help lists `SPARSEBUNDLE`/`UDSB`, `SPARSE`/`UDSP`, `UDRW`, and `AES-256` (recommended), and documents read-only metadata/encryption inspection. No create/attach/convert command was run. Apple documentation and help establish available formats, not successful operation on this particular ExFAT SSD. Gate 2 remains a separately approved empty-image compatibility check.
+
+## H4-F1F-R1 addendum — Owner physical confirmation and Gate 1 status (2026-11-21 JST)
+
+This addendum records the Owner's explicit physical-model confirmation in the current conversation. It supplements the F1F observations and does not alter or delete the F1E/F1F historical snapshots.
+
+### Owner confirmation
+
+- Target: Owner-described KIOXIA 1 TB external SSD.
+- Owner reports that the physical SSD enclosure bears the model marking `EXCERIA PLUS`.
+- The F1F macOS snapshot reported model `EXCERIA PLUS`, volume label `KIOXIA`, approximately 1 TB capacity, and ExFAT filesystem.
+- Owner's physical model observation matches the macOS model display: `OWNER_PHYSICAL_MODEL_MATCH_CONFIRMED`.
+
+This is Owner confirmation of the model marking/display match only. It is not manufacturer authenticity certification, serial-number verification, a device-health test, or independent agent inspection of the product. No serial number or persistent device identifier is requested or recorded.
+
+### Gate 1 result and remaining preconditions
+
+**Gate 1 model/volume identification: `OWNER_CONFIRMED`.** This resolves the earlier `OWNER_PHYSICAL_CONFIRMATION_REQUIRED` status for the physical model/display match only. The F1E and F1F snapshots remain historical records; the approximate 463.9 GB free value is from the F1F snapshot and is not a current free-space guarantee.
+
+Still unconfirmed before any Gate 2 write:
+
+- Whether existing SSD data has an independent backup and is protected against loss.
+- Current SSD health; no health test was performed, and SMART was not supported by the F1F metadata query.
+- Free space at the time Gate 2 might later be separately approved.
+- Whether an encrypted sparse-bundle can be created, mounted, verified and safely ejected on this specific ExFAT volume.
+- Whether the new empty encrypted container will operate normally; no image exists and no compatibility test has been performed.
+
+**Do not execute Gate 2 until the Owner confirms that important existing SSD data is independently backed up and protected, and the Owner separately approves the exact Gate 2 scope.** If the medium reports errors, disconnects, or a repair/format prompt, stop without retrying or changing it.
+
+### Gate 2 limited approval package (still not authorized)
+
+The proposed scope remains one empty disk image on the Owner-confirmed KIOXIA SSD, preserving the existing ExFAT filesystem:
+
+- Disk Utility displayed virtual size: `1 GB`.
+- Image format: Sparse Bundle Image (`UDSB`).
+- Inner filesystem: APFS (non-case-sensitive).
+- Partition map: Single partition - GUID Partition Map.
+- Encryption selection: AES-256; Owner enters the password locally and does not save it in Keychain.
+- After separate authorization: create and initial auto-mount, inspect image/encryption metadata, eject, re-open with Owner password entry, verify, and final eject of both image and SSD.
+- No keystore, private key, other file, APK, or password is placed in or copied to the image.
+
+The image is only usable for future key data if encryption is independently confirmed as AES-256, the basic mount/reopen checks succeed, and the Owner separately decides to proceed. If local metadata does not identify the cipher, record it `NOT_INDEPENDENTLY_VERIFIED`, do not place key material in the image, and stop for Owner decision. Do not erase/reformat/repartition the SSD, inspect existing files, remove a partial image, or retry using another format.
+
+### Gate and approval state after F1F-R1
+
+| Gate / decision | State |
+|---|---|
+| Approval A — Option A formal adoption | `APPROVED` |
+| Gate 1 — physical model/display match | `OWNER_CONFIRMED` (`OWNER_PHYSICAL_MODEL_MATCH_CONFIRMED`) |
+| Gate 2 — empty image creation / mount / verification | `NOT_AUTHORIZED` |
+| Gate 3 — second independent medium | `PENDING_OWNER` (`BACKUP_2_PENDING_OWNER`) |
+| Approval B — private key generation and backups | `NOT_AUTHORIZED` |
+| Approval C — unsigned APK | `NOT_AUTHORIZED` |
+| Approval D — APK signing | `NOT_AUTHORIZED` |
+| Approval E — installation | `NOT_AUTHORIZED` |
+| versionCode 43 | `VERSION_CODE_PROPOSED_43 / NOT_APPROVED` |
+| Pixel 7a installation | `OWNER_REPORTED_NOT_INSTALLED`; independent device check `NOT_RUN` |
+| Other devices/profiles, previous formal APK/signer, data continuity | `UNCONFIRMED` |
+| Google Cloud/OAuth | `BLOCKED_BY_SIGNING_IDENTITY` |
+| Real APK and certificate SHA-1/SHA-256 | `NOT_VERIFIED` |
+
+Gate 2 is independent of Approval B and may be considered as a media-only preparation after the existing-data protection question is answered. Gate 2 approval does not authorize Approval B. Approval B remains blocked from GO until Gate 2 is completed, a physically independent second medium is selected and prepared, and prior-installation/data-continuity questions are resolved.

@@ -1,6 +1,6 @@
 # H4-F1A — Private Beta Manifest & Signing Readiness
 
-**State:** `F1A_READY_FOR_OWNER_REVIEW` (documentation plus one minimal manifest-label correction; no signing, APK, device, Cloud, OAuth, or Calendar operation). Based on clean worktree branch `docs/h4-f1a-private-beta-manifest-signing-readiness`, from `origin/main` HEAD `6557af533d83e4a1f643fcb308e5356087422410`, Tree `63e76bea7dfa53342a095c0789f8c9a5e614a0ee`. F1A has not yet been pushed or submitted as a PR.
+**State:** `F1A_READY_FOR_OWNER_REVIEW` (documentation plus one minimal manifest-label correction; no signing, APK, device, Cloud, OAuth, or Calendar operation). Based on clean worktree branch `docs/h4-f1a-private-beta-manifest-signing-readiness`, from `origin/main` HEAD `6557af533d83e4a1f643fcb308e5356087422410`, Tree `63e76bea7dfa53342a095c0789f8c9a5e614a0ee`. This report was first committed as `c4b9ee59af32c1fa845b3767957d2aff98bb7261` before PR creation; **current PR #250 is Draft**: https://github.com/Yrika819/Serea/pull/250. Its live status is summarized below and must be read against the exact HEAD recorded for each check snapshot.
 
 ## Executive result
 
@@ -94,10 +94,11 @@ Personal is limited to the creator's one Google account and is not a multi-user 
 ## Findings and residual risks
 
 - **Critical:** none identified in this bounded manifest/build-configuration review.
-- **High:** none identified in this bounded review. No Required CI or full source/runtime test was run for F1A; absence of a finding is not a full product security certification.
+- **High:** none identified in this bounded review. PR #250 Required CI and Android check evidence is reported separately in the HEAD-stamped snapshot below; these checks do not constitute a full product security certification.
 - **Medium:** no approved signed APK/signer identity, version decision, provenance, signer multiplicity, installation state, or update compatibility. Owner decisions and explicit artifact authorization are prerequisites for a future signing operation; verified signer evidence is a hard block for OAuth registration and any real connection.
 - **Medium:** actual Personal audience, OAuth client and Calendar API/quota/billing configuration remain unconfirmed and Owner-controlled.
 - **Low:** F0 contained an inaccurate source attribution for the Private label; corrected in this branch. A source label fix is verified in generated manifest, but no installed UI was inspected.
+- **Separate existing issue (not changed in F1A):** Public Beta also currently displays `Serea Personal Beta`. Owner requested this be tracked separately; F1A did not modify the Public Beta label or manifest.
 
 ### H4-E2 to F1B remaining work
 
@@ -116,15 +117,26 @@ Personal is limited to the creator's one Google account and is not a multi-user 
 | Public Beta manifest comparison, JDK 17, ≤2 workers | Completed once |
 | Merged XML and merger reports | Inspected; source package/version/label/components compared |
 | Build variant and gate source audit | Completed read-only |
-| Gradle unit tests / Android Formal / APK packaging or signing / CI | `NOT_RUN` for F1A |
+| Gradle unit tests / Android Formal / APK packaging or signing / CI | F1A PR CI ran on initial PR HEAD `c4b9ee59af32c1fa845b3767957d2aff98bb7261`; details and current rerun status are recorded in the time-stamped check snapshot below. No APK packaging/signing was performed |
 | Signed APK metadata/certificate/provenance/update compatibility | `NOT_VERIFIED` |
 | Device/data isolation | `NOT_RUN` |
 | Google Cloud / OAuth / token / Calendar HTTP | `NOT_AUTHORIZED`, `NOT_RUN` |
 | Key creation/access, signing, install/distribution | `NOT_AUTHORIZED`, `NOT_RUN` |
-| Independent review / PR / Required CI | Independent read-only review completed with two important documentation findings, now addressed; follow-up review pending. No PR or same-SHA Required CI yet |
+| Independent review / PR / Required CI | Independent read-only review and corrective follow-up completed; PR #250 created and remains Draft. See the time-stamped check snapshot below for Required CI, API 26/35 Formal, Identity Isolation, and the HTTP 429 retry state |
 
-F0/H4-E2 historical CI results are not new F1A checks. Do not claim build, Formal, CI, or signing PASS from manifest processing.
+F0/H4-E2 historical CI results are not F1A checks. The following is a **time-bounded GitHub snapshot checked 2026-11-21**, not a claim about any later HEAD: PR #250 initial HEAD `c4b9ee59af32c1fa845b3767957d2aff98bb7261` / Tree `830b56ad4d89d5fbe6eec2bf873f148dc875ee3b`; Android workflow run `44863062553`; focused-test run `44863062417` attempt 2. Fetched `origin/main` remained `6557af533d83e4a1f643fcb308e5356087422410` / Tree `63e76bea7dfa53342a095c0789f8c9a5e614a0ee`.
+
+| Same-HEAD check (PR #250 initial HEAD) | State at this snapshot |
+|---|---|
+| Required CI: Full CI Linux MSRV, Fast CI Linux fast checks, Full CI Linux stable full validation | All 3 `SUCCESS` |
+| Android Formal API 26 | `IN_PROGRESS` |
+| Android Formal API 35 | `IN_PROGRESS` |
+| Personal Beta Identity Isolation | `SUCCESS` on this HEAD; this is the workflow check result only, not agent key handling |
+| Non-Required Focused provider/session tests | Initial attempt `DELIVERED_REJECTED` due Maven Central HTTP 429 while resolving dependencies before test execution; test JUnit evidence was not produced. The failed job rerun was started as run attempt 2 on the same source SHA and was `IN_PROGRESS` when this snapshot was recorded |
+| Other Android checks | Android Build/Lint/Instrumentation Compile, Android Unit, Android Integration, Android Security, Android Documentation, Dependency Audit, and Host Probe reported `SUCCESS` |
+
+The HTTP 429 failure is an external dependency-delivery/`HOST_INFRA` failure, not evidence of a product regression or a test assertion failure. Because the failed command did not reach the tests, do not count it as a test pass or product test failure. The failed evidence upload was consequential to no test-result files existing after dependency resolution aborted. Recheck live PR checks before relying on this snapshot. Do not claim build, Formal, CI, or signing PASS from manifest processing alone.
 
 ## F1A decision
 
-**`F1A_READY_FOR_OWNER_REVIEW`** for the bounded manifest/source and Owner-preparation scope, subject to independent documentation/source review and Draft PR checks. **Not** approval for artifact signing, Google Cloud, real OAuth or live Calendar access. H4-F1B is **NO-GO for signing until the Owner selects the signing method and separately authorizes the exact artifact operation**; OAuth/client registration remains blocked until the resulting approved APK and signer evidence are verified. The F1A change must remain a Draft PR and stop for Owner review.
+**`F1A_READY_FOR_OWNER_REVIEW`** for the bounded manifest/source and Owner-preparation scope. Independent review is complete; PR #250 remains Draft. The initial PR HEAD has 3/3 Required CI checks successful, while API 26/35 Formal, Identity Isolation, and the retry of the Non-Required HTTP 429 job were still pending at the snapshot above. Recheck these on the latest PR HEAD before treating the verification gate as closed. **Not** approval for artifact signing, Google Cloud, real OAuth or live Calendar access. H4-F1B is **NO-GO for signing until the Owner selects the signing method and separately authorizes the exact artifact operation**; OAuth/client registration remains blocked until the resulting approved APK and signer evidence are verified. Keep PR #250 Draft and stop for Owner review.

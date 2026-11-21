@@ -1,10 +1,10 @@
 # H4-F1B — Private Beta Signing Identity & APK Readiness
 
-**State:** `F1B_PARTIAL` — documentation/audit preparation only. Based on `origin/main` HEAD `846d6693248a09656beb2d73ff693c31e474ef29`, Tree `51a8c10c4e8ff9a4bad17ded714491c9f51fb9b2`. No product code, Gradle setting, signing gate, OAuth gate, or HTTP gate was changed. No private file, key, keystore, APK, device, or Google Cloud Console was inspected or used. Formal signing identity adoption, versionCode, and all key/artifact/device actions remain Owner decisions.
+**State:** `F1B_PARTIAL` — historical documentation/audit preparation snapshot based on `origin/main` HEAD `846d6693248a09656beb2d73ff693c31e474ef29`, Tree `51a8c10c4e8ff9a4bad17ded714491c9f51fb9b2`. Its `PENDING_OWNER` status for Approval A described the state at that report's review time and is superseded by the dated [H4-F1D Owner decision record](2026-11-21-h4-f1d-option-a-owner-decision-and-approval-b-readiness.md): Approval A is now `APPROVED — 2026-11-21`; Approvals B–E remain `NOT_AUTHORIZED`. No product code, Gradle setting, signing gate, OAuth gate, or HTTP gate was changed by the F1B work. This document's historical findings and CI snapshots remain historical; do not treat them as current CI.
 
 ## 1. Decision summary
 
-- **Preferred proposal:** Option A, one fixed Owner-managed Private Beta-only signing identity for `app.serea.android.privatebeta`. This remains a proposal; formal adoption is **`PENDING_OWNER`**.
+- **Current Owner decision (superseding this report's historical proposal state):** Option A, one fixed Owner-managed Private Beta-only signing identity for `app.serea.android.privatebeta`, is `APPROVED — 2026-11-21` under Approval A. Its implementation parameters remain for Owner confirmation under Approval B.
 - **Existing installed Private APK:** **`NOT_VERIFIED`**. No Owner-supplied APK or installation evidence was available or accessed. Historical repo evidence contains disposable/test APK generation only, not proof of a formally signed APK installed on an Owner device. Do not generate a new certificate or install a replacement until the Owner establishes whether an earlier same-package APK is installed and, if so, independently verifies its signer and version under separately authorized artifact/device access.
 - **First formal versionCode:** **`PENDING_OWNER`**. Source default `2` and the Gradle guard's accepted range are not release approval. Historical disposable values do not establish an installed version.
 - **Unsigned build path:** Source declares `assemblePrivateBeta`, `packagePrivateBeta`, and `bundlePrivateBeta` as guarded Private packaging tasks. Both tested `--dry-run` attempts (`assemblePrivateBeta` and `packagePrivateBeta`) were blocked before task graph output: first by default Oracle JDK `26.0.2.1`, then with the documented Temurin JDK 17 by unavailable SDK configuration. Neither packaging task executed; no APK was generated.
@@ -26,7 +26,7 @@
 
 The evidence search was limited to repository documentation/history and tracked APK/AAB filenames. It did not search personal folders, keystores, SDK caches, device storage, or external backups.
 
-## 3. Option A design proposal (not yet adopted)
+## 3. Historical Option A design proposal (adoption now recorded separately)
 
 ### Format and cryptography
 
@@ -137,7 +137,7 @@ Each approval below is independent. Approval of one never authorizes the next. C
 
 | Approval | Separate explicit Owner decision needed | Current state |
 |---|---|---|
-| **A — Adopt Option A** | Formally adopt a fixed Owner-managed Private Beta-only certificate for the unchanged package; acknowledge loss/compromise/rotation and update-compatibility risks. This report only recommends A. | `PENDING_OWNER` |
+| **A — Adopt Option A** | This report's historical recommendation for the fixed Owner-managed Private Beta-only identity has since been adopted by the Owner. See the dated H4-F1D decision record. | `APPROVED — 2026-11-21` |
 | **B — Generate and secure key** | After prior APK/install uncertainty is resolved sufficiently to decide continuity, approve Owner's OS/host/tool versions, exact key parameters, interactive generation, storage and two encrypted backup domains. The Owner performs all key operations. | `NOT_AUTHORIZED` |
 | **C — Build unsigned APK** | Approve exact source HEAD/Tree, Owner versionCode/versionName, host/toolchain, one Gradle packaging task and private output/provenance handling. C authorizes no signing. After the build, record the exact unsigned artifact's metadata and SHA-256 privately. | `NOT_AUTHORIZED` |
 | **D — Sign and verify** | Only after C completes: separately approve the exact unsigned APK by private reference and SHA-256, source/version, Owner-managed key operation, aligned/final output and certificate verification/evidence handling. If the input changes, obtain a new D approval. Owner retains/uses the private key. | `NOT_AUTHORIZED` |
@@ -146,13 +146,13 @@ Each approval below is independent. Approval of one never authorizes the next. C
 ### `OWNER_ACTION_REQUIRED — PRIVATE_SIGNING`
 
 - **Target:** Serea Private Beta.
-- **Proposed method:** A — fixed Owner-managed Private Beta-only certificate; not formally adopted yet.
+- **Adopted method:** A — fixed Owner-managed Private Beta-only certificate; Approval A recorded in the linked H4-F1D decision record. The specific key parameters and generation remain pending Approval B.
 - **Application ID:** `app.serea.android.privatebeta` (verified from source guard, not an APK).
 - **Existing Private APK:** existence and installed state unknown (`NOT_VERIFIED`). Historical unsigned/disposable test APKs exist in repository records; no official Owner-installed artifact is proven. Do not proceed with new key generation until Owner resolves the possibility of an existing installation and decides a safe, separately authorized way to verify its signer/version if needed.
-- **versionCode:** Owner must decide after comparing known installed/formal release records. Current source fallback `2` and test `42` are not recommendations; current formal code is `PENDING_OWNER`.
-- **Proposed keystore/signature:** PKCS#12; RSA 2048-bit minimum (3072-bit if policy/tooling-compatible), SHA256withRSA; validity at least 25 years subject to Owner policy/current official guidance. These are a proposal pending Approval A/B.
+- **versionCode:** `VERSION_CODE_PROPOSED_43 / NOT_APPROVED`. Owner must reconcile known installed/formal allocations before approving a first release code. Source fallback `2` and historical test `42` are not formal allocations.
+- **Preferred parameter candidates (not final approval):** PKCS#12; RSA 3072-bit; `SHA256withRSA`; validity at least 25 years subject to current official guidance and Owner policy. Owner confirms exact parameters under Approval B; if API 26+ compatibility or policy is uncertain, pause and consider RSA 2048-bit only by Owner decision.
 - **Owner OS/tool:** `PENDING_OWNER`. Current report environment is macOS with JDK 17 available, but SDK Build Tools/SDK path unavailable in this worktree; do not treat this as the selected Owner signing host.
-- **Key generation/custody:** after A and B, Owner uses interactive `keytool` on Owner-controlled host, saves outside repo/CI, secures credentials in password manager and maintains two independently encrypted backups in separate failure domains. No agent handles the key or password.
+- **Key generation/custody:** after separately approved B, Owner uses interactive JDK 17 `keytool` on an Owner-controlled Mac, saves outside repo/CI, secures credentials in an Owner-managed password system and maintains two independently encrypted backups in separate failure domains. No agent handles the key or password.
 - **APK operation approvals:** Obtain C first for one unsigned packaging task/source/version. After that task completes and its exact APK provenance/hash is recorded privately, request D for that exact input before any alignment/signing. E separately approves any device install/update. None is implied by another; changed inputs require fresh D.
 - **Verification:** provenance and unsigned identity; zipalign before apksigner (16 KiB `.so` alignment when present); no changes after signing; `apksigner verify --verbose --print-certs`; `apkanalyzer` application-id/version-code/version-name; APK SHA-256; signer count; independently compare signer SHA-1 and SHA-256; prior APK signer/version compatibility.
 - **Stop conditions:** any unknown/conflicting previous APK/install/version; identity or lineage mismatch; version not approved/increasing; invalid provenance, alignment or signature; multiple/unexpected signer; fingerprint mismatch; credential exposure; unapproved source/task/path/device; CI packaging; disabled gate changed; or request to access personal file/device/Cloud.

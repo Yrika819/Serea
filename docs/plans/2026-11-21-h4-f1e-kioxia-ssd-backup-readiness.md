@@ -296,3 +296,93 @@ This dated note records the Owner's explicit conversation report that a separate
 No backup contents were accessed, no files were opened, and no restore or integrity test was performed. The Owner's report establishes that a separate copy is said to exist; it does not independently establish coverage, integrity, or recoverability. No location or identifying information about that backup is recorded.
 
 The earlier F1F-R1 statement that the existence of a separate backup was unconfirmed is retained as the status at that earlier point. As of this additional report, existence is Owner-reported; adequacy and recoverability remain unverified. Gate 2 remains `NOT_AUTHORIZED` until a separate exact limited approval is given. This report does not authorize SSD writes, image creation/mount, key generation, or any other operation.
+
+## H4-F1G-R1 addendum — Gate 2 execution evidence and AES-256 review (2026-11-21 JST)
+
+**Outcome:** `F1G_R1_READY_FOR_SEPARATE_METADATA_CHECK`. Gate 2's limited media-preparation operation is recorded as completed based on Owner-provided evidence. Encryption is verified as enabled, but AES-256 remains `AES256_NOT_INDEPENDENTLY_VERIFIED`. Do not use this empty image for signing-key storage unless and until the Owner resolves the cipher check and separately authorizes Approval B.
+
+### Owner approval and evidence provenance
+
+On 2026-11-21 JST, the Owner explicitly approved in conversation the limited Gate 2 scope below. This records that conversation approval only; no separate signed approval instrument is represented as existing. The authority covered one empty image on the identified KIOXIA EXCERIA PLUS SSD, Disk Utility AES-256 selection, initial APFS mount, non-sensitive metadata inspection, eject/re-open with password re-entry, and final safe removal of both image and SSD. It did not grant Approval B, or any approval to create, read, copy, back up, restore or use signing-key material.
+
+Evidence source and actors, as reported by the Owner:
+
+| Action / evidence | Actor / source | Record status |
+|---|---|---|
+| Create one empty image and enter its encryption password in Disk Utility | Owner | `OWNER_REPORTED`; not agent-executed or independently observed here |
+| Select AES-256 in the creation GUI | Owner's report of the GUI selection | Selection is evidence of intended configuration, not independent confirmation of the persisted cipher |
+| Read-only macOS metadata inspection | Mac operated through ChatGPT | `OWNER_PROVIDED_RESULT`; not re-run by this agent |
+| Re-open the existing image | Mac operated through ChatGPT | `OWNER_PROVIDED_RESULT`; not re-run by this agent |
+| Enter password and visually confirm successful re-open | Owner | `OWNER_CONFIRMED`; password was not disclosed to the agent |
+| Final image detach and SSD safe eject | Mac operated through ChatGPT | `OWNER_PROVIDED_RESULT`; not re-run by this agent |
+
+This report does not claim that the agent performed the disk operations or independently validated their results. No password, path, volume UUID, device node, serial number, or key material is recorded.
+
+### Owner-reported Gate 2 results
+
+The Owner reports that, at connection time, macOS displayed an approximately 1 TB physical SSD, model `EXCERIA PLUS`, volume `KIOXIA`, ExFAT, approximately 536.3 GB used and 463.9 GB free, writable, with SMART unsupported in that connection environment. The Owner separately reports that a backup of existing SSD data exists: `OWNER_REPORTED_BACKUP_EXISTS`. Completeness, integrity and restoration capability remain `NOT_VERIFIED`.
+
+The Owner reports creating one new empty image on that SSD with these selected settings: Sparse Bundle, approximately 1 GB virtual size, internal APFS, GUID partition map, inner volume name “名称未設定”, and AES-256 selected in the GUI. The image contains no key data. The reported checks were:
+
+- Sparse Bundle image exists and its `Info.plist` identifies the Sparse Bundle format: `VERIFIED` from the reported metadata result.
+- `hdiutil isencrypted -verbose` reported `encrypted: YES`: encryption enabled `VERIFIED`; cipher strength is not established by that result alone.
+- `hdiutil info` recognized an encrypted disk image: `VERIFIED` as reported; this is not a cipher-strength result.
+- The internal APFS volume mounted and `diskutil info` reported approximately 1 GB: `VERIFIED` as reported.
+- The image re-opened after password entry: `OWNER_CONFIRMED / HOST_MOUNT_VERIFIED`.
+- The image and then the physical SSD were safely detached/ejected; macOS returned success for both: `IMAGE_DETACHED / SSD_EJECTED`.
+
+These labels describe the supplied execution record, not a fresh agent observation. No new image was created, attached, mounted, detached or inspected in this review.
+
+### Layering and exact encryption assessment
+
+The encrypted disk-image container and its inner APFS filesystem are separate layers. An inner-volume `Encrypted: No` field would describe APFS volume encryption and does not negate encryption of the outer disk-image container. Conversely, `encrypted: YES` establishes only that the image is encrypted; it does not by itself establish AES-256 rather than AES-128.
+
+| Property | Status | What the evidence establishes |
+|---|---|---|
+| Outer disk-image encryption enabled | `VERIFIED` (Owner-provided host metadata result) | `hdiutil isencrypted -verbose` reported `encrypted: YES` |
+| Sparse Bundle format | `VERIFIED` (Owner-provided host metadata result) | Reported image recognition and `Info.plist` format metadata |
+| Internal APFS, approximately 1 GB | `VERIFIED` (Owner-provided host metadata result) | Reported mounted APFS volume and `diskutil info` capacity |
+| Password re-entry and successful mount | `OWNER_CONFIRMED / HOST_MOUNT_VERIFIED` | Owner reports entering the password; host mount reportedly succeeded |
+| AES-256 persisted cipher | `NOT_INDEPENDENTLY_VERIFIED` / `AES256_NOT_INDEPENDENTLY_VERIFIED` | GUI selection shows the Owner's intended setting; the collected metadata as described does not identify AES-256 |
+| Approval to store a signing key | `NOT_AUTHORIZED` | Gate 2 does not grant Approval B |
+| Signing-key recovery | `NOT_TESTED` | No key exists in the image and no recovery was attempted |
+
+### AES-256 verification research and bounded next check
+
+Apple's Disk Utility guide documents choosing an encryption option when creating a blank image and warns that a forgotten password prevents opening it. Its image-format documentation identifies Sparse Bundle Image (`UDSB`) as a read/write image that grows across multiple files. The guide supports what was selected and what the format means; it does not document an after-creation Disk Utility information field that independently reports whether a saved image uses AES-128 or AES-256.
+
+The local macOS `hdiutil` help/man page was consulted without supplying an image path or operating on a disk. It documents:
+
+- `hdiutil isencrypted <image>` as an encryption-status query, with `-verbose` and `-plist` supported by local help. The man page says additional details are printed for an encrypted image, but does not promise that those details identify AES key length.
+- `hdiutil imageinfo <image>` as image metadata output, with `-plist` supported and `-encryption <crypto method>` listed among common options. The documentation does not specify that the plist contains a persisted AES-128/AES-256 field. The `-encryption` option must not be treated as proof of a stored cipher merely because it accepts a method argument.
+- `hdiutil info` as information about DiskImages.framework and images currently attached; it accepts `-plist`. The documented purpose does not make it an independent cipher-strength check for a detached image.
+- Disk Utility's creation UI as a way to choose an encryption option, but no documented post-creation cipher-strength report was found in the Apple material reviewed.
+
+Accordingly, the officially supported, bounded follow-up is an Owner-controlled, read-only metadata inspection after the Owner chooses to reconnect the SSD and clearly identifies the existing image in the UI. Candidate commands, to be run by the Owner locally against that confirmed existing image, are `hdiutil isencrypted -verbose -plist <confirmed-image>` and `hdiutil imageinfo -plist <confirmed-image>`. Do not put a real image path into chat or the repository. This is a proposed check, not an assertion that either command will expose the cipher. Accept AES-256 as independently verified only if the actual read-only output unambiguously names AES-256 (or an Apple-documented equivalent field/value); `encrypted: YES`, a generic encrypted-image label, successful password re-open, an APFS `Encrypted: No` result, or the GUI's earlier selection alone is insufficient. If output does not explicitly establish AES-256, preserve `AES256_NOT_INDEPENDENTLY_VERIFIED` and stop for Owner decision.
+
+The command syntax is documented as metadata/status inspection, but running it against this existing image requires the SSD to be reconnected by the Owner and the target image to be unambiguously selected. It should not require entering the password for these status/metadata commands according to their documented purpose and options; if macOS unexpectedly prompts for a password, do not provide it to an agent and stop unless the Owner decides locally how to proceed. This review did not reconnect or remount the SSD and did not collect a password. No further disk operation is authorized by this report. If a proposed check would require attach/mount, password entry, conversion, repair, modification or another state-changing operation, obtain a new exact Owner approval before doing it.
+
+Sources reviewed:
+
+- Apple, [Create a disk image using Disk Utility on Mac](https://support.apple.com/guide/disk-utility/create-a-disk-image-dskutl11888/mac).
+- Apple, [Disk Utility User Guide](https://support.apple.com/guide/disk-utility/welcome/mac).
+- Local macOS `hdiutil isencrypted -help`, `hdiutil imageinfo -help`, `hdiutil info -help`, and `man hdiutil`, read-only. These describe the installed host utility; they do not constitute an Apple online API schema or prove what this particular image's metadata will return.
+
+### Current state and next Owner decision
+
+| Gate / decision | State after F1G-R1 |
+|---|---|
+| Approval A | `APPROVED` |
+| Gate 1 | `OWNER_CONFIRMED` |
+| Gate 2 execution | `F1G_GATE2_PARTIAL` |
+| Gate 2 encryption enabled | `VERIFIED` (Owner-provided evidence) |
+| AES-256 algorithm | `AES256_NOT_INDEPENDENTLY_VERIFIED` |
+| Gate 3 second independent medium | `BACKUP_2_PENDING_OWNER` |
+| Approval B / C / D / E | `NOT_AUTHORIZED` |
+| Signing-key storage permission | `NOT_AUTHORIZED` |
+| Signing-key recovery | `NOT_TESTED` |
+| versionCode 43 | `NOT_APPROVED` |
+| Real OAuth / Google Cloud / APK generation / signing / installation | `NOT_AUTHORIZED` |
+| Current media state | `IMAGE_DETACHED / SSD_EJECTED` |
+
+The next bounded Owner decision is whether to reconnect the SSD and personally perform the proposed read-only metadata check on the confirmed existing image. If AES-256 is explicitly identified, the Owner may record that result and separately decide whether to seek Approval B; F1G-R1 itself still does not authorize key storage or backup creation. If it is not identified, retain the pending state and decide how to handle the uncertainty without changing or recreating the image. Do not change image format, convert, regenerate, re-encrypt, alter its password, delete it, or create any key/backup as part of that decision.

@@ -32,7 +32,7 @@ import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.PrivateGoogleAuthorizationViewModel
 import app.serea.android.googleauth.PrivateGoogleAuthStatus
-import app.serea.android.googleauth.PrivateGoogleCalendarComposition
+import app.serea.android.googleauth.IsolatedGoogleCalendarTestComposition
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import java.time.Clock
@@ -126,10 +126,8 @@ class PrivateGoogleCalendarLoopbackUiTest {
             enabledInThisVariant = true,
             realOAuthEnabled = false,
             calendarGatewayForTests = gateway,
-            calendarCompositionFactory = {
-                PrivateGoogleCalendarComposition(
-                    privateVariantEnabled = true,
-                    googleHttpEnabledByOwner = true,
+            calendarCompositionFactoryForTests = {
+                IsolatedGoogleCalendarTestComposition(
                     client = OkHttpClient(),
                     baseUrl = server.url("/calendar/v3/"),
                 )
@@ -327,10 +325,8 @@ class PrivateGoogleCalendarLoopbackUiTest {
         enabledInThisVariant = true,
         realOAuthEnabled = false,
         calendarGatewayForTests = gateway,
-        calendarCompositionFactory = {
-            PrivateGoogleCalendarComposition(
-                privateVariantEnabled = true,
-                googleHttpEnabledByOwner = true,
+        calendarCompositionFactoryForTests = {
+            IsolatedGoogleCalendarTestComposition(
                 client = client,
                 baseUrl = server.url("/calendar/v3/"),
             )

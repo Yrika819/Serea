@@ -126,8 +126,6 @@ jobs:
               'app.serea.android.googleauth.PrivateGoogleCalendarCompositionTest'
           }
           expected = {
-              'productDefaultsOpenOnlyPrimaryFakeForBothGatewayModes',
-              'privateGateAndHttpGateAreIndependent',
               'explicitTestGatesSelectGoogleAndUseExactPrimaryScope',
               'liveRejectsMockMissingBlankAndDisabledSessionsBeforeStatusTokenOrHttp',
               'expiredScopeFailsReadablyWithoutTokenOrHttp',
@@ -138,6 +136,8 @@ jobs:
               'liveCompositionRejectsMissingOrProductionEndpointBeforeAuthorization',
               'sessionChangingDuringAdapterConstructionIsRejectedBeforeTokenOrHttp',
               'canonicalIpv6LoopbackEndpointIsAccepted',
+              'isolatedBuildKeepsProductHttpGateOff',
+              'providerCreatedAcrossSessionChangeIsClosedBeforeReturning',
           }
           assert {case.get('name') for case in cases} == expected
           assert all(

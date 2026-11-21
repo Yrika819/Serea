@@ -4,6 +4,7 @@ import app.serea.android.calendar.CalendarDateRange
 import app.serea.android.calendar.CalendarId
 import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarReadFailure
+import app.serea.android.BuildConfig
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -17,6 +18,12 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 class PrivateGoogleCalendarCompositionTest {
+    @Test
+    fun isolatedBuildKeepsProductHttpGateOff() {
+        assertEquals("isolated", BuildConfig.BUILD_TYPE)
+        assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
+    }
+
     private class Gateway(
         override val mode: GoogleAuthorizationMode = GoogleAuthorizationMode.PLAY_SERVICES,
         var sessionId: String? = "synthetic-session",
@@ -40,33 +47,6 @@ class PrivateGoogleCalendarCompositionTest {
         }
     }
 
-    @Test fun productDefaultsOpenOnlyPrimaryFakeForBothGatewayModes() {
-        GoogleAuthorizationMode.entries.forEach { mode ->
-            PrivateGoogleCalendarComposition().use { composition ->
-                val gateway = Gateway(mode)
-                assertFalse(composition.opensGoogleProvider)
-                val session = composition.openAuthorizedPrimary(gateway)
-                assertEquals(CalendarProviderKind.FAKE, session.kind)
-                assertTrue(session.primaryCalendarOnly)
-                assertEquals(listOf(PrivatePrimaryCalendarScopeContract.scopes), gateway.statusScopes)
-                assertTrue(gateway.tokenScopes.isEmpty())
-            }
-        }
-    }
-
-    @Test fun privateGateAndHttpGateAreIndependent() {
-        MockWebServer().use { server ->
-            server.start()
-            listOf(false to true, true to false).forEach { (privateGate, httpGate) ->
-                PrivateGoogleCalendarComposition(privateGate, httpGate, OkHttpClient(), server.url("/calendar/v3/")).use {
-                    assertFalse(it.opensGoogleProvider)
-                    assertEquals(CalendarProviderKind.FAKE, it.openAuthorizedPrimary(Gateway()).kind)
-                }
-            }
-            assertEquals(0, server.requestCount)
-        }
-    }
-
     @Test fun liveCompositionRejectsMissingOrProductionEndpointBeforeAuthorization() {
         listOf<okhttp3.HttpUrl?>(
             null,
@@ -74,9 +54,7 @@ class PrivateGoogleCalendarCompositionTest {
         ).forEach { endpoint ->
             val gateway = Gateway()
             val failure = runCatching {
-                PrivateGoogleCalendarComposition(
-                    privateVariantEnabled = true,
-                    googleHttpEnabledByOwner = true,
+                IsolatedGoogleCalendarTestComposition(
                     client = OkHttpClient(),
                     baseUrl = endpoint,
                 ).use { it.openAuthorizedPrimary(gateway) }
@@ -92,9 +70,9 @@ class PrivateGoogleCalendarCompositionTest {
         MockWebServer().use { server ->
             server.start()
             server.enqueue(MockResponse().setBody("{\"items\":[]}"))
-            PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use { composition ->
+            IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use { composition ->
                 val gateway = Gateway()
-                assertTrue(composition.opensGoogleProvider)
+                assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
                 val session = composition.openAuthorizedPrimary(gateway)
                 assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, session.kind)
                 assertTrue(session.primaryCalendarOnly)
@@ -113,7 +91,7 @@ class PrivateGoogleCalendarCompositionTest {
             server.start()
             listOf(Gateway(GoogleAuthorizationMode.MOCK_ONLY), Gateway(sessionId = null),
                 Gateway(sessionId = " "), Gateway(enabled = false)).forEach { gateway ->
-                PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use {
+                IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use {
                     assertTrue(runCatching { it.openAuthorizedPrimary(gateway) }.isFailure)
                     assertTrue(gateway.statusScopes.isEmpty())
                     assertTrue(gateway.tokenScopes.isEmpty())
@@ -127,10 +105,10 @@ class PrivateGoogleCalendarCompositionTest {
         MockWebServer().use { server ->
             server.start()
             val gateway = Gateway(granted = false)
-            PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use {
+            IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use {
                 val failure = runCatching { it.openAuthorizedPrimary(gateway) }.exceptionOrNull()
                 assertTrue(failure is IllegalStateException)
-                assertTrue(failure!!.message!!.contains("read-only authorization"))
+                assertTrue(failure!!.message!!.contains("read-only grant"))
                 assertEquals(listOf(PrivatePrimaryCalendarScopeContract.scopes), gateway.statusScopes)
                 assertTrue(gateway.tokenScopes.isEmpty())
                 assertEquals(0, server.requestCount)
@@ -142,7 +120,7 @@ class PrivateGoogleCalendarCompositionTest {
         MockWebServer().use { server ->
             server.start()
             server.enqueue(MockResponse().setResponseCode(503))
-            val composition = PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/"))
+            val composition = IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/"))
             val session = composition.openAuthorizedPrimary(Gateway())
             assertTrue(runCatching { session.listEventsPage(CalendarId("primary"), range(), null) }
                 .exceptionOrNull() is CalendarReadFailure)
@@ -157,10 +135,10 @@ class PrivateGoogleCalendarCompositionTest {
         MockWebServer().use { server ->
             server.start()
             val gateway = Gateway(missingScope = true)
-            PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use {
+            IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use {
                 val failure = runCatching { it.openAuthorizedPrimary(gateway) }.exceptionOrNull()
                 assertTrue(failure is IllegalStateException)
-                assertTrue(failure!!.message!!.contains("read-only authorization"))
+                assertTrue(failure!!.message!!.contains("read-only grant"))
                 assertEquals(listOf(PrivatePrimaryCalendarScopeContract.scopes), gateway.statusScopes)
                 assertTrue(gateway.tokenScopes.isEmpty())
                 assertEquals(0, server.requestCount)
@@ -172,7 +150,7 @@ class PrivateGoogleCalendarCompositionTest {
         MockWebServer().use { server ->
             server.start()
             val gateway = Gateway()
-            PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use { composition ->
+            IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use { composition ->
                 val session = composition.openAuthorizedPrimary(gateway)
                 gateway.sessionId = "replacement-synthetic-session"
                 assertTrue(runCatching { session.listEventsPage(CalendarId("primary"), range(), null) }.isFailure)
@@ -193,12 +171,34 @@ class PrivateGoogleCalendarCompositionTest {
                     return result
                 }
             }
-            PrivateGoogleCalendarComposition(true, true, OkHttpClient(), server.url("/calendar/v3/")).use {
+            IsolatedGoogleCalendarTestComposition(OkHttpClient(), server.url("/calendar/v3/")).use {
                 assertTrue(runCatching { it.openAuthorizedPrimary(changing) }.isFailure)
                 assertTrue(gateway.tokenScopes.isEmpty())
                 assertEquals(0, server.requestCount)
             }
         }
+    }
+
+    @Test fun providerCreatedAcrossSessionChangeIsClosedBeforeReturning() = runTest {
+        val gateway = Gateway()
+        var sessionReads = 0
+        val switchingGateway = object : GoogleAuthorizationGateway by gateway {
+            override val authorizationSessionId: String?
+                get() = if (++sessionReads >= 2) "replacement-synthetic-session" else "synthetic-session"
+        }
+        val sessions = app.serea.android.calendar.CalendarProviderSessions(googleHttpEnabledByOwner = true)
+        var created: app.serea.android.calendar.CalendarProviderSession? = null
+
+        val failure = runCatching {
+            openGoogleSessionBoundToAuthorization(switchingGateway, "synthetic-session") {
+                sessions.openPrimaryGoogleReadOnly(switchingGateway).also { created = it }
+            }
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        val createdSession = checkNotNull(created)
+        assertTrue(runCatching { createdSession.status() }.isFailure)
+        assertTrue(gateway.tokenScopes.isEmpty())
     }
 
     @Test fun sessionChangingDuringAdapterConstructionIsRejectedBeforeTokenOrHttp() {
@@ -211,9 +211,7 @@ class PrivateGoogleCalendarCompositionTest {
                     get() = if (++sessionReads >= 4) "replacement-synthetic-session" else "synthetic-session"
             }
 
-            PrivateGoogleCalendarComposition(
-                privateVariantEnabled = true,
-                googleHttpEnabledByOwner = true,
+            IsolatedGoogleCalendarTestComposition(
                 client = OkHttpClient(),
                 baseUrl = server.url("/calendar/v3/"),
             ).use { composition ->
@@ -229,13 +227,11 @@ class PrivateGoogleCalendarCompositionTest {
 
     @Test fun canonicalIpv6LoopbackEndpointIsAccepted() {
         val endpoint = "http://[::1]:8080/calendar/v3/".toHttpUrl()
-        PrivateGoogleCalendarComposition(
-            privateVariantEnabled = true,
-            googleHttpEnabledByOwner = true,
+        IsolatedGoogleCalendarTestComposition(
             client = OkHttpClient(),
             baseUrl = endpoint,
         ).use { composition ->
-            assertTrue(composition.opensGoogleProvider)
+            assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
         }
     }
 

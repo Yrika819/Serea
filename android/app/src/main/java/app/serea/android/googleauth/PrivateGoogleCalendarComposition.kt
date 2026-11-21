@@ -5,73 +5,48 @@ import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarProviderSession
 import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.FakeCalendarProvider
-import okhttp3.HttpUrl
-import okhttp3.OkHttpClient
 
-/** Product builds remain Fake; isolated tests can explicitly select the primary Google path. */
-internal class PrivateGoogleCalendarComposition(
-    privateVariantEnabled: Boolean = BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED,
-    googleHttpEnabledByOwner: Boolean = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
-    private val client: OkHttpClient = OkHttpClient(),
-    private val baseUrl: HttpUrl? = null,
-) : AutoCloseable {
-    val opensGoogleProvider = privateVariantEnabled && googleHttpEnabledByOwner
+internal interface PrivateGoogleCalendarProviderComposition : AutoCloseable {
+    val opensGoogleProvider: Boolean
+    fun openAuthorizedPrimary(gateway: GoogleAuthorizationGateway): CalendarProviderSession
+    fun closeCurrent()
+}
 
-    init {
-        check(!opensGoogleProvider || BuildConfig.BUILD_TYPE == "isolated") {
-            "Google Calendar HTTP test composition is restricted to the isolated variant."
-        }
-        check(!opensGoogleProvider || baseUrl?.let {
-            it.host in LOOPBACK_TEST_HOSTS && it.scheme in setOf("http", "https") &&
-                it.encodedPath == "/calendar/v3/" && it.encodedUsername.isEmpty() &&
-                it.encodedPassword.isEmpty() && it.encodedQuery == null && it.encodedFragment == null
-        } == true) {
-            "Google Calendar test composition requires an explicit loopback MockWebServer URL."
-        }
-    }
+/** Product composition has no URL, client, gateway, or gate override injection points. */
+internal class PrivateGoogleCalendarComposition : PrivateGoogleCalendarProviderComposition {
+    override val opensGoogleProvider: Boolean = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED &&
+        BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED &&
+        BuildConfig.APPLICATION_ID == "app.serea.android.privatebeta" &&
+        BuildConfig.BUILD_TYPE == "privateBeta"
 
     private val sessions = CalendarProviderSessions(
         fakeProvider = { FakeCalendarProvider.Fixtures.privatePrimaryProvider() },
-        googleHttpEnabledByOwner = opensGoogleProvider,
+        googleHttpEnabledByOwner = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
     )
     private var current: CalendarProviderSession? = null
 
-    fun openAuthorizedPrimary(gateway: GoogleAuthorizationGateway): CalendarProviderSession {
-        val sessionId = if (opensGoogleProvider) {
-            check(gateway.mode == GoogleAuthorizationMode.PLAY_SERVICES) {
-                "Primary Google Calendar requires Play Services authorization."
-            }
-            check(!gateway.authorizationSessionId.isNullOrBlank() && gateway.isEnabledInApp(GoogleFeature.CALENDAR)) {
-                "Primary Google Calendar authorization session is not active."
-            }
-            gateway.authorizationSessionId
-        } else null
-        val scopes = PrivatePrimaryCalendarScopeContract.scopes
-        val status = gateway.status(scopes)
-        check(status.failure == null && status.permits(scopes)) {
-            "Primary Calendar read-only authorization is not active."
-        }
-        if (opensGoogleProvider) {
-            check(!sessionId.isNullOrBlank() && gateway.authorizationSessionId == sessionId &&
-                gateway.isEnabledInApp(GoogleFeature.CALENDAR)) {
-                "Primary Google Calendar authorization session is no longer active."
-            }
-        }
+    override fun openAuthorizedPrimary(gateway: GoogleAuthorizationGateway): CalendarProviderSession {
         closeCurrent()
-        val session = if (opensGoogleProvider) {
-            sessions.openPrimaryGoogleReadOnly(gateway, client, baseUrl)
-        } else {
-            sessions.openPrimaryFake()
+        val decision = selectPrivateCalendarProvider(
+            applicationId = BuildConfig.APPLICATION_ID,
+            buildType = BuildConfig.BUILD_TYPE,
+            privateUiEnabled = BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED,
+            httpEnabled = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
+            oauthEnabled = BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED,
+            gateway = gateway,
+        )
+        val session = when (decision) {
+            PrivateCalendarProviderDecision.Fake -> sessions.openPrimaryFake()
+            is PrivateCalendarProviderDecision.Live -> openGoogleSessionBoundToAuthorization(
+                gateway = gateway,
+                expectedSessionId = decision.sessionId,
+            ) { sessions.openPrimaryGoogleReadOnly(gateway) }
         }
-        if (opensGoogleProvider &&
-            (gateway.authorizationSessionId != sessionId || !gateway.isEnabledInApp(GoogleFeature.CALENDAR))
-        ) {
-            session.close()
-            error("Primary Google Calendar authorization session changed while opening.")
+        val expectedKind = when (decision) {
+            PrivateCalendarProviderDecision.Fake -> CalendarProviderKind.FAKE
+            is PrivateCalendarProviderDecision.Live -> CalendarProviderKind.GOOGLE_READ_ONLY
         }
-        if (!session.primaryCalendarOnly ||
-            session.kind != if (opensGoogleProvider) CalendarProviderKind.GOOGLE_READ_ONLY else CalendarProviderKind.FAKE
-        ) {
+        if (!session.primaryCalendarOnly || session.kind != expectedKind) {
             session.close()
             error("Primary Calendar provider selection was rejected.")
         }
@@ -79,14 +54,30 @@ internal class PrivateGoogleCalendarComposition(
         return session
     }
 
-    fun closeCurrent() {
+    override fun closeCurrent() {
         current?.close()
         current = null
     }
 
     override fun close() = closeCurrent()
+}
 
-    private companion object {
-        val LOOPBACK_TEST_HOSTS = setOf("127.0.0.1", "localhost", "::1")
+internal fun openGoogleSessionBoundToAuthorization(
+    gateway: GoogleAuthorizationGateway,
+    expectedSessionId: String,
+    openSession: () -> CalendarProviderSession,
+): CalendarProviderSession {
+    check(gateway.authorizationSessionId == expectedSessionId &&
+        gateway.isEnabledInApp(GoogleFeature.CALENDAR)
+    ) {
+        "Google Calendar authorization session changed before provider construction."
     }
+    val session = openSession()
+    if (gateway.authorizationSessionId != expectedSessionId ||
+        !gateway.isEnabledInApp(GoogleFeature.CALENDAR)
+    ) {
+        session.close()
+        error("Google Calendar authorization session changed during provider construction.")
+    }
+    return session
 }

@@ -43,6 +43,25 @@ class PrivateGoogleAuthorizationViewModelTest {
 
     @get:Rule val mainDispatcher = MainDispatcherRule()
 
+    @Test
+    fun productVariantRejectsAlternateCalendarCompositionBeforeFactoryRuns() {
+        var factoryCalled = false
+        val failure = runCatching {
+            PrivateGoogleAuthorizationViewModel(
+                context = null,
+                enabledInThisVariant = false,
+                realOAuthEnabled = false,
+                calendarCompositionFactoryForTests = {
+                    factoryCalled = true
+                    PrivateGoogleCalendarComposition()
+                },
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertFalse(factoryCalled)
+    }
+
     private class RevokeFixtureGateway(
         override val authorizationSessionId: String = "synthetic-account-session",
         var revokeFailure: AuthorizationFailure? = null,
@@ -103,7 +122,7 @@ class PrivateGoogleAuthorizationViewModelTest {
     }
 
     @Test
-    fun providerConstructionFailureIsRedactedAndClosesPreviousSession() = runTest(mainDispatcher.dispatcher) {
+    fun httpGateOffSelectsFakeWithoutStatusAndClosesPreviousSession() = runTest(mainDispatcher.dispatcher) {
         val gateway = RevokeFixtureGateway()
         var rejectStatus = false
         val real = object : PrivateGoogleRealAuthorizationGateway by gateway {
@@ -121,12 +140,11 @@ class PrivateGoogleAuthorizationViewModelTest {
         advanceUntilIdle()
         val session = checkNotNull(viewModel.openPrimaryCalendar())
         rejectStatus = true
-        assertNull(viewModel.openPrimaryCalendar())
-        assertNull(viewModel.calendarSession.value)
-        assertEquals(PrivateGoogleAuthStatus.ERROR, viewModel.state.value.status)
-        assertFalse(viewModel.state.value.message.contains("synthetic-secret-token"))
-        assertFalse(viewModel.state.value.message.contains("owner@example.invalid"))
+        val replacement = checkNotNull(viewModel.openPrimaryCalendar())
+        assertEquals(CalendarProviderKind.FAKE, replacement.kind)
+        assertEquals(PrivateGoogleAuthStatus.AUTHORIZED, viewModel.state.value.status)
         assertTrue(runCatching { session.status() }.isFailure)
+        assertEquals(CalendarAuthorizationState.MOCK_ONLY, replacement.status().state)
     }
 
     private fun selectFixtureAccount(viewModel: PrivateGoogleAuthorizationViewModel) {
@@ -599,7 +617,7 @@ class PrivateGoogleAuthorizationViewModelTest {
                     ), null,
                 )
             }.isFailure)
-            assertEquals(listOf(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)), statusScopes)
+            assertTrue(statusScopes.isEmpty())
             assertEquals(0, tokenRequests)
             session.close()
         }

@@ -564,6 +564,43 @@ class CalendarAgendaUiControllerTest {
         controller.close()
     }
 
+    @Test fun upcomingCoversSevenLocalDaysAndIncludesAllDayAndOngoingEventsToday() = runTest {
+        val events = listOf(
+            timedEvent("demo", "past-today", "2026-10-20T10:00:00Z", "2026-10-20T10:30:00Z"),
+            allDayEvent("demo", "all-day-today", "2026-10-20", "2026-10-21", ZoneId.of("UTC")),
+            timedEvent("demo", "ongoing-today", "2026-10-20T11:30:00Z", "2026-10-20T12:30:00Z"),
+            timedEvent("demo", "last-day", "2026-10-26T23:30:00Z", "2026-10-27T00:30:00Z"),
+            timedEvent("demo", "outside-seven-days", "2026-10-27T00:00:00Z", "2026-10-27T00:30:00Z"),
+        )
+        val provider = fakeProvider(listOf(calendar("demo")), events)
+        val uiFake = CalendarAgendaUiFake(provider)
+        val controller = CalendarAgendaUiController(uiFake, uiFake, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
+        advanceUntilIdle()
+
+        controller.selectMode(CalendarAgendaMode.UPCOMING)
+        advanceUntilIdle()
+
+        assertEquals(
+            setOf("all-day-today", "ongoing-today", "last-day"),
+            agenda(controller).events.map { it.key.eventId.value }.toSet(),
+        )
+        assertEquals(
+            "今後7日間の予定",
+            CalendarAgendaJapaneseText.agendaHeading(
+                CalendarAgendaQuery(CalendarAgendaMode.UPCOMING), UI_TEST_CLOCK, ZoneId.of("UTC"),
+            ),
+        )
+        val range = calendarAgendaRange(
+            CalendarAgendaQuery(CalendarAgendaMode.UPCOMING),
+            Clock.fixed(Instant.parse("2026-03-08T12:00:00Z"), ZoneId.of("UTC")),
+            ZoneId.of("America/New_York"),
+        )
+        assertEquals(Instant.parse("2026-03-08T05:00:00Z"), range.start)
+        assertEquals(Instant.parse("2026-03-15T04:00:00Z"), range.endExclusive)
+        assertEquals(Duration.ofHours(167), Duration.between(range.start, range.endExclusive))
+        controller.close()
+    }
+
     @Test fun todayAndTomorrowChangeAtExplicitUtcTokyoAndDstLocalDayBoundaries() = runTest {
         val transitionClock = Clock.fixed(Instant.parse("2026-10-20T15:30:00Z"), ZoneId.of("UTC"))
         val provider = fakeProvider(

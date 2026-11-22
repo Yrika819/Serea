@@ -463,7 +463,7 @@ private fun AgendaModeSelector(
         ) {
             FilterChip(selected == CalendarAgendaMode.TODAY, onClick = { onMode(CalendarAgendaMode.TODAY) }, enabled = enabled, label = { Text("今日") })
             FilterChip(selected == CalendarAgendaMode.TOMORROW, onClick = { onMode(CalendarAgendaMode.TOMORROW) }, enabled = enabled, label = { Text("明日") })
-            FilterChip(selected == CalendarAgendaMode.UPCOMING, onClick = { onMode(CalendarAgendaMode.UPCOMING) }, enabled = enabled, label = { Text("今後") })
+            FilterChip(selected == CalendarAgendaMode.UPCOMING, onClick = { onMode(CalendarAgendaMode.UPCOMING) }, enabled = enabled, label = { Text("今後7日間") })
             FilterChip(selected == CalendarAgendaMode.DATE, onClick = { onMode(CalendarAgendaMode.DATE) }, enabled = enabled, label = { Text("指定日") })
         }
         if (selected == CalendarAgendaMode.DATE) {
@@ -636,11 +636,14 @@ private fun eventGroupDate(
         CalendarAgendaMode.DATE -> return checkNotNull(query.selectedDate)
         CalendarAgendaMode.UPCOMING -> Unit
     }
-    return when (val time = event.time) {
-    is EventTime.AllDay -> time.startDate
-    is EventTime.Timed -> time.start.atZone(displayZone).toLocalDate()
-    null -> LocalDate.MIN
+    val eventDate = when (val time = event.time) {
+        is EventTime.AllDay -> time.startDate
+        is EventTime.Timed -> time.start.atZone(displayZone).toLocalDate()
+        null -> LocalDate.MIN
     }
+    return if (query.mode == CalendarAgendaMode.UPCOMING) {
+        eventDate.coerceAtLeast(clock.instant().atZone(displayZone).toLocalDate())
+    } else eventDate
 }
 
 @Composable

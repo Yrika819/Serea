@@ -21,6 +21,10 @@ val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidatio
 // Opt-in is local to the Owner's private Beta invocation. Missing input keeps OAuth compiled off.
 val ownerPrivateBetaGoogleEnabled =
     providers.environmentVariable("SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED").orNull == "true"
+// The HTTP transport gate is independent from OAuth and is consumed only by privateBeta below.
+// Missing or any non-exact "true" value keeps the provider on Fake.
+val privateBetaGoogleCalendarHttpEnabled =
+    providers.environmentVariable("SEREA_PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED").orNull == "true"
 val ciBuild = providers.environmentVariable("CI").orNull.equals("true", ignoreCase = true) ||
         providers.environmentVariable("GITHUB_ACTIONS").orNull.equals("true", ignoreCase = true)
 val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("PrivateBeta", ignoreCase = true) }
@@ -165,7 +169,11 @@ android {
                 ownerPrivateBetaGoogleEnabled.toString(),
             )
             buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "true")
-            buildConfigField("boolean", "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED", "false")
+            buildConfigField(
+                "boolean",
+                "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED",
+                privateBetaGoogleCalendarHttpEnabled.toString(),
+            )
             signingConfig = null
         }
     }

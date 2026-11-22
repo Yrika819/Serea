@@ -20,7 +20,7 @@ class PrivateGoogleCalendarProductCompositionTest {
     }
 
     @Test
-    fun debugProductBuildHasNoLiveOverrideAndGateOffShortCircuitsAuthorization() {
+    fun debugProductBuildHasNoLiveOverrideEvenWhenPrivateGateInputIsTrue() {
         assertEquals("debug", BuildConfig.BUILD_TYPE)
         assertFalse(BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED)
         val gateway = Gateway()

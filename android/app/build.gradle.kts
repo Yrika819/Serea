@@ -33,6 +33,7 @@ val privateBetaRequested = gradle.startParameter.taskNames.any { it.contains("Pr
 val privateBetaUnitTestFilterArgs = setOf(
     "--tests",
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
+    "app.serea.android.googleauth.PrivateBuildOAuthGateTest.httpGateIsPrivateOnlyAndIndependentFromOAuthGate",
     "app.serea.android.googleauth.PrivateGoogleConsentResultTest",
     "app.serea.android.googleauth.PrivateGoogleGatewayOperationsTest",
 )

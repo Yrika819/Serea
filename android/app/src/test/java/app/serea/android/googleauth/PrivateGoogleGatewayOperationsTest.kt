@@ -3,7 +3,6 @@ package app.serea.android.googleauth
 import android.accounts.Account
 import android.content.ContextWrapper
 import android.content.Intent
-import app.serea.android.BuildConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -65,6 +64,7 @@ class PrivateGoogleGatewayOperationsTest {
         authorizationOperations = operations,
         serviceStateOverride = { GoogleServiceState.AVAILABLE },
         elapsedRealtimeMillis = { 1_000L },
+        oauthBuildPolicy = PrivateGoogleOAuthBuildPolicy { requested -> requested },
     )
 
     @Test fun invalidFeatureOrScopeIsRejectedBeforeAnyGoogleOperation() = runBlocking {
@@ -92,12 +92,6 @@ class PrivateGoogleGatewayOperationsTest {
         assertEquals(null, googleAuthorizationOperationFailure(grantState, primary, initialVersions))
         val operations = FakeOperations()
         val gateway = gateway(operations)
-        if (!BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED) {
-            assertEquals(AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED), gateway.authorize(primary))
-            assertEquals(0, operations.authorizeCalls)
-            return@runBlocking
-        }
-
         val outcome = gateway.authorize(primary)
         assertTrue("outcome=$outcome operations=${operations.authorizeCalls} scope=${operations.requestedScopes}", outcome is AuthorizationOutcome.Authorized)
         assertEquals(1, operations.authorizeCalls)
@@ -111,11 +105,6 @@ class PrivateGoogleGatewayOperationsTest {
     @Test fun overgrantResolutionAndIncompleteTokenNeverIssueConsentOrLease() = runBlocking {
         val operations = FakeOperations()
         val gateway = gateway(operations)
-        if (!BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED) {
-            assertEquals(AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED), gateway.authorize(primary))
-            return@runBlocking
-        }
-
         operations.result = operations.result.copy(
             hasResolution = true,
             grantedScopes = setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY.value, GoogleScope.GMAIL_READ_ONLY.value),
@@ -135,12 +124,6 @@ class PrivateGoogleGatewayOperationsTest {
     @Test fun revokeInvalidatesLeaseBeforeCallingAccountBoundScopeSpecificOperation() = runBlocking {
         val operations = FakeOperations()
         val gateway = gateway(operations)
-        if (!BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED) {
-            assertEquals(AuthorizationFailure.NOT_CONFIGURED, gateway.revokeGoogleGrant())
-            assertEquals(0, operations.revokeCalls)
-            return@runBlocking
-        }
-
         val lease = (gateway.authorize(primary) as AuthorizationOutcome.Authorized).lease
         val started = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
@@ -172,12 +155,8 @@ class PrivateGoogleGatewayOperationsTest {
             authorizationOperations = operations,
             serviceStateOverride = { service },
             elapsedRealtimeMillis = { 1_000L },
+            oauthBuildPolicy = PrivateGoogleOAuthBuildPolicy { requested -> requested },
         )
-        if (!BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED) {
-            assertEquals(AuthorizationFailure.NOT_CONFIGURED, gateway.revokeGoogleGrant())
-            assertEquals(0, operations.revokeCalls)
-            return@runBlocking
-        }
 
         val lease = (gateway.authorize(primary) as AuthorizationOutcome.Authorized).lease
         service = GoogleServiceState.MISSING
@@ -189,12 +168,6 @@ class PrivateGoogleGatewayOperationsTest {
     @Test fun remoteRevokeExceptionReportsFailureAfterLocalLeaseInvalidation() = runBlocking {
         val operations = FakeOperations().apply { revokeFailure = java.io.IOException("synthetic only") }
         val gateway = gateway(operations)
-        if (!BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED) {
-            assertEquals(AuthorizationFailure.NOT_CONFIGURED, gateway.revokeGoogleGrant())
-            assertEquals(0, operations.revokeCalls)
-            return@runBlocking
-        }
-
         val lease = (gateway.authorize(primary) as AuthorizationOutcome.Authorized).lease
         assertEquals(AuthorizationFailure.NETWORK, gateway.revokeGoogleGrant())
         assertEquals(1, operations.revokeCalls)

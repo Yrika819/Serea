@@ -278,6 +278,19 @@ enum class GoogleAuthorizationMode { PLAY_SERVICES, MOCK_ONLY }
 internal fun ownerPrivateGoogleOAuthEnabled(requestedByLocalPrivateBuild: Boolean): Boolean =
     requestedByLocalPrivateBuild && app.serea.android.BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED
 
+/**
+ * Build eligibility is injectable only to exercise synthetic authorization operations in tests.
+ * Product composition uses the generated BuildConfig policy by default; this does not activate
+ * OAuth or HTTP in any product variant.
+ */
+internal fun interface PrivateGoogleOAuthBuildPolicy {
+    fun isEnabled(requestedByLocalPrivateBuild: Boolean): Boolean
+}
+
+private val generatedPrivateGoogleOAuthBuildPolicy = PrivateGoogleOAuthBuildPolicy(
+    ::ownerPrivateGoogleOAuthEnabled,
+)
+
 interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthorizationStatusPort {
     val mode: GoogleAuthorizationMode
     /**
@@ -510,9 +523,10 @@ internal class PlayServicesGoogleAuthorizationGateway(
     private val authorizationOperations: GoogleAuthorizationOperations = AndroidGoogleAuthorizationOperations(context),
     private val serviceStateOverride: (() -> GoogleServiceState)? = null,
     private val elapsedRealtimeMillis: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    private val oauthBuildPolicy: PrivateGoogleOAuthBuildPolicy = generatedPrivateGoogleOAuthBuildPolicy,
 ) : PrivateGoogleRealAuthorizationGateway {
     /** A constructor flag alone cannot enable OAuth in a public/default build variant. */
-    internal val realOAuthEnabledForBuild: Boolean = ownerPrivateGoogleOAuthEnabled(realOAuthEnabled)
+    internal val realOAuthEnabledForBuild: Boolean = oauthBuildPolicy.isEnabled(realOAuthEnabled)
     override val mode = GoogleAuthorizationMode.PLAY_SERVICES
     override val authorizationSessionId: String? = selectedAccount?.let { java.util.UUID.randomUUID().toString() }
     private val consentLock = Any()

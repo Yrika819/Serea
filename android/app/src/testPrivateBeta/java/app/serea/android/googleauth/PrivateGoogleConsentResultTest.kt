@@ -59,15 +59,15 @@ class PrivateGoogleConsentResultTest {
         authorizationOperations = operations,
         serviceStateOverride = { GoogleServiceState.AVAILABLE },
         elapsedRealtimeMillis = { 1_000L },
+        oauthBuildPolicy = PrivateGoogleOAuthBuildPolicy { requested -> requested },
     )
 
-    @Test fun privateOAuthBuildFlagIsEnabledForTheseFakeGatewayRegressions() {
-        assertTrue("run only with SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED=true", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
+    @Test fun syntheticConsentTestsKeepProductOAuthBuildFlagDisabled() {
+        assertFalse("Fake operations must not enable the product OAuth build flag", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
         assertEquals("app.serea.android.privatebeta", BuildConfig.APPLICATION_ID)
     }
 
     @Test fun resultFromIntentAcceptsOnlyExactScopeAndConsumesConsentOnce() = runBlocking {
-        assertTrue("private OAuth BuildConfig flag must be enabled", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
         val cases = listOf(
             "exact primary scope" to (setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY.value) to null),
             "overgrant" to (setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY.value, GoogleScope.GMAIL_READ_ONLY.value) to AuthorizationFailure.SCOPE_MISMATCH),
@@ -105,7 +105,6 @@ class PrivateGoogleConsentResultTest {
     }
 
     @Test fun unsafeScopeResponseInvalidatesOldLeasePermissionsAndProviderGenerationWithoutRetry() = runBlocking {
-        assertTrue("private OAuth BuildConfig flag must be enabled", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
         val operations = FakeOperations()
         operations.initialResult = GoogleAuthorizationResultSnapshot(
             hasResolution = false,
@@ -142,7 +141,6 @@ class PrivateGoogleConsentResultTest {
     }
 
     @Test fun obsoleteConsentResultIsRejectedBeforeResultFromIntentAndCannotBeReplayed() = runBlocking {
-        assertTrue("private OAuth BuildConfig flag must be enabled", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
         val operations = FakeOperations()
         val gateway = gateway(operations)
         val authorization = gateway.authorize(primary) as AuthorizationOutcome.ConsentRequired

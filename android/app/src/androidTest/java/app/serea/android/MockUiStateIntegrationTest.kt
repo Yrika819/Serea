@@ -148,6 +148,20 @@ class MockUiStateIntegrationTest {
         assertTrue(compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isEmpty())
     }
 
+    @Test fun realAuthorizationErrorDestinationDoesNotRenderDemoData() {
+        compose.setContent {
+            SereaTheme {
+                CalendarAuthorizationFailureDestination(
+                    message = "Google Calendar認証エラー · 再認証が必要です。Demoへの切替を停止しました。",
+                    onBack = {}, onOpenGoogleSettings = {},
+                )
+            }
+        }
+        compose.onNodeWithTag("calendar_provider_status_error").assertIsDisplayed()
+        compose.onNodeWithText("この状態では予定を表示せず、Demoデータへの自動切替も行いません。").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isEmpty())
+    }
+
     @Test fun calendarSettingsActionIsVisibleAndInvoked() {
         var opened = false
         val provider = FakeCalendarProvider()

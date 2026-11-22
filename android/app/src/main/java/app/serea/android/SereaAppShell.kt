@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
@@ -92,7 +94,7 @@ internal fun SereaAppShell(
     } else null
     val calendarAuthorizationErrorNotice = privateAuthorizationState?.let { state ->
         if (state.status == PrivateGoogleAuthStatus.ERROR && state.realOAuthEnabled && state.syntheticAccount == null) {
-            "Google Calendar認証エラー · Demo予定を表示中。Google未接続の架空データです。"
+            "Google Calendar認証エラー · 再認証が必要です。Demoへの切替を停止しました。"
         } else null
     }
     val activeAuthorizationCalendarSession = privateCalendarSession ?: googleDemoCalendarSession
@@ -315,18 +317,25 @@ internal fun SereaAppShell(
                             onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.gmailHandoff, request) },
                             onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.gmailHandoff, preview) },
                         )
-                        SereaDestination.CALENDAR -> CalendarDestination(
-                            route = calendarRoute,
-                            onBack = ::goBack,
-                            onOpenGoogleSettings = if (privateGoogleAuthorizationViewModel != null) {
-                                { navigate(SereaDestination.SETTINGS) }
-                            } else null,
-                            authorizationErrorNotice = calendarAuthorizationErrorNotice,
-                            conversationId = chatState.conversation.id,
-                            conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
-                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(calendarRoute.handoffCoordinator, request) },
-                            onHandoffConfirmed = { preview -> confirmGoogleHandoff(calendarRoute.handoffCoordinator, preview) },
-                        )
+                        SereaDestination.CALENDAR -> if (calendarAuthorizationErrorNotice != null) {
+                            CalendarAuthorizationFailureDestination(
+                                message = calendarAuthorizationErrorNotice,
+                                onBack = ::goBack,
+                                onOpenGoogleSettings = { navigate(SereaDestination.SETTINGS) },
+                            )
+                        } else {
+                            CalendarDestination(
+                                route = calendarRoute,
+                                onBack = ::goBack,
+                                onOpenGoogleSettings = if (privateGoogleAuthorizationViewModel != null) {
+                                    { navigate(SereaDestination.SETTINGS) }
+                                } else null,
+                                conversationId = chatState.conversation.id,
+                                conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                                onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(calendarRoute.handoffCoordinator, request) },
+                                onHandoffConfirmed = { preview -> confirmGoogleHandoff(calendarRoute.handoffCoordinator, preview) },
+                            )
+                        }
                         SereaDestination.SETTINGS -> ChatScreen(
                             chatViewModel = chatViewModel,
                             credentials = credentials,
@@ -417,7 +426,6 @@ private fun CalendarDestination(
     route: CalendarRouteComposition,
     onBack: () -> Unit,
     onOpenGoogleSettings: (() -> Unit)?,
-    authorizationErrorNotice: String?,
     conversationId: String,
     conversationGeneration: Long,
     onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
@@ -437,6 +445,23 @@ private fun CalendarDestination(
         onHandoffConfirmed = onHandoffConfirmed,
         onCancelHandoffPreview = route.handoffCoordinator::cancelPreview,
         onOpenGoogleSettings = onOpenGoogleSettings,
-        providerStatusNotice = authorizationErrorNotice,
     )
+}
+
+@Composable
+internal fun CalendarAuthorizationFailureDestination(
+    message: String,
+    onBack: () -> Unit,
+    onOpenGoogleSettings: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        TextButton(onClick = onBack) { Text("戻る") }
+        Text("Google Calendarの再認証が必要です", style = MaterialTheme.typography.titleLarge)
+        Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("calendar_provider_status_error"))
+        Text("この状態では予定を表示せず、Demoデータへの自動切替も行いません。")
+        Button(onClick = onOpenGoogleSettings) { Text("Google認証設定へ") }
+    }
 }

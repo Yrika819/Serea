@@ -125,7 +125,6 @@ fun CalendarAgendaScreen(
     onHandoffConfirmed: (suspend (GoogleHandoffPreview) -> Boolean)? = null,
     onCancelHandoffPreview: ((GoogleHandoffPreview) -> Unit)? = null,
     onOpenGoogleSettings: (() -> Unit)? = null,
-    providerStatusNotice: String? = null,
     primaryCalendarOnly: Boolean = (provider as? app.serea.android.calendar.CalendarProviderSession)?.primaryCalendarOnly == true,
 ) {
     val configuration = LocalConfiguration.current
@@ -335,13 +334,6 @@ fun CalendarAgendaScreen(
                 },
                 style = MaterialTheme.typography.labelMedium,
             )
-            if (providerStatusNotice != null) {
-                Text(
-                    providerStatusNotice,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.testTag("calendar_provider_status_error"),
-                )
-            }
             if (handoffError != null && handoffPreview == null) {
                 Text(handoffError!!, color = MaterialTheme.colorScheme.error)
             }

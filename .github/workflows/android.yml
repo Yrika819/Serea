@@ -217,10 +217,10 @@ jobs:
       - name: Android unit tests
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest
-      - name: Private OAuth enabled Fake Operations regressions (unit tests only)
+      - name: OAuth-disabled Private Beta Fake Operations regressions (unit tests only)
         working-directory: android
         env:
-          SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED: "true"
+          SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED: "false"
         run: |
           set -euo pipefail
           ./gradlew --no-daemon -PsereaPrivateBetaVersionCode=2 :app:testPrivateBetaUnitTest \

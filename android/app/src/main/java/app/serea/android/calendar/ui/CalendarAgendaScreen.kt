@@ -124,17 +124,20 @@ fun CalendarAgendaScreen(
     onCreateHandoffPreview: (suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>)? = null,
     onHandoffConfirmed: (suspend (GoogleHandoffPreview) -> Boolean)? = null,
     onCancelHandoffPreview: ((GoogleHandoffPreview) -> Unit)? = null,
+    onOpenGoogleSettings: (() -> Unit)? = null,
+    providerStatusNotice: String? = null,
     primaryCalendarOnly: Boolean = (provider as? app.serea.android.calendar.CalendarProviderSession)?.primaryCalendarOnly == true,
 ) {
     val configuration = LocalConfiguration.current
     val compactControls = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
         configuration.fontScale >= 1.5f
-    var savedMode by rememberSaveable { mutableStateOf(CalendarAgendaMode.TODAY.name) }
-    var savedDate by rememberSaveable { mutableStateOf("") }
-    var savedCalendarId by rememberSaveable { mutableStateOf<String?>(null) }
-    var savedDetailCalendarId by rememberSaveable { mutableStateOf<String?>(null) }
-    var savedDetailEventId by rememberSaveable { mutableStateOf<String?>(null) }
-    var dateInput by rememberSaveable { mutableStateOf("") }
+    // A new provider session must not inherit a saved calendar/event identity from the old account.
+    var savedMode by rememberSaveable(provider) { mutableStateOf(CalendarAgendaMode.TODAY.name) }
+    var savedDate by rememberSaveable(provider) { mutableStateOf("") }
+    var savedCalendarId by rememberSaveable(provider) { mutableStateOf<String?>(null) }
+    var savedDetailCalendarId by rememberSaveable(provider) { mutableStateOf<String?>(null) }
+    var savedDetailEventId by rememberSaveable(provider) { mutableStateOf<String?>(null) }
+    var dateInput by rememberSaveable(provider) { mutableStateOf("") }
     val agendaListState = rememberLazyListState()
     val query: CalendarAgendaQuery = remember(savedMode, savedDate) {
         when (runCatching { CalendarAgendaMode.valueOf(savedMode) }.getOrDefault(CalendarAgendaMode.TODAY)) {
@@ -154,10 +157,10 @@ fun CalendarAgendaScreen(
         }.getOrNull()
     }
     val scope = rememberCoroutineScope()
-    var handoffPreview by remember { mutableStateOf<GoogleHandoffPreview?>(null) }
-    var handoffError by remember { mutableStateOf<String?>(null) }
-    var handoffBusy by remember { mutableStateOf(false) }
-    var handoffRequestGeneration by remember { mutableStateOf(0L) }
+    var handoffPreview by remember(provider) { mutableStateOf<GoogleHandoffPreview?>(null) }
+    var handoffError by remember(provider) { mutableStateOf<String?>(null) }
+    var handoffBusy by remember(provider) { mutableStateOf(false) }
+    var handoffRequestGeneration by remember(provider) { mutableStateOf(0L) }
     val selectForHandoff: (CalendarEvent) -> Unit = { event ->
         val candidate = calendarHandoffCandidate(event)
         if (candidate == null || conversationId == null || onCreateHandoffPreview == null) {
@@ -218,6 +221,17 @@ fun CalendarAgendaScreen(
         is CalendarAgendaUiState.Loading -> isDemoProviderWhileLoading(
             (provider as? app.serea.android.calendar.CalendarProviderSession)?.kind,
         )
+    }
+    val calendarSourceLabel = when (state) {
+        is CalendarAgendaUiState.Loading -> if (isDemoProvider) "DEMO / 架空の予定" else "Google Calendar接続確認中"
+        is CalendarAgendaUiState.Agenda -> if (isDemoProvider) "DEMO / 架空の予定" else "Google Calendar実データ · 読み取り専用"
+        is CalendarAgendaUiState.EventDetail -> if (isDemoProvider) "DEMO / 架空の予定" else "Google Calendar実データ · 読み取り専用"
+        is CalendarAgendaUiState.Failure -> when {
+            isDemoProvider -> "DEMO / 架空の予定"
+            (state as CalendarAgendaUiState.Failure).reason == CalendarAgendaFailure.EXPIRED ||
+                (state as CalendarAgendaUiState.Failure).reason == CalendarAgendaFailure.MISSING_SCOPE -> "再認証が必要 · Google Calendar予定取得失敗"
+            else -> "Google Calendar予定取得失敗 · Demoへの代替なし"
+        }
     }
     var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
     LaunchedEffect(state.query, state.selectedCalendarId) {
@@ -288,14 +302,22 @@ fun CalendarAgendaScreen(
                         Text("更新")
                     }
                 }
+                if (onOpenGoogleSettings != null) {
+                    TextButton(
+                        onClick = onOpenGoogleSettings,
+                        modifier = Modifier.testTag("calendar_google_auth_settings"),
+                    ) { Text("Google認証設定") }
+                }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    if (isDemoProvider) "DEMO / 架空の予定" else "Google Calendar · 読み取り専用",
+                    calendarSourceLabel,
                     modifier = Modifier.semantics {
-                        contentDescription = if (isDemoProvider) {
-                            "DEMO / 架空の予定。Google Calendarには接続していません。"
-                        } else {
-                            "Google Calendarから取得した読み取り専用の予定です。"
+                        contentDescription = when {
+                            state is CalendarAgendaUiState.Agenda && !isDemoProvider -> "Google Calendarから取得した読み取り専用の予定です。"
+                            state is CalendarAgendaUiState.EventDetail && !isDemoProvider -> "Google Calendarから取得した読み取り専用の予定です。"
+                            state is CalendarAgendaUiState.Failure && !isDemoProvider -> calendarSourceLabel
+                            state is CalendarAgendaUiState.Loading && !isDemoProvider -> calendarSourceLabel
+                            else -> "DEMO / 架空の予定。Google Calendarには接続していません。"
                         }
                         heading()
                     },
@@ -305,9 +327,21 @@ fun CalendarAgendaScreen(
                 )
             }
             Text(
-                if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google Calendarから取得 · 変更はできません",
+                when (state) {
+                    is CalendarAgendaUiState.Loading -> if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google接続状態を確認しています"
+                    is CalendarAgendaUiState.Agenda -> if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google Calendarから取得 · 変更はできません"
+                    is CalendarAgendaUiState.EventDetail -> if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google Calendarから取得 · 変更はできません"
+                    is CalendarAgendaUiState.Failure -> if (isDemoProvider) "デモ予定の読み込みに失敗しました" else "実Providerの取得に失敗しました · Demoへ切り替えていません"
+                },
                 style = MaterialTheme.typography.labelMedium,
             )
+            if (providerStatusNotice != null) {
+                Text(
+                    providerStatusNotice,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("calendar_provider_status_error"),
+                )
+            }
             if (handoffError != null && handoffPreview == null) {
                 Text(handoffError!!, color = MaterialTheme.colorScheme.error)
             }

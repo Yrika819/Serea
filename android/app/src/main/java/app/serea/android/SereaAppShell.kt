@@ -53,6 +53,7 @@ import app.serea.android.handoff.trustedHandoffSource
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.googleauth.PrivateGoogleAuthorizationViewModel
 import app.serea.android.googleauth.PrivateGoogleAuthorizationViewModelFactory
+import app.serea.android.googleauth.PrivateGoogleAuthStatus
 import java.time.Clock
 import java.time.ZoneId
 
@@ -86,7 +87,18 @@ internal fun SereaAppShell(
     val emptyPrivateCalendarSession = remember { kotlinx.coroutines.flow.MutableStateFlow<CalendarProviderSession?>(null) }
     val privateCalendarSession by (privateGoogleAuthorizationViewModel?.calendarSession ?: emptyPrivateCalendarSession)
         .collectAsState()
+    val privateAuthorizationState = if (privateGoogleAuthorizationViewModel != null) {
+        privateGoogleAuthorizationViewModel.state.collectAsState().value
+    } else null
+    val calendarAuthorizationErrorNotice = privateAuthorizationState?.let { state ->
+        if (state.status == PrivateGoogleAuthStatus.ERROR && state.realOAuthEnabled && state.syntheticAccount == null) {
+            "Google Calendar認証エラー · Demo予定を表示中。Google未接続の架空データです。"
+        } else null
+    }
     val activeAuthorizationCalendarSession = privateCalendarSession ?: googleDemoCalendarSession
+    val calendarRoute = remember(activeProviders, privateCalendarSession) {
+        activeProviders.calendarRoute(privateCalendarSession)
+    }
     DisposableEffect(activeProviders) {
         onDispose { if (providers == null) activeProviders.close() }
     }
@@ -304,12 +316,16 @@ internal fun SereaAppShell(
                             onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.gmailHandoff, preview) },
                         )
                         SereaDestination.CALENDAR -> CalendarDestination(
-                            activeProviders,
+                            route = calendarRoute,
                             onBack = ::goBack,
+                            onOpenGoogleSettings = if (privateGoogleAuthorizationViewModel != null) {
+                                { navigate(SereaDestination.SETTINGS) }
+                            } else null,
+                            authorizationErrorNotice = calendarAuthorizationErrorNotice,
                             conversationId = chatState.conversation.id,
                             conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
-                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.calendarHandoff, request) },
-                            onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.calendarHandoff, preview) },
+                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(calendarRoute.handoffCoordinator, request) },
+                            onHandoffConfirmed = { preview -> confirmGoogleHandoff(calendarRoute.handoffCoordinator, preview) },
                         )
                         SereaDestination.SETTINGS -> ChatScreen(
                             chatViewModel = chatViewModel,
@@ -398,8 +414,10 @@ private fun GmailDestination(
 
 @Composable
 private fun CalendarDestination(
-    providers: AppProviderComposition,
+    route: CalendarRouteComposition,
     onBack: () -> Unit,
+    onOpenGoogleSettings: (() -> Unit)?,
+    authorizationErrorNotice: String?,
     conversationId: String,
     conversationGeneration: Long,
     onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
@@ -408,15 +426,17 @@ private fun CalendarDestination(
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
     CalendarAgendaScreen(
         onBack = onBack,
-        provider = providers.calendar,
-        authorizationPort = providers.calendar,
-        clock = providers.calendarClock,
+        provider = route.session,
+        authorizationPort = route.session,
+        clock = route.clock,
         displayZone = displayZone,
         modifier = Modifier.fillMaxSize().testTag("calendar_destination"),
         conversationId = conversationId,
         conversationGeneration = conversationGeneration,
         onCreateHandoffPreview = onCreateHandoffPreview,
         onHandoffConfirmed = onHandoffConfirmed,
-        onCancelHandoffPreview = providers.calendarHandoff::cancelPreview,
+        onCancelHandoffPreview = route.handoffCoordinator::cancelPreview,
+        onOpenGoogleSettings = onOpenGoogleSettings,
+        providerStatusNotice = authorizationErrorNotice,
     )
 }

@@ -31,6 +31,7 @@ internal fun PrivateGoogleAuthorizationPanel(
     onOpenCalendar: ((app.serea.android.calendar.CalendarProviderSession) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
+    val calendarSession by viewModel.calendarSession.collectAsState()
 
     val accountPicker = rememberLauncherForActivityResult(PrivateGoogleAccountPickerContract()) { result ->
         val requestId = result.requestId
@@ -87,7 +88,7 @@ internal fun PrivateGoogleAuthorizationPanel(
                 .testTag("private_google_auth_message"),
         )
         Text(
-            "状態: ${state.status.label()}${if (state.realOAuthEnabled) " · 実OAuth設定あり" else " · Mock only"}",
+            "状態: ${state.status.label()} · ${calendarConnectionLabel(state, calendarSession, viewModel.opensGoogleProvider)}",
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                 .testTag("private_google_auth_status"),
         )
@@ -208,10 +209,30 @@ internal fun PrivateGoogleAuthorizationPanel(
     }
 }
 
+private fun calendarConnectionLabel(
+    state: PrivateGoogleAuthorizationUiState,
+    session: app.serea.android.calendar.CalendarProviderSession?,
+    opensGoogleProvider: Boolean,
+): String = when {
+    session?.kind == app.serea.android.calendar.CalendarProviderKind.GOOGLE_READ_ONLY -> "Google Calendar Provider選択済み · 予定取得結果は通常Calendarで確認"
+    session?.kind == app.serea.android.calendar.CalendarProviderKind.FAKE &&
+        state.status == PrivateGoogleAuthStatus.AUTHORIZED && state.realOAuthEnabled &&
+        state.hasSelectedAccount && state.syntheticAccount == null && !opensGoogleProvider ->
+        "OAuth認可済み · HTTP無効 · Mock / Demo表示中 · Google未接続"
+    session?.kind == app.serea.android.calendar.CalendarProviderKind.FAKE -> "Mock / Demo表示中 · Google未接続"
+    state.status == PrivateGoogleAuthStatus.ERROR -> "再認証または接続確認が必要"
+    state.status == PrivateGoogleAuthStatus.AUTHORIZED && state.hasSelectedAccount &&
+        state.syntheticAccount == null && !opensGoogleProvider -> "OAuth認可済み · HTTP無効 · Google未接続"
+    state.status == PrivateGoogleAuthStatus.AUTHORIZED && state.hasSelectedAccount &&
+        state.syntheticAccount == null && opensGoogleProvider -> "OAuth認可済み · Calendar Provider未接続"
+    state.status == PrivateGoogleAuthStatus.AUTHORIZED -> "Mock / Demo表示中 · Google未接続"
+    else -> "Google Calendar未接続"
+}
+
 private fun PrivateGoogleAuthStatus.label(): String = when (this) {
     PrivateGoogleAuthStatus.DISCONNECTED -> "未接続"
-    PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING -> "Account選択待ち"
-    PrivateGoogleAuthStatus.ACCOUNT_SELECTED -> "Account選択済み・未認可"
+    PrivateGoogleAuthStatus.ACCOUNT_SELECTION_PENDING -> "Googleアカウント選択待ち"
+    PrivateGoogleAuthStatus.ACCOUNT_SELECTED -> "Googleアカウント選択済み・未認可"
     PrivateGoogleAuthStatus.AUTHORIZING -> "認可処理中"
     PrivateGoogleAuthStatus.CONSENT_PENDING -> "認可結果待ち"
     PrivateGoogleAuthStatus.AUTHORIZED -> "認可状態を確認済み"

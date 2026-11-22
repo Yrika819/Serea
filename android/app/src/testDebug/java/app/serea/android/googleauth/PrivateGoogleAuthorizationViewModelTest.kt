@@ -122,6 +122,26 @@ class PrivateGoogleAuthorizationViewModelTest {
     }
 
     @Test
+    fun startingAccountChangeClosesCalendarSessionBeforePickerResult() = runTest(mainDispatcher.dispatcher) {
+        val gateway = RevokeFixtureGateway()
+        val viewModel = PrivateGoogleAuthorizationViewModel(
+            context = null,
+            enabledInThisVariant = true,
+            realOAuthEnabled = true,
+            realGatewayFactory = { _, _ -> gateway },
+        )
+        selectFixtureAccount(viewModel)
+        viewModel.requestPrimaryCalendarConsent()
+        advanceUntilIdle()
+        val oldSession = checkNotNull(viewModel.openPrimaryCalendar())
+
+        assertTrue(viewModel.beginRealAccountSelection() != null)
+        assertNull(viewModel.calendarSession.value)
+        assertTrue("previous account's Calendar session must be inactive during account switching", runCatching { oldSession.listCalendars() }.isFailure)
+        oldSession.close()
+    }
+
+    @Test
     fun httpGateOffSelectsFakeWithoutStatusAndClosesPreviousSession() = runTest(mainDispatcher.dispatcher) {
         val gateway = RevokeFixtureGateway()
         var rejectStatus = false

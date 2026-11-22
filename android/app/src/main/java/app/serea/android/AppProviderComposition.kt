@@ -46,6 +46,25 @@ internal class AppProviderComposition private constructor(
     }
 }
 
+/** The screen's provider and handoff capability always come from the same calendar session. */
+internal data class CalendarRouteComposition(
+    val session: CalendarProviderSession,
+    val clock: Clock,
+    val handoffCoordinator: GoogleTrustedHandoffCoordinator,
+)
+
+internal fun AppProviderComposition.calendarRoute(
+    privateCalendarSession: CalendarProviderSession?,
+): CalendarRouteComposition = if (privateCalendarSession == null) {
+    CalendarRouteComposition(calendar, calendarClock, calendarHandoff)
+} else {
+    CalendarRouteComposition(
+        session = privateCalendarSession,
+        clock = privateCalendarSession.clock,
+        handoffCoordinator = GoogleTrustedHandoffCoordinator(privateCalendarSession.trustedHandoffSource()),
+    )
+}
+
 /**
  * Owns provider sessions for the Activity ViewModelStore lifetime. Activity instances are recreated
  * during configuration changes while their ViewModels survive; keeping the sessions at that same

@@ -13,6 +13,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
+import java.time.Clock
 import java.util.concurrent.atomic.AtomicLong
 
 enum class CalendarProviderKind { FAKE, GOOGLE_READ_ONLY }
@@ -119,6 +120,7 @@ class CalendarProviderSessions(
         authorization: CalendarAuthorizationPort,
         currentGrantInvalidationGeneration: () -> Long = { 0L },
         primaryCalendarOnly: Boolean = false,
+        clock: Clock = (authorization as? FakeCalendarProvider)?.clock ?: Clock.systemUTC(),
     ): CalendarProviderSession = synchronized(lock) {
         current?.invalidateFromController()
         val id = nextId.incrementAndGet()
@@ -127,6 +129,7 @@ class CalendarProviderSessions(
             kind = kind,
             delegate = delegate,
             authorizationDelegate = authorization,
+            clock = clock,
             primaryCalendarOnly = primaryCalendarOnly,
             currentGrantInvalidationGeneration = currentGrantInvalidationGeneration,
             isCurrent = { synchronized(lock) { current?.id == id } },
@@ -144,6 +147,7 @@ class CalendarProviderSession internal constructor(
     val kind: CalendarProviderKind,
     private val delegate: CalendarReadPort,
     private val authorizationDelegate: CalendarAuthorizationPort,
+    val clock: Clock = Clock.systemUTC(),
     val primaryCalendarOnly: Boolean = false,
     private val currentGrantInvalidationGeneration: () -> Long = { 0L },
     private val isCurrent: () -> Boolean,

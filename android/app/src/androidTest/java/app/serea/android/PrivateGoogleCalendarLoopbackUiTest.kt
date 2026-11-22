@@ -152,8 +152,8 @@ class PrivateGoogleCalendarLoopbackUiTest {
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("予定を読み込み中").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Google Calendar · 読み取り専用").assertIsDisplayed()
-        compose.onNodeWithText("Google Calendarから取得 · 変更はできません").assertIsDisplayed()
+        compose.onNodeWithText("Google Calendar接続確認中").assertIsDisplayed()
+        compose.onNodeWithText("Google接続状態を確認しています").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isEmpty())
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().singleOrNull()
@@ -161,6 +161,7 @@ class PrivateGoogleCalendarLoopbackUiTest {
         }
         assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, vm.calendarSession.value?.kind)
         assertTrue(vm.calendarSession.value?.primaryCalendarOnly == true)
+        compose.onNodeWithText("Google Calendar実データ · 読み取り専用").assertIsDisplayed()
         compose.onNodeWithText("Google Calendarから取得 · 変更はできません").assertIsDisplayed()
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Synthetic all-day event"))
         compose.onNodeWithText("Synthetic all-day event").assertIsDisplayed()
@@ -239,7 +240,8 @@ class PrivateGoogleCalendarLoopbackUiTest {
         }
 
         assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, vm.calendarSession.value?.kind)
-        compose.onNodeWithText("Google Calendarから取得 · 変更はできません").assertIsDisplayed()
+        compose.onNodeWithText("Google Calendar予定取得失敗 · Demoへの代替なし").assertIsDisplayed()
+        compose.onNodeWithText("実Providerの取得に失敗しました · Demoへ切り替えていません").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isEmpty())
         assertTrue(compose.onAllNodesWithText("このカレンダーに予定はありません。").fetchSemanticsNodes().isEmpty())
         assertEquals(

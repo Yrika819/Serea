@@ -12,6 +12,25 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class AppProviderCompositionTest {
+    @Test fun normalCalendarRouteUsesPrivateSessionAndSessionScopedHandoffCoordinator() = runTest {
+        val providers = AppProviderComposition.fakeDefault()
+        val privateSession = app.serea.android.calendar.CalendarProviderSessions().openPrimaryFake()
+        try {
+            val privateRoute = providers.calendarRoute(privateSession)
+            assertSame(privateSession, privateRoute.session)
+            assertSame(privateSession.clock, privateRoute.clock)
+            org.junit.Assert.assertNotSame(providers.calendarHandoff, privateRoute.handoffCoordinator)
+            assertEquals(app.serea.android.calendar.CalendarProviderKind.FAKE, privateRoute.session.kind)
+
+            val fallbackRoute = providers.calendarRoute(null)
+            assertSame(providers.calendar, fallbackRoute.session)
+            assertSame(providers.calendarHandoff, fallbackRoute.handoffCoordinator)
+        } finally {
+            privateSession.close()
+            providers.close()
+        }
+    }
+
     @Test fun providerSessionsFollowTheConfigurationRetainedViewModelStoreLifetime() = runTest {
         val store = ViewModelStore()
         val factory = object : ViewModelProvider.Factory {

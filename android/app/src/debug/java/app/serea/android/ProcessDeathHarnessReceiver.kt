@@ -203,7 +203,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
             localModelConsent = LocalModelConsentProof.issue(
                 id = oldProofId, request = request, selectedModelId = "serea-local/process-death-fixture",
                 conversationGeneration = 0, approvedAtMillis = now, expiresAtMillis = now + 30_000,
-                providerHandoff = null,
+                providerHandoff = null, lifecycle = LocalModelConsentLifecycle(),
             ),
         )
         val freshRegistry = LocalModelAuthorizationRegistry(

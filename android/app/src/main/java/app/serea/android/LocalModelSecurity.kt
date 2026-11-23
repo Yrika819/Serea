@@ -47,7 +47,13 @@ class LocalModelConsentProof private constructor(
     internal val approvedAtMillis: Long,
     internal val expiresAtMillis: Long,
     internal val providerHandoff: LocalModelProviderHandoffEvidence?,
+    private val lifecycle: LocalModelConsentLifecycle,
+    internal val lifecycleGeneration: Long,
 ) {
+    /** Linearization point shared with eviction. A successful claim may finish before eviction. */
+    internal fun beginNativeDispatch(): Boolean = lifecycle.beginNativeDispatch(lifecycleGeneration)
+    internal fun isLifecycleCurrent(): Boolean = lifecycle.isCurrent(lifecycleGeneration)
+
     internal companion object {
         fun issue(
             id: String,
@@ -57,6 +63,7 @@ class LocalModelConsentProof private constructor(
             approvedAtMillis: Long,
             expiresAtMillis: Long,
             providerHandoff: LocalModelProviderHandoffEvidence?,
+            lifecycle: LocalModelConsentLifecycle,
         ) = LocalModelConsentProof(
             id = id,
             conversationId = request.conversationId,
@@ -68,7 +75,26 @@ class LocalModelConsentProof private constructor(
             approvedAtMillis = approvedAtMillis,
             expiresAtMillis = expiresAtMillis,
             providerHandoff = providerHandoff,
+            lifecycle = lifecycle,
+            lifecycleGeneration = lifecycle.currentGeneration(),
         )
+    }
+}
+
+/** Process-local generation gate. Dispatch and eviction serialize at a single lock boundary. */
+internal class LocalModelConsentLifecycle {
+    private var generation: Long = 0
+
+    @Synchronized fun currentGeneration(): Long = generation
+
+    @Synchronized fun beginNativeDispatch(proofGeneration: Long): Boolean = proofGeneration == generation
+    @Synchronized fun isCurrent(proofGeneration: Long): Boolean = proofGeneration == generation
+
+    /** Invalidates every proof from the old lifecycle, including one already consumed by Egress. */
+    @Synchronized fun evict(): Long {
+        check(generation < Long.MAX_VALUE) { "Local-model lifecycle generation exhausted." }
+        generation += 1
+        return generation
     }
 }
 
@@ -103,6 +129,7 @@ internal class LocalModelAuthorizationRegistry(
     private val currentConversation: LocalModelCurrentConversationPort? = null,
 ) : LocalModelAuthorizationPort {
     private val pending = ConcurrentHashMap<String, LocalModelConsentProof>()
+    internal val lifecycle = LocalModelConsentLifecycle()
 
     init { require(maxLifetimeMillis in 1..60_000L) }
 
@@ -143,6 +170,7 @@ internal class LocalModelAuthorizationRegistry(
             conversationGeneration = conversationGeneration,
             approvedAtMillis = now, expiresAtMillis = Math.addExact(now, maxLifetimeMillis),
             providerHandoff = providerHandoff,
+            lifecycle = lifecycle,
         )
         pending[proof.id] = proof
         return proof
@@ -151,8 +179,15 @@ internal class LocalModelAuthorizationRegistry(
     /** Remove an approval when the user cancels before Chat dispatch. */
     fun revoke(proof: LocalModelConsentProof): Boolean = pending.remove(proof.id, proof)
 
+    /** Called at the eviction boundary; cloud and Demo authorization registries are unaffected. */
+    internal fun invalidateForEviction(): Long {
+        pending.clear()
+        return lifecycle.evict()
+    }
+
     override suspend fun consumeOnce(proof: LocalModelConsentProof, contract: EgressContract): Boolean {
         val issued = pending.remove(proof.id) ?: return false
+        if (!proof.isLifecycleCurrent()) return false
         val initialBinding = try {
             currentConversation?.currentBinding() ?: return false
         } catch (cancelled: CancellationException) {
@@ -185,7 +220,7 @@ internal class LocalModelAuthorizationRegistry(
         // Binding and clock are sampled again after the suspending handoff validator. A tab
         // switch or elapsed TTL during that call invalidates this one-use proof.
         val now = clock()
-        return issued === proof && currentHandoff && finalBinding == initialBinding &&
+        return issued === proof && proof.isLifecycleCurrent() && currentHandoff && finalBinding == initialBinding &&
             now >= proof.approvedAtMillis && now < proof.expiresAtMillis &&
             proof.conversationId == contract.conversationId && proof.sendId == contract.currentMessageId &&
             proof.selectedModelId == contract.selectedModelId &&

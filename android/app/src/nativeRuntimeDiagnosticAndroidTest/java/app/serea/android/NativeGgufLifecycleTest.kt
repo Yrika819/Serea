@@ -1,5 +1,6 @@
 package app.serea.android
 
+import android.content.ComponentCallbacks2
 import android.os.Debug
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
@@ -9,7 +10,10 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -166,33 +170,198 @@ class NativeGgufLifecycleTest {
         measurements["owner_after_reload_free"] = "empty"
         measurements["coordinator_after_reload_free"] = "RELEASED"
         measurements["pss_after_release_kb"] = Debug.getPss().toString()
-        pss.toSortedMap().forEach { (name, value) -> measurements[name] = value.toString() }
 
-        // Inject a JNI free refusal last: the existing C++ owner must remain intact and the
-        // process coordinator must permanently deny reload until this disposable process exits.
-        val retained = LlamaCppLocalModelInferenceBackend(::recordPss)
-        retained.load(modelFile.absolutePath, limits())
-        val allocationsWithRetainedModel = seam.modelAllocationCount()
-        seam.failNextFree()
-        retained.close()
-        val failedRelease = retained.awaitReleaseResult(30, TimeUnit.SECONDS)
-        assertTrue("JNI free refusal must not be reported as success", failedRelease is NativeReleaseResult.Failed)
-        assertEquals(1, retained.nativeOwnershipForDiagnosticTest())
-        assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, processNativeReleaseCoordinator.currentState())
-        val denied = LlamaCppLocalModelInferenceBackend()
-        assertTrue("reload must fail closed after unknown/unreleased Native ownership", runCatching {
-            denied.load(modelFile.absolutePath, limits())
-        }.isFailure)
-        assertEquals(allocationsWithRetainedModel, seam.modelAllocationCount())
-        denied.close()
-        assertEquals(NativeReleaseResult.NotAcquired, denied.awaitReleaseResult(30, TimeUnit.SECONDS))
-        measurements["jni_free_failure_preserved_native_owner"] = "true"
-        measurements["reload_after_free_failure_denied"] = "true"
-        measurements["pss_after_free_failure_kb"] = Debug.getPss().toString()
+        runAdapterEvictionAndReload()
         pss.toSortedMap().forEach { (name, value) -> measurements[name] = value.toString() }
         appendMeasurements()
         assertTrue("test GGUF must be deleted from app-private storage", modelFile.delete())
     }
+
+    private suspend fun runAdapterEvictionAndReload() {
+        val modelId = "serea-local/native-eviction-test"
+        val artifact = LocalModelArtifact(
+            modelId = modelId, displayName = "Verified isolated GGUF fixture",
+            modelRepository = "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF",
+            modelRevision = "1076b85d135017971845b19b8d07df1479155988",
+            licenseId = "Apache-2.0", expectedSha256 = EXPECTED_SHA256,
+            expectedSizeBytes = EXPECTED_SIZE, runtimeName = "llama.cpp",
+            runtimeRevision = LLAMA_CPP_REVISION, supportedAbis = setOf("x86_64"),
+        )
+        val registry = LocalModelAuthorizationRegistry(
+            currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding("native-eviction-conversation", 0)
+            },
+        )
+        val callbackOwner = DiagnosticCallbacksOwner()
+        val visibilityOwner = DiagnosticProcessVisibilityOwner()
+        val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val lifecycleEvents = mutableListOf<LocalModelMemoryLifecycle.Event>()
+        var backendCreations = 0
+        var lastBackend: LlamaCppLocalModelInferenceBackend? = null
+        val composition = LocalModelRuntimeApplicationComposition.create(
+            modelDirectory = targetContext.noBackupFilesDir,
+            callbacks = callbackOwner,
+            processVisibility = visibilityOwner,
+            scope = lifecycleScope,
+            artifact = artifact,
+            modelFile = modelFile,
+            backendFactory = LocalModelInferenceBackendFactory {
+                backendCreations++
+                LlamaCppLocalModelInferenceBackend(::recordPss).also { lastBackend = it }
+            },
+            // Keep adapter lifecycle probes short on the CPU emulator. The direct JNI
+            // generations above still exercise 48-token output and a 256-token cancelled
+            // generation; these checks need only establish that eviction/reload can generate.
+            deviceAbi = "x86_64",
+            runtimeLimits = limits(maxOutputTokens = 16),
+            memoryFitCheck = LocalModelMemoryFitCheck { true },
+            authorizations = registry,
+            eventObserver = { synchronized(lifecycleEvents) { lifecycleEvents += it } },
+        )
+        val adapter = composition.adapter
+        assertTrue("registered lifecycle owns this same adapter", composition.lifecycle.adapter === adapter)
+        val egress = EgressCheckedModelChatPort(
+            adapter, expectedTarget = EgressTarget.LOCAL_MODEL,
+            localModelAuthorizations = registry,
+            localMonotonicClock = { SystemClock.elapsedRealtime() },
+        )
+        try {
+            composition.register()
+            assertEquals("one Application callback is registered", 1, callbackOwner.registered.size)
+            val first = localRequest("adapter generation before eviction", "adapter-evict-first", modelId)
+            val firstProof = registry.approve(first, modelId)
+            val firstResult = egress.send(first.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(first, modelId, firstProof),
+            ))
+            assertTrue(firstResult.text.isNotBlank())
+            val firstEngine = seam.generationEngineId()
+            assertTrue(firstEngine > 0L)
+
+            val stale = localRequest("proof held across eviction", "adapter-evict-stale", modelId)
+            val staleProof = registry.approve(stale, modelId)
+            val evictionStarted = SystemClock.elapsedRealtimeNanos()
+            val backgroundCallback = callbackOwner.registered.single() as LocalModelMemoryLifecycle
+            // Synthetic-test dispatch uses the registered ComponentCallbacks2 object and preserves
+            // SYNTHETIC_TEST attribution; it is not evidence that Android delivered an OS event.
+            backgroundCallback.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
+            awaitLifecycleGeneration(registry, expected = 1L)
+            assertEquals(NativeReleaseResult.Released, checkNotNull(lastBackend).awaitReleaseResult(30, TimeUnit.SECONDS))
+            assertEquals(NativeReleaseCoordinator.State.RELEASED, processNativeReleaseCoordinator.currentState())
+            assertEquals(1L, registry.lifecycle.currentGeneration())
+            assertEquals(LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST,
+                synchronized(lifecycleEvents) { lifecycleEvents.last().source })
+            measurements["adapter_eviction_callback_level"] = ComponentCallbacks2.TRIM_MEMORY_BACKGROUND.toString()
+            measurements["adapter_eviction_ms"] = elapsedMs(evictionStarted).toString()
+            measurements["adapter_eviction_released"] = "true"
+            measurements["adapter_first_eviction_release_confirmed"] = "true"
+            measurements["adapter_synthetic_callback_source"] = LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST.name
+            assertTrue("eviction invalidates prior local consent", runCatching {
+                egress.send(stale.copy(
+                    selectedModelId = modelId,
+                    egressContract = localContract(stale, modelId, staleProof),
+                ))
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            measurements["adapter_stale_consent_rejected"] = "true"
+
+            val fresh = localRequest("reload after adapter eviction", "adapter-evict-reload", modelId)
+            val freshProof = registry.approve(fresh, modelId)
+            val reloadStarted = SystemClock.elapsedRealtimeNanos()
+            val freshResult = egress.send(fresh.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(fresh, modelId, freshProof),
+            ))
+            measurements["adapter_reload_and_generation_ms"] = elapsedMs(reloadStarted).toString()
+            assertTrue("new adapter backend must generate after eviction", freshResult.text.isNotBlank())
+            val freshEngine = seam.generationEngineId()
+            assertTrue("eviction reload uses a fresh engine identity", freshEngine > 0 && freshEngine != firstEngine)
+            measurements["adapter_first_engine_id"] = firstEngine.toString()
+            measurements["adapter_reloaded_engine_id"] = freshEngine.toString()
+
+            // Inject the JNI failure through adapter eviction itself. It must retain Native
+            // ownership and deny both adapter reload and a second backend acquisition.
+            val allocationsWithRetainedModel = seam.modelAllocationCount()
+            seam.failNextFree()
+            val failedEvictionStarted = SystemClock.elapsedRealtimeNanos()
+            backgroundCallback.dispatchSyntheticTrimForTest(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
+            awaitLifecycleGeneration(registry, expected = 2L)
+            awaitCoordinatorState(NativeReleaseCoordinator.State.RELEASE_FAILED)
+            assertTrue("all diagnostic callback stimuli are explicitly synthetic",
+                synchronized(lifecycleEvents) { lifecycleEvents.all { it.source == LocalModelMemoryLifecycle.Source.SYNTHETIC_TEST } })
+            measurements["adapter_failed_eviction_ms"] = elapsedMs(failedEvictionStarted).toString()
+            assertTrue(checkNotNull(lastBackend).awaitReleaseResult(30, TimeUnit.SECONDS) is NativeReleaseResult.Failed)
+            assertEquals(1, checkNotNull(lastBackend).nativeOwnershipForDiagnosticTest())
+            assertEquals(NativeReleaseCoordinator.State.RELEASE_FAILED, processNativeReleaseCoordinator.currentState())
+            measurements["adapter_eviction_free_failure_fail_closed"] = "true"
+            measurements["adapter_native_owner_after_free_failure"] = "retained"
+
+            val deniedRequest = localRequest("reload denied after JNI free refusal", "adapter-evict-free-fail", modelId)
+            val deniedProof = registry.approve(deniedRequest, modelId)
+            assertTrue(runCatching {
+                egress.send(deniedRequest.copy(
+                    selectedModelId = modelId,
+                    egressContract = localContract(deniedRequest, modelId, deniedProof),
+                ))
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("failed release must not create another backend", 2, backendCreations)
+            assertEquals(allocationsWithRetainedModel, seam.modelAllocationCount())
+            measurements["jni_free_failure_preserved_native_owner"] = "true"
+            measurements["reload_after_free_failure_denied"] = "true"
+
+            val denied = LlamaCppLocalModelInferenceBackend()
+            assertTrue("Native coordinator denies a backend after eviction free failure", runCatching {
+                denied.load(modelFile.absolutePath, limits())
+            }.isFailure)
+            denied.close()
+            assertEquals(NativeReleaseResult.NotAcquired, denied.awaitReleaseResult(30, TimeUnit.SECONDS))
+            measurements["pss_after_free_failure_kb"] = Debug.getPss().toString()
+        } finally {
+            composition.close()
+            lifecycleScope.cancel()
+        }
+    }
+
+    private class DiagnosticCallbacksOwner : ComponentCallbacks2Owner {
+        val registered = mutableListOf<android.content.ComponentCallbacks2>()
+        override fun registerComponentCallbacks(callback: android.content.ComponentCallbacks2) {
+            if (callback !in registered) registered += callback
+        }
+        override fun unregisterComponentCallbacks(callback: android.content.ComponentCallbacks2) {
+            registered.remove(callback)
+        }
+    }
+
+    private class DiagnosticProcessVisibilityOwner : ProcessVisibilityOwner {
+        private val registered = mutableListOf<ProcessVisibilityObserver>()
+        override fun register(observer: ProcessVisibilityObserver) {
+            if (observer !in registered) registered += observer
+        }
+        override fun unregister(observer: ProcessVisibilityObserver) { registered.remove(observer) }
+    }
+
+    private suspend fun awaitLifecycleGeneration(registry: LocalModelAuthorizationRegistry, expected: Long) = withTimeout(30_000) {
+        while (registry.lifecycle.currentGeneration() < expected) delay(5)
+    }
+
+    private suspend fun awaitCoordinatorState(expected: NativeReleaseCoordinator.State) = withTimeout(30_000) {
+        while (processNativeReleaseCoordinator.currentState() != expected) delay(5)
+    }
+
+    private fun localRequest(message: String, sendId: String, modelId: String) = ModelChatRequest(
+        conversationId = "native-eviction-conversation", message = message, sendId = sendId,
+        timeoutMillis = 60_000, classification = DataClassification.PUBLIC,
+        bodySourceLineage = setOf(DataOrigin.USER_AUTHORED), selectedModelId = modelId,
+    )
+
+    private fun localContract(request: ModelChatRequest, modelId: String, proof: LocalModelConsentProof) = EgressContract(
+        conversationId = request.conversationId, currentMessageId = request.sendId,
+        origin = DataOrigin.USER_AUTHORED, classification = request.classification,
+        destination = ChatEgressGate.LOCAL_MODEL_DESTINATION, plannedBody = request.message,
+        context = request.context, preparation = PayloadPreparation.RAW,
+        explicitSendIntentAtMillis = null, expiresAtMillis = null,
+        selectedModelId = modelId, target = EgressTarget.LOCAL_MODEL,
+        plannedBodySourceLineage = request.bodySourceLineage, localModelConsent = proof,
+    )
 
     private fun validateFixture() {
         assertTrue("verified GGUF fixture must be installed in app-private storage", modelFile.isFile)
@@ -244,10 +413,10 @@ class NativeGgufLifecycleTest {
         safeMeasurements.forEach { android.util.Log.i(METRICS_LOG_TAG, "R7_METRIC $it") }
     }
 
-    private fun limits() = LocalModelRuntimeLimits(
+    private fun limits(maxOutputTokens: Int = 256) = LocalModelRuntimeLimits(
         maxResidentMemoryBytes = 768L * 1024 * 1024,
         contextTokens = 512,
-        maxOutputTokens = 256,
+        maxOutputTokens = maxOutputTokens,
         workerThreads = 2,
     )
 

@@ -44,7 +44,14 @@ val privateBetaUnitTestOnlyInvocation = gradle.startParameter.taskNames.isNotEmp
 if (privateBetaRequested && ciBuild && !privateBetaUnitTestOnlyInvocation) {
     error("CI may only run the isolated Private Beta unit-test task; packaging is local-only.")
 }
+val embeddedCoreOptIn = providers.gradleProperty("sereaEmbeddedCore").orNull == "true"
+val embeddedCoreSignedDiagnostic = providers.gradleProperty("sereaEmbeddedCoreSignedDiagnostic").orNull == "true"
+check(!embeddedCoreSignedDiagnostic || embeddedCoreOptIn) { "Diagnostic signing requires sereaEmbeddedCore=true." }
 val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
+if (embeddedCoreOptIn && (isolatedNativeRuntimeOptIn || betaValidationHarness ||
+        providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true")) {
+    error("Embedded Core diagnostics cannot be combined with other diagnostic opt-ins.")
+}
 val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
         gradle.startParameter.taskNames.all { it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation" }
 val nativeRuntimeAbi = providers.gradleProperty("sereaNativeRuntimeAbi").orNull ?: "x86_64"
@@ -100,6 +107,7 @@ android {
         buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
         buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
         buildConfigField("boolean", "PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED", "false")
+        if (embeddedCoreOptIn) ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         if (isolatedNativeRuntimeOptIn && !nativeIsolationVerifierOnly) {
             ndk { abiFilters += nativeRuntimeAbi }
             externalNativeBuild {
@@ -114,7 +122,15 @@ android {
     }
 
     signingConfigs {
-
+        if (embeddedCoreSignedDiagnostic) {
+            create("embeddedCoreDisposable") {
+                storeFile = rootProject.projectDir.parentFile.resolve("target/s1-android-home/diagnostic-only.p12")
+                storeType = "PKCS12"
+                storePassword = "synthetic-only"
+                keyAlias = "synthetic-diagnostic"
+                keyPassword = "synthetic-only"
+            }
+        }
         if (updateTestSigningInputsReady) {
             create("ephemeralUpdateTest") {
                 storeFile = file(checkNotNull(updateTestStorePath))
@@ -136,6 +152,10 @@ android {
             // Instrumentation's process-death harness uses `run-as` to inspect this app's
             // private database, so the disposable isolated target must remain debuggable.
             applicationIdSuffix = ".isolated"
+            // Signing is a separate explicit diagnostic-only opt-in using a disposable local key.
+            if (embeddedCoreOptIn) signingConfig = if (embeddedCoreSignedDiagnostic) {
+                signingConfigs.getByName("embeddedCoreDisposable")
+            } else null
             matchingFallbacks += listOf("debug")
             buildConfigField(
                 "boolean",
@@ -191,6 +211,14 @@ android {
             java.srcDir("src/debug/java")
             manifest.srcFile("src/isolated/AndroidManifest.xml")
         }
+        if (embeddedCoreOptIn) {
+            getByName("isolated") {
+                java.srcDir("src/embeddedCore/java")
+                java.srcDir(layout.buildDirectory.dir("generated/embeddedCore/kotlin"))
+                jniLibs.srcDir(layout.buildDirectory.dir("generated/embeddedCore/jniLibs"))
+            }
+            getByName("androidTest") { java.srcDir("src/embeddedCoreAndroidTest/java") }
+        }
         if (isolatedNativeRuntimeOptIn) {
             // JNI ownership smoke tests are compiled only for the explicit native
             // diagnostic build; regular Formal instrumentation identities stay fixed.
@@ -221,6 +249,7 @@ androidComponents {
         if (ciBuild && variant.buildType == "privateBeta" && !privateBetaUnitTestOnlyInvocation) {
             variant.enable = false
         }
+        if (embeddedCoreOptIn && variant.buildType != "isolated") variant.enable = false
         if (isolatedNativeRuntimeOptIn) {
             if (variant.buildType == "isolated") nativeEnabledBuildTypes += variant.buildType!!
             else {
@@ -228,6 +257,46 @@ androidComponents {
                 variant.enable = false
             }
         }
+    }
+}
+
+if (embeddedCoreOptIn) {
+    val repoRoot = rootProject.projectDir.parentFile
+    val buildDir = layout.buildDirectory.dir("generated/embeddedCore")
+    val safePath = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:${System.getProperty("user.home")}/.cargo/bin"
+    val ndkHome = "${System.getProperty("user.home")}/Library/Android/sdk/ndk/28.2.13676358"
+    val rustBuild = tasks.register<Exec>("buildEmbeddedCoreRust") {
+        workingDir = repoRoot
+        environment.clear()
+        environment("HOME", System.getProperty("user.home"))
+        environment("PATH", safePath)
+        environment("TMPDIR", System.getProperty("java.io.tmpdir"))
+        environment("ANDROID_NDK_HOME", ndkHome)
+        environment("CARGO_BUILD_JOBS", "2")
+        commandLine("cargo", "ndk", "-t", "x86_64", "-t", "arm64-v8a", "-P", "26", "-o", buildDir.get().dir("jniLibs").asFile.absolutePath, "build", "-p", "serea-android-bridge", "--locked")
+    }
+    val bindings = tasks.register<Exec>("generateEmbeddedCoreBindings") {
+        dependsOn(rustBuild)
+        workingDir = repoRoot
+        environment.clear()
+        environment("HOME", System.getProperty("user.home"))
+        environment("PATH", safePath)
+        environment("TMPDIR", System.getProperty("java.io.tmpdir"))
+        val generator = repoRoot.resolve("target/s1-tools/bin/uniffi-bindgen")
+        doFirst {
+            check(generator.isFile) { "Install uniffi-bindgen 0.32.2 under target/s1-tools first." }
+            val command = ProcessBuilder(generator.absolutePath, "--version").redirectErrorStream(true)
+            command.environment().clear()
+            val process = command.start()
+            val version = process.inputStream.bufferedReader().readText().trim()
+            check(process.waitFor() == 0 && version == "uniffi-bindgen 0.32.2") {
+                "Embedded Core requires uniffi-bindgen 0.32.2."
+            }
+        }
+        commandLine(generator.absolutePath, "generate", "--library", buildDir.get().file("jniLibs/x86_64/libserea_android_bridge.so").asFile.absolutePath, "--language", "kotlin", "--out-dir", buildDir.get().dir("kotlin").asFile.absolutePath, "--no-format")
+    }
+    tasks.configureEach {
+        if (name == "preIsolatedBuild") dependsOn(bindings)
     }
 }
 
@@ -331,6 +400,7 @@ kotlin {
 }
 
 dependencies {
+    if (embeddedCoreOptIn) add("isolatedImplementation", "net.java.dev.jna:jna:5.17.0@aar")
     val composeBom = platform("androidx.compose:compose-bom:2025.03.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -369,7 +439,10 @@ dependencies {
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
-dependencyLocking { lockAllConfigurations() }
+dependencyLocking {
+    if (embeddedCoreOptIn) lockFile = file("gradle-embedded-core.lockfile")
+    lockAllConfigurations()
+}
 
 // AGP 8.9's Android Test Platform configurations resolve older protobuf/Netty
 // versions. Keep their test-runner transport dependencies on patched compatible

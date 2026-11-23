@@ -35,7 +35,10 @@ impl Clock for WallClock {
             field: ValueField::Timestamp,
             reason: ValueRejection::OutOfRange,
         };
-        let ms = SystemTime::now()
+        // The isolated Android process boundary supplies time through Core's Clock port.
+        #[allow(clippy::disallowed_methods)]
+        let now = SystemTime::now();
+        let ms = now
             .duration_since(UNIX_EPOCH)
             .map_err(|_| invalid())?
             .as_millis();
@@ -119,7 +122,7 @@ pub fn schema_version(handle: u64) -> Result<u32, BridgeError> {
 #[uniffi::export]
 pub fn close(handle: u64) -> Result<(), BridgeError> {
     let mut state = STATE.lock().map_err(|_| BridgeError::Internal)?;
-    if !state.current.as_ref().is_some_and(|(h, _)| *h == handle) {
+    if state.current.as_ref().is_none_or(|(h, _)| *h != handle) {
         return Err(BridgeError::InvalidHandle);
     }
     let (_, core) = state.current.take().ok_or(BridgeError::Internal)?;

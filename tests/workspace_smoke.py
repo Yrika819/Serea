@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_MEMBERS = [
+    "crates/serea-android-bridge",
     "crates/serea-capability",
     "crates/serea-core",
     "crates/serea-event-bus",
@@ -44,6 +45,7 @@ CAPABILITY = "serea-capability"
 POLICY = "serea-policy"
 CORE = "serea-core"
 HOST = "serea-host"
+ANDROID_BRIDGE = "serea-android-bridge"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
 
@@ -358,6 +360,10 @@ def main() -> int:
             manifest = load_manifest(manifest_path)
             owner = package_name(manifest, manifest_path)
             for name, internal, is_dev in dependency_tables(manifest, shared, manifest_path):
+                if name == ANDROID_BRIDGE and owner != ANDROID_BRIDGE:
+                    failures.append(f"{owner} must not depend on the Android bridge")
+                if owner == ANDROID_BRIDGE and internal and name not in (CORE, EVENT_BUS, PROTOCOL):
+                    failures.append(f"Android bridge internal dependency {name} is not allowed")
                 if owner == PROTOCOL and internal:
                     failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
                 # P5E freezes one new direction, `task-engine -> capability`,
@@ -444,7 +450,7 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P6 runtime plus Core/host workspace; "
+    print("OK: exact P6 runtime plus Core/host and Android bridge workspace; "
           "event-bus protocol/storage-only; task-engine protocol/storage/event-bus/capability/policy; "
           "scheduler protocol/storage/event-bus/task-engine; "
           "capability protocol/storage/event-bus with no edge to the Task Engine or policy; "

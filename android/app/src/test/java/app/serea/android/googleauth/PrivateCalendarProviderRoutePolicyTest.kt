@@ -137,6 +137,39 @@ class PrivateCalendarProviderRoutePolicyTest {
     }
 
     @Test
+    fun oauthAndHttpGateMatrixSelectsOnlyThePermittedProviderBeforeTokenOrHttp() {
+        val cases = listOf(
+            Triple(false, false, PrivateCalendarProviderDecision.Fake),
+            Triple(true, false, PrivateCalendarProviderDecision.Fake),
+            Triple(false, true, null),
+        )
+
+        cases.forEach { (oauthEnabled, httpEnabled, expectedDecision) ->
+            val gateway = Gateway()
+            val failure = runCatching {
+                selectPrivateCalendarProvider(
+                    "app.serea.android.privatebeta", "privateBeta", true, httpEnabled, oauthEnabled, gateway,
+                )
+            }
+            if (expectedDecision != null) {
+                assertEquals("OAuth=$oauthEnabled HTTP=$httpEnabled", expectedDecision, failure.getOrThrow())
+            } else {
+                assertTrue("OAuth=$oauthEnabled HTTP=$httpEnabled must fail closed", failure.isFailure)
+            }
+            assertEquals("OAuth=$oauthEnabled HTTP=$httpEnabled status reads", if (oauthEnabled && httpEnabled) 1 else 0, gateway.statusCalls)
+            assertEquals("OAuth=$oauthEnabled HTTP=$httpEnabled token acquisitions", 0, gateway.tokenCalls)
+        }
+
+        val gateway = Gateway()
+        val liveDecision = selectPrivateCalendarProvider(
+            "app.serea.android.privatebeta", "privateBeta", true, true, true, gateway,
+        )
+        assertEquals(PrivateCalendarProviderDecision.Live("private-session"), liveDecision)
+        assertEquals(1, gateway.statusCalls)
+        assertEquals("provider selection does not acquire a token or issue Calendar HTTP", 0, gateway.tokenCalls)
+    }
+
+    @Test
     fun allValidPrivateProductConditionsSelectLiveWithoutPerformingHttp() {
         val gateway = Gateway()
 

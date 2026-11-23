@@ -261,19 +261,21 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew --no-daemon -PsereaBetaVersionCode=2 :app:testPrivateBetaUnitTest \
-            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest.httpGateIsPrivateOnlyAndIndependentFromOAuthGate'
-          junit='app/build/test-results/testPrivateBetaUnitTest/TEST-app.serea.android.googleauth.PrivateBuildOAuthGateTest.xml'
-          test -s "$junit"
-          python3 - "$junit" <<'PY'
-          import sys
+            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest'
+          python3 - <<'PY'
+          import pathlib
           import xml.etree.ElementTree as ET
-          root = ET.parse(sys.argv[1]).getroot()
-          cases = root.findall("./testcase")
-          assert len(cases) == 1, f"expected exactly one private-gate test, got {len(cases)}"
-          assert root.get("tests") == "1", f"unexpected test count: {root.attrib}"
-          assert all(root.get(name, "0") == "0" for name in ("failures", "errors", "skipped")), root.attrib
-          assert cases[0].get("classname") == "app.serea.android.googleauth.PrivateBuildOAuthGateTest"
-          assert cases[0].get("name") == "httpGateIsPrivateOnlyAndIndependentFromOAuthGate"
+          results = pathlib.Path("app/build/test-results/testPrivateBetaUnitTest")
+          expected = {
+              "PrivateBuildOAuthGateTest": 5,
+          }
+          actual = {}
+          for path in results.glob("TEST-*.xml"):
+              root = ET.parse(path).getroot()
+              cases = root.findall("./testcase")
+              assert all(root.get(name, "0") == "0" for name in ("failures", "errors", "skipped")), (path, root.attrib)
+              actual[root.get("name", "").split(".")[-1]] = len(cases)
+          assert actual == expected, f"expected false/false private gates {expected}, got {actual}"
           PY
           test ! -e app/build/outputs/apk/privateBeta
           test ! -e app/build/outputs/bundle/privateBeta
@@ -297,19 +299,58 @@ jobs:
           import xml.etree.ElementTree as ET
 
           expected = {
-              "testBetaUnitTest": ("BetaCalendarHttpGateTest", 1),
-              "testPrivateBetaUnitTest": ("PrivateBuildOAuthGateTest", 2),
+              "testBetaUnitTest": {"BetaCalendarHttpGateTest": 1},
+              "testPrivateBetaUnitTest": {
+                  "PrivateBuildOAuthGateTest": 5,
+              },
           }
-          for task, (test_class, expected_count) in expected.items():
-              path = pathlib.Path("app/build/test-results") / task / f"TEST-app.serea.android.googleauth.{test_class}.xml"
-              root = ET.parse(path).getroot()
-              cases = root.findall("./testcase")
-              assert len(cases) == expected_count, (path, root.attrib)
-              assert all(root.get(key, "0") == "0" for key in ("failures", "errors", "skipped")), (path, root.attrib)
+          for task, class_counts in expected.items():
+              for test_class, expected_count in class_counts.items():
+                  path = pathlib.Path("app/build/test-results") / task / f"TEST-app.serea.android.googleauth.{test_class}.xml"
+                  root = ET.parse(path).getroot()
+                  cases = root.findall("./testcase")
+                  assert len(cases) == expected_count, (path, root.attrib)
+                  assert all(root.get(key, "0") == "0" for key in ("failures", "errors", "skipped")), (path, root.attrib)
           PY
           test ! -e app/build/outputs/apk/privateBeta
           test ! -e app/build/outputs/bundle/privateBeta
           if find app/build/outputs -type f \( -ipath '*/privatebeta/*' -o -iname '*privatebeta*.apk' -o -iname '*privatebeta*.aab' \) -print -quit | grep -q .; then
+            echo 'Private Beta package output is forbidden in public CI.' >&2
+            exit 1
+          fi
+      - name: Verify OAuth-enabled Private Beta gate matrix without packaging
+        working-directory: android
+        run: |
+          set -euo pipefail
+          for http_enabled in false true; do
+            export SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED=true
+            export SEREA_PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED="$http_enabled"
+            ./gradlew --no-daemon -PsereaPrivateBetaVersionCode=2 :app:testPrivateBetaUnitTest \
+              --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest' \
+              --tests 'app.serea.android.googleauth.PrivateGoogleConsentResultTest'
+            python3 - "$http_enabled" <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+          results = pathlib.Path("app/build/test-results/testPrivateBetaUnitTest")
+          expected = {
+              "PrivateBuildOAuthGateTest": 5,
+              "PrivateGoogleConsentResultTest": 4,
+          }
+          actual = {}
+          for path in results.glob("TEST-*.xml"):
+              root = ET.parse(path).getroot()
+              cases = root.findall("./testcase")
+              assert all(root.get(key, "0") == "0" for key in ("failures", "errors", "skipped")), (path, root.attrib)
+              actual[root.get("name", "").split(".")[-1]] = len(cases)
+          assert actual == expected, f"HTTP={sys.argv[1]} expected {expected}, got {actual}"
+          PY
+          done
+          test ! -e app/build/outputs/apk/privateBeta
+          test ! -e app/build/outputs/bundle/privateBeta
+          if find app/build/outputs -type f \
+            \( -ipath '*/privatebeta/*' -o -iname '*privatebeta*.apk' -o -iname '*privatebeta*.aab' \) \
+            -print -quit | grep -q .; then
             echo 'Private Beta package output is forbidden in public CI.' >&2
             exit 1
           fi

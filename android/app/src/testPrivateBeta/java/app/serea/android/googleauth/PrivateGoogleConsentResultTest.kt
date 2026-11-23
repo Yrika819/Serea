@@ -4,7 +4,6 @@ import android.accounts.Account
 import android.app.PendingIntent
 import android.content.ContextWrapper
 import android.content.Intent
-import app.serea.android.BuildConfig
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,9 +61,20 @@ class PrivateGoogleConsentResultTest {
         oauthBuildPolicy = PrivateGoogleOAuthBuildPolicy { requested -> requested },
     )
 
-    @Test fun syntheticConsentTestsKeepProductOAuthBuildFlagDisabled() {
-        assertFalse("Fake operations must not enable the product OAuth build flag", BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
-        assertEquals("app.serea.android.privatebeta", BuildConfig.APPLICATION_ID)
+    @Test fun syntheticConsentUsesOnlyInjectedOperationsIndependentOfProductOAuthBuildFlag() = runBlocking {
+        val operations = FakeOperations()
+        val gateway = gateway(operations)
+        val authorization = gateway.authorize(primary) as AuthorizationOutcome.ConsentRequired
+        val requestId = assertNotNullAndGet(authorization.requestId)
+
+        assertNotNull("synthetic resolution is returned by the injected test operation", gateway.takePendingConsentIntent(requestId))
+        val result = gateway.completeConsentResult(requestId, null)
+
+        assertTrue("only the synthetic operation's exact-scope result may issue a test lease", result is AuthorizationOutcome.Authorized)
+        (result as AuthorizationOutcome.Authorized).lease.close()
+        assertEquals(1, operations.authorizeCalls)
+        assertEquals("the Intent is handled only by the injected fake", 1, operations.resultFromIntentCalls)
+        assertNull(operations.lastIntent)
     }
 
     @Test fun resultFromIntentAcceptsOnlyExactScopeAndConsumesConsentOnce() = runBlocking {

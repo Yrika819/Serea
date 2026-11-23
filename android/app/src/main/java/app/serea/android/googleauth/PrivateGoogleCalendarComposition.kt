@@ -7,6 +7,7 @@ import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.FakeCalendarProvider
 
 internal interface PrivateGoogleCalendarProviderComposition : AutoCloseable {
+    /** Live build eligibility only; does not imply authorization, a session, or any Calendar read. */
     val opensGoogleProvider: Boolean
     fun openAuthorizedPrimary(gateway: GoogleAuthorizationGateway): CalendarProviderSession
     fun closeCurrent()
@@ -14,7 +15,9 @@ internal interface PrivateGoogleCalendarProviderComposition : AutoCloseable {
 
 /** Product composition has no URL, client, gateway, or gate override injection points. */
 internal class PrivateGoogleCalendarComposition : PrivateGoogleCalendarProviderComposition {
-    override val opensGoogleProvider: Boolean = BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED &&
+    override val opensGoogleProvider: Boolean =
+        BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED &&
+        BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED &&
         BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED &&
         BuildConfig.APPLICATION_ID == "app.serea.android.privatebeta" &&
         BuildConfig.BUILD_TYPE == "privateBeta"

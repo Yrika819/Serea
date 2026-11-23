@@ -1,11 +1,46 @@
 # Serea Personal Beta — 2026年11〜12月 統合ロードマップ
 
-> **状態:** Owner向け提案・実装ガイド。2026-11-12の記録は履歴として保持し、現在状態は下記の2026-11-13同期欄を参照。目標日は保証ではない。
+> **状態:** Owner向け提案・実装ガイド。2026-11-12の記録は履歴として保持し、現在状態は下記の2026-11-15最新同期欄を参照。目標日は保証ではない。
 > **対象:** [Yrika819/Serea](https://github.com/Yrika819/Serea) / Android Personal Beta / 2026-12-31 GO/NO-GO
 > **根拠:** [既存G10–G15計画](../g9/g10-execution-plan.md)、[Beta機能スコープ](../g9/beta-scope.md)、[Owner decision ledger](../plans/2026-10-26-personal-beta-owner-decision-ledger.md)。
 > **ガバナンス:** このロードマップ自体は、Merge、実OAuth、Google Cloud変更、実AI API使用、Owner署名、配布、実機操作の許可ではない。各ゲートでOwnerの明示承認を得ること。
 
-## 0.1 現在状態への同期 — 2026-11-13
+## 0.2 最新同期 — 2026-11-15 JST
+
+この節は11月13日以前のスナップショットに優先する。日程は目標であり、操作承認ではない。
+
+| 項目 | 現在の状態 |
+|---|---|
+| canonical main | HEAD `317c601760ab7148afd979ee9ef092838d76a072`、Tree `2017e9b15c09724459afe3f59c4740bb4a6c04fe`（確認時点） |
+| main CI | 同HEADの39 Check Run：38 SUCCESS、1 SKIPPED（Android Documentation）、失敗0。Required 4/4 SUCCESS |
+| H4-A | [#234](https://github.com/Yrika819/Serea/pull/234) MERGED。Primary-only境界を統合。旧[#232](https://github.com/Yrika819/Serea/pull/232)はOPEN/Ready、未Merge。操作しない |
+| ロードマップ・Agent Guide | [#233](https://github.com/Yrika819/Serea/pull/233) MERGED。ルートAGENTS.mdと本書がmainにある |
+| H4-B | [#236](https://github.com/Yrika819/Serea/pull/236) MERGED。401をlease世代に結び付けて失効、403の分類、429/明示rate-limit 403の上限付きretryとcancelを実装 |
+| H4-C2 | [#240](https://github.com/Yrika819/Serea/pull/240) MERGED。Private ID `app.serea.android.privatebeta`、Public Beta ID `app.serea.android.beta`を維持。独立署名設定・証明書fingerprint・versionCode系列を分離。旧[#239](https://github.com/Yrika819/Serea/pull/239)はOPEN/Draft、操作しない |
+| H4-D1-R | [#242](https://github.com/Yrika819/Serea/pull/242) MERGED。Private OAuthのexact scope・over-grant拒否、明示的なaccount-bound revoke、ローカル切断との分離、認証関連のredactionを統合。実接続ではなくFake/Synthetic証跡 |
+| H4-D2 / Release readiness | 署名・復旧・versionCode管理のローカル限定検証を継続。改訂後のDisposable動的証跡及び正式署名・運用の受入れは未完了として扱う。ローカル作業ツリーの状態は公開mainと区別する |
+| 実Google / 実AI / Gmail / 端末 | 実Google OAuth、実Primary Calendar、本人向け実AI、Gmail、正式署名・配布・実機受入れの完了は確認できていない。Fake/Synthetic成功を代用しない |
+| 製品判定 | **Personal Beta NO-GO**（暫定）。最終GOはOwner判断 |
+
+### 次のクリティカルパス（提案）
+
+1. 公開mainの検証済み契約を維持し、ローカルでDisposable署名・復旧およびAndroid Focused Testの動的検証を完了する。正式署名と使い捨て試験を区別し、秘密情報・ローカル運用資料を公開しない。
+2. Ownerが独立したPublic/Private署名・versionCodeの単調増加・バックアップ復旧時のrollback対策を決定する。正式な鍵・台帳・配布に対する新しい操作権限を推定しない。
+3. 正式なPrivate Application IDと証明書を照合してGoogle Cloudの設定準備へ進む。初期External/Testingの採否・設定実行・実OAuth・実HTTP・実機は別々にOwner承認を得る。
+4. 実Primary Calendarのread-only受入れと実AI採用判断を並行準備する。Gmail restricted scope、Googleデータの外部送信、PC高権限操作は既定OFF。
+5. 12/10を機能範囲確定の目標、12/17をSecurity Review、12/24をRC、12/31をGO/NO-GOの目標とする。未達でも安全ゲートを省略しない。
+
+### Owner判断の更新
+
+- OD-H4-01: H4-Aは#234経由で統合済み。#232の状態変更やMergeは別判断。
+- OD-H4-02: Private Application ID分離は#240で実装・統合済み。実際の正式署名証明書・初回versionCode・配布運用は別ゲート。
+- OD-H4-09: H4-Bは#236経由で統合済み。H4-D1-Rは#242で統合済み。
+- OD-H4-03〜08の実サービス・実AI・署名/配布/端末・最終GOに関する未確認の承認を自動的に成立させない。
+- 年末の機能必須条件について、実AI・実Google Calendar・実Gmailを必須とした従来の完成定義と、下記のP1/限定Preview案の関係はOwnerの最終判断を要する。機能欠落を理由にPersonal Betaの完成条件を暗黙に引き下げず、未達は限定Preview/Demo候補またはNO-GOとして明示する。
+
+過去の表にある日付・SHA・PR状態は履歴。実行前にGitHubおよび許可された作業環境で最新状態を確認する。
+
+## 0.1 過去の同期記録 — 2026-11-13（履歴）
 
 | 項目 | 現在状態・証拠 |
 |---|---|
@@ -42,7 +77,7 @@
 
 最終表示は3区分: **Personal Beta GO**（承認済み機能を実動作確認）、**Demo Beta GO**（P0は満たすが未承認の実AI/GoogleをOFFのままDemo明示）、**NO-GO**（P0/署名/実機/セキュリティ条件不成立）。いずれもOwnerが判定する。
 
-## 2. 工程・暫定日程
+## 2. 工程・暫定日程（11/13時点の計画。最新の進捗は0.2を参照）
 
 | 期間（JST） | フェーズ | 完了の根拠 / 停止条件 | Owner承認 |
 |---|---|---|---|
@@ -64,7 +99,7 @@
 
 ### Google/Calendar
 
-1. PR #232のPrimary-only防御を統合後mainに保持。Transport直呼びを含め、非Primary Calendar IDとCalendarListは認可照会・Token取得・HTTPより前に拒否。Generic Demoは維持。
+1. PR #234経由で統合したPrimary-only防御をmainに保持。Transport直呼びを含め、非Primary Calendar IDとCalendarListは認可照会・Token取得・HTTPより前に拒否。Generic Demoは維持。
 2. 現行Private Google Calendar PreviewはFakeのまま。実Googleへの経路開通は**別PR・別Owner承認**。
 3. 401は現在のSessionを失効させ再認可へ（無限再試行禁止）。403は権限不足/ポリシー/レート制限をレスポンスに応じ区別、429は上限付きbackoff。認可に失敗した応答を新しいSessionへ反映しない。
 4. アプリ内切断とPlay Servicesの`revokeAccess`は別操作。Provider側のGrant取消は他のGoogle機能に影響し得るため警告と明示操作が必要。
@@ -86,7 +121,7 @@
 - 独立レビューで未解決Critical/Highを残したままMerge/GOにしない。正式GitHub APPROVEDレビューとは別に管理。
 - PRは原則Draftで作成。Draft解除・通常Merge・実OAuth・AI活性化・Google Cloud変更・署名・APK配布・Pixel実機操作はそれぞれOwnerの明示承認を要求。Force Push/保護回避禁止。
 
-## 5. Owner Decision Register（2026-11-13同期）
+## 5. Owner Decision Register（2026-11-13時点の履歴。最新の更新は0.2を参照）
 
 以下は確認できた履歴と今回の明示指示を反映する。記録がない判断を承認済みと推定しない。
 

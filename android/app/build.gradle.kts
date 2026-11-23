@@ -35,6 +35,7 @@ val privateBetaUnitTestFilterArgs = setOf(
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest",
     "app.serea.android.googleauth.PrivateBuildOAuthGateTest.httpGateIsPrivateOnlyAndIndependentFromOAuthGate",
     "app.serea.android.googleauth.PrivateGoogleConsentResultTest",
+    "app.serea.android.googleauth.PrivateGoogleAuthorizationStatusTest",
     "app.serea.android.googleauth.PrivateGoogleGatewayOperationsTest",
 )
 val requestedTaskNames = gradle.startParameter.taskNames.filterNot { it in privateBetaUnitTestFilterArgs }

@@ -8,12 +8,20 @@ import org.junit.Test
 
 class PrivateBuildOAuthGateTest {
     @Test fun httpGateIsPrivateOnlyAndIndependentFromOAuthGate() {
-        assertFalse(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED)
-        assertEquals("privateBeta", BuildConfig.BUILD_TYPE)
-        assertEquals("app.serea.android.privatebeta", BuildConfig.APPLICATION_ID)
+        assertEquals(
+            System.getenv("SEREA_OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED") == "true",
+            BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED,
+        )
         assertEquals(
             System.getenv("SEREA_PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED") == "true",
             BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
+        )
+        assertEquals("privateBeta", BuildConfig.BUILD_TYPE)
+        assertEquals("app.serea.android.privatebeta", BuildConfig.APPLICATION_ID)
+        assertEquals(
+            BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED &&
+                BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED,
+            PrivateGoogleCalendarComposition().opensGoogleProvider,
         )
         assertEquals(BuildConfig.BUILD_TYPE == "privateBeta", BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED)
         assertEquals(BuildConfig.OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED, ownerPrivateGoogleOAuthEnabled(true))
@@ -38,20 +46,27 @@ class PrivateBuildOAuthGateTest {
             }
         }
 
-        val gateway = Gateway()
-        PrivateGoogleCalendarComposition().use { composition ->
-            if (BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED) {
-                val failure = runCatching { composition.openAuthorizedPrimary(gateway) }.exceptionOrNull()
-                assertTrue(failure is IllegalStateException)
-                assertTrue(failure!!.message!!.contains("independent Private OAuth gate"))
-            } else {
-                assertEquals(
-                    app.serea.android.calendar.CalendarProviderKind.FAKE,
-                    composition.openAuthorizedPrimary(gateway).kind,
+        listOf(false, true).forEach { httpEnabled ->
+            val gateway = Gateway()
+            val selection = runCatching {
+                selectPrivateCalendarProvider(
+                    applicationId = BuildConfig.APPLICATION_ID,
+                    buildType = BuildConfig.BUILD_TYPE,
+                    privateUiEnabled = BuildConfig.PRIVATE_GOOGLE_AUTH_UI_ENABLED,
+                    httpEnabled = httpEnabled,
+                    oauthEnabled = false,
+                    gateway = gateway,
                 )
             }
+            if (httpEnabled) {
+                val failure = selection.exceptionOrNull()
+                assertTrue(failure is IllegalStateException)
+                assertTrue(requireNotNull(failure).message!!.contains("independent Private OAuth gate"))
+            } else {
+                assertEquals(PrivateCalendarProviderDecision.Fake, selection.getOrThrow())
+            }
+            assertEquals("OAuth is disabled; no authorization status may be queried", 0, gateway.statusCalls)
+            assertEquals("OAuth is disabled; no token may be acquired", 0, gateway.tokenCalls)
         }
-        assertEquals(0, gateway.statusCalls)
-        assertEquals(0, gateway.tokenCalls)
     }
 }

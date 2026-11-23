@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.serea.android.BuildConfig
+import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarProviderSession
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,8 +75,8 @@ internal data class PendingGoogleAccountSelection(val requestId: Long, val gener
 
 /**
  * Private-variant-only authorization UI state. Public variants never construct a real gateway;
- * the normal Private Beta configuration also stays Mock-only unless its explicit local build flag
- * is enabled. Product provider composition stays Fake-only, independently of OAuth consent.
+ * OAuth and Live Calendar access require their separate explicit Private Beta build gates. Provider
+ * eligibility is configuration only and does not imply authorization, a session, or a Calendar read.
  */
 internal class PrivateGoogleAuthorizationViewModel(
     context: Context?,
@@ -104,7 +105,11 @@ internal class PrivateGoogleAuthorizationViewModel(
     private val appContext = context?.applicationContext
     private val calendarComposition = calendarCompositionFactoryForTests?.invoke()
         ?: PrivateGoogleCalendarComposition()
+    /** Live-provider build eligibility only; it does not imply authorization or network activity. */
     val opensGoogleProvider: Boolean get() = calendarComposition.opensGoogleProvider
+    /** Whether the configured gates allow selecting either the Fake or the eligible Live provider. */
+    val calendarProviderSelectionAllowed: Boolean
+        get() = !BuildConfig.PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED || calendarComposition.opensGoogleProvider
     private var fakeGateway = fakeGatewayFactory()
     private var realGateway: PrivateGoogleRealAuthorizationGateway? = null
     private val consentIdentityGate = PrivateGoogleConsentIdentityGate()
@@ -121,10 +126,14 @@ internal class PrivateGoogleAuthorizationViewModel(
             realOAuthEnabled = realOAuthEnabled,
             message = if (!enabledInThisVariant) {
                 "Owner専用Google UIはこのBuild Variantでは無効です。"
-            } else if (realOAuthEnabled) {
-                "Ownerの明示操作時だけ認証を開始します。Google通信ProviderはMockのままです。"
+            } else if (!calendarProviderSelectionAllowed) {
+                "OAuth gateが無効のままCalendar HTTP gateが有効です。安全のためCalendar Provider選択を遮断します。認可・Token・予定通信は行いません。"
+            } else if (!realOAuthEnabled) {
+                "Mock専用です。このBuildでは実Googleアカウント、OAuth、Token、通信は使いません。"
+            } else if (calendarComposition.opensGoogleProvider) {
+                "Google OAuth認可はOwnerの明示操作時のみ開始します。予定データはまだ未取得です。認可だけではデータを取得せず、Calendarを明示的に開いたときPrimary予定を読み取り専用で取得します。"
             } else {
-                "Mock専用です。実Googleアカウント、OAuth、Token、通信は使いません。"
+                "Google OAuth認可はOwnerの明示操作時のみ開始します。このBuildではLive Calendar Providerは利用できず、Calendar表示はMock/Demoです。予定データは未取得です。"
             },
         ),
     )
@@ -466,15 +475,23 @@ internal class PrivateGoogleAuthorizationViewModel(
         )
     }
 
-    /** Opens the authorized primary provider; product HTTP remains disabled. */
+    /** Selects the authorized primary provider on explicit user action; opening it does not itself read events. */
     fun openPrimaryCalendar(): CalendarProviderSession? {
         if (mutableState.value.status != PrivateGoogleAuthStatus.AUTHORIZED) return null
         val gateway: GoogleAuthorizationGateway = calendarGatewayForTests
             ?: if (realOAuthEnabled) realGateway ?: return null else fakeGateway
         closeCalendarSession()
         return try {
-            calendarComposition.openAuthorizedPrimary(gateway).also {
-                mutableCalendarSession.value = it
+            calendarComposition.openAuthorizedPrimary(gateway).also { session ->
+                mutableCalendarSession.value = session
+                mutableState.value = mutableState.value.copy(
+                    message = when (session.kind) {
+                        CalendarProviderKind.GOOGLE_READ_ONLY ->
+                            "Live Google Calendar Providerを選択しました。最新の予定取得状態と結果はCalendar画面で確認できます。"
+                        CalendarProviderKind.FAKE ->
+                            "Mock/Demo Providerを選択しました。表示は架空データで、Google実データは取得しません。結果はCalendar画面で確認できます。"
+                    },
+                )
             }
         } catch (_: Exception) {
             setFailure("Primary Calendarを安全に開けませんでした。認可状態を再確認してください。", generation)
@@ -493,7 +510,14 @@ internal class PrivateGoogleAuthorizationViewModel(
             pendingMockConsent = null,
             revokeConfirmationPending = false,
             status = PrivateGoogleAuthStatus.REVOKED,
-            message = "Calendarはアプリ内で切断されました。Google共有Grantは変更していません。ProviderはFakeです。",
+            message = when {
+                !calendarProviderSelectionAllowed ->
+                    "Calendarはアプリ内で切断されました。OAuth/HTTP gate不整合のためProvider選択は遮断中です。Google共有Grantは変更していません。"
+                calendarComposition.opensGoogleProvider ->
+                    "Calendarはアプリ内で切断されました。Google共有Grantは変更していません。Live ProviderはBuild設定上利用可能ですが、接続は解除されました。再利用には明示的な再認可が必要です。"
+                else ->
+                    "Calendarはアプリ内で切断されました。Google共有Grantは変更していません。現在の表示ProviderはFake/Demoです。"
+            },
         )
     }
 
@@ -590,10 +614,14 @@ internal class PrivateGoogleAuthorizationViewModel(
             pendingRealConsentGeneration = null,
             pendingRealConsentSessionId = null,
             status = PrivateGoogleAuthStatus.AUTHORIZED,
-            message = if (realOAuthEnabled) {
-                "OAuth認可状態を確認しました。Google HTTPは無効で、Calendar表示はMock Providerです。"
+            message = if (!calendarProviderSelectionAllowed) {
+                "Mock認可を確認しましたが、OAuth gateが無効のままCalendar HTTP gateが有効なため、Provider選択を遮断しています。Google認可・Token・予定通信は行いません。"
+            } else if (realOAuthEnabled && calendarComposition.opensGoogleProvider) {
+                "Google OAuth認可を確認しました。認可操作自体では予定データを取得しません。認可完了時点では予定データは未取得です。Live Primary Calendarの読み取りは、Calendarを明示的に開いたときに開始します。"
+            } else if (realOAuthEnabled) {
+                "Google OAuth認可を確認しました。認可操作自体では予定データを取得しません。このBuildではLive Calendar Providerは利用できず、Calendar表示はMock/Demoです。認可完了時点で予定データは未取得です。"
             } else {
-                "Mock認可に成功しました。Calendar表示は架空データです。"
+                "Mock認可に成功しました。Calendar表示は架空データです。実データは取得しません。"
             },
         )
     }

@@ -88,7 +88,9 @@ internal fun PrivateGoogleAuthorizationPanel(
                 .testTag("private_google_auth_message"),
         )
         Text(
-            "状態: ${state.status.label()} · ${calendarConnectionLabel(state, calendarSession, viewModel.opensGoogleProvider)}",
+            "状態: ${state.status.label()} · ${calendarConnectionLabel(
+                state, calendarSession, viewModel.opensGoogleProvider, viewModel.calendarProviderSelectionAllowed,
+            )}",
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                 .testTag("private_google_auth_status"),
         )
@@ -126,11 +128,18 @@ internal fun PrivateGoogleAuthorizationPanel(
         ) { Text("Calendar読み取り認可を確認") }
 
         if (state.status == PrivateGoogleAuthStatus.AUTHORIZED && onOpenCalendar != null) {
-            OutlinedButton(
-                onClick = { viewModel.openPrimaryCalendar()?.let(onOpenCalendar) },
-                modifier = Modifier.testTag("private_google_open_calendar"),
-            ) {
-                Text(if (viewModel.opensGoogleProvider) "Google CalendarのPrimary予定を表示" else "架空のPrimary予定を表示")
+            if (viewModel.calendarProviderSelectionAllowed) {
+                OutlinedButton(
+                    onClick = { viewModel.openPrimaryCalendar()?.let(onOpenCalendar) },
+                    modifier = Modifier.testTag("private_google_open_calendar"),
+                ) {
+                    Text(if (viewModel.opensGoogleProvider) "Google CalendarのPrimary予定を表示" else "架空のPrimary予定を表示")
+                }
+            } else {
+                Text(
+                    "OAuth/HTTP gateの不整合によりCalendar Provider選択は遮断されています。",
+                    modifier = Modifier.testTag("private_google_calendar_provider_blocked"),
+                )
             }
         }
         if (state.hasSelectedAccount) {
@@ -213,7 +222,10 @@ private fun calendarConnectionLabel(
     state: PrivateGoogleAuthorizationUiState,
     session: app.serea.android.calendar.CalendarProviderSession?,
     opensGoogleProvider: Boolean,
+    providerSelectionAllowed: Boolean,
 ): String = when {
+    !providerSelectionAllowed && state.status == PrivateGoogleAuthStatus.AUTHORIZED ->
+        "OAuth/HTTP gate不整合 · Calendar Provider選択遮断 · Google通信なし"
     session?.kind == app.serea.android.calendar.CalendarProviderKind.GOOGLE_READ_ONLY -> "Google Calendar Provider選択済み · 予定取得結果は通常Calendarで確認"
     session?.kind == app.serea.android.calendar.CalendarProviderKind.FAKE &&
         state.status == PrivateGoogleAuthStatus.AUTHORIZED && state.realOAuthEnabled &&

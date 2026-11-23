@@ -261,15 +261,13 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew --no-daemon -PsereaBetaVersionCode=2 :app:testPrivateBetaUnitTest \
-            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest.httpGateIsPrivateOnlyAndIndependentFromOAuthGate' \
-            --tests 'app.serea.android.googleauth.PrivateGoogleAuthorizationStatusTest'
+            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest'
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
           results = pathlib.Path("app/build/test-results/testPrivateBetaUnitTest")
           expected = {
-              "PrivateBuildOAuthGateTest": 1,
-              "PrivateGoogleAuthorizationStatusTest": 3,
+              "PrivateBuildOAuthGateTest": 5,
           }
           actual = {}
           for path in results.glob("TEST-*.xml"):
@@ -295,8 +293,7 @@ jobs:
           ./gradlew --no-daemon -PsereaBetaVersionCode=2 :app:testBetaUnitTest \
             --tests 'app.serea.android.googleauth.BetaCalendarHttpGateTest'
           ./gradlew --no-daemon -PsereaPrivateBetaVersionCode=2 :app:testPrivateBetaUnitTest \
-            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest' \
-            --tests 'app.serea.android.googleauth.PrivateGoogleAuthorizationStatusTest'
+            --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest'
           python3 - <<'PY'
           import pathlib
           import xml.etree.ElementTree as ET
@@ -304,8 +301,7 @@ jobs:
           expected = {
               "testBetaUnitTest": {"BetaCalendarHttpGateTest": 1},
               "testPrivateBetaUnitTest": {
-                  "PrivateBuildOAuthGateTest": 2,
-                  "PrivateGoogleAuthorizationStatusTest": 3,
+                  "PrivateBuildOAuthGateTest": 5,
               },
           }
           for task, class_counts in expected.items():
@@ -331,7 +327,6 @@ jobs:
             export SEREA_PRIVATE_GOOGLE_CALENDAR_HTTP_ENABLED="$http_enabled"
             ./gradlew --no-daemon -PsereaPrivateBetaVersionCode=2 :app:testPrivateBetaUnitTest \
               --tests 'app.serea.android.googleauth.PrivateBuildOAuthGateTest' \
-              --tests 'app.serea.android.googleauth.PrivateGoogleAuthorizationStatusTest' \
               --tests 'app.serea.android.googleauth.PrivateGoogleConsentResultTest'
             python3 - "$http_enabled" <<'PY'
           import pathlib
@@ -339,8 +334,7 @@ jobs:
           import xml.etree.ElementTree as ET
           results = pathlib.Path("app/build/test-results/testPrivateBetaUnitTest")
           expected = {
-              "PrivateBuildOAuthGateTest": 2,
-              "PrivateGoogleAuthorizationStatusTest": 3,
+              "PrivateBuildOAuthGateTest": 5,
               "PrivateGoogleConsentResultTest": 4,
           }
           actual = {}

@@ -956,6 +956,7 @@ name = "serea-android-bridge"
 version = "0.1.0"
 dependencies = [
  "getrandom",
+ "rusqlite",
  "serea-core",
  "serea-event-bus",
  "serea-protocol",

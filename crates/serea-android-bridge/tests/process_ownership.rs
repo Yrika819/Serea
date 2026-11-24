@@ -17,7 +17,14 @@ fn ownership_child() {
     let handle = initialize(path.clone()).unwrap();
     let _wal_connection = if std::env::var_os("SEREA_TEST_WAL").is_some() {
         let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE synthetic_recovery (value TEXT NOT NULL); INSERT INTO synthetic_recovery VALUES ('committed-before-kill');").unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE synthetic_recovery (value TEXT NOT NULL);").unwrap();
+        let (busy, frames, checkpointed): (i64, i64, i64) = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!((busy, frames, checkpointed), (0, 0, 0));
+        conn.execute_batch("INSERT INTO synthetic_recovery VALUES ('committed-before-kill'); BEGIN; INSERT INTO synthetic_recovery VALUES ('uncommitted-before-kill');").unwrap();
         Some(conn)
     } else {
         None
@@ -173,6 +180,13 @@ fn committed_wal_survives_kill_and_core_recovery() {
         .query_row("SELECT value FROM synthetic_recovery", [], |r| r.get(0))
         .unwrap();
     assert_eq!(value, "committed-before-kill");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM synthetic_recovery", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "uncommitted transaction must not survive the kill"
+    );
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .unwrap();

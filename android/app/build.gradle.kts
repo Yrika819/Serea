@@ -218,6 +218,7 @@ android {
                 jniLibs.srcDir(layout.buildDirectory.dir("generated/embeddedCore/jniLibs"))
             }
             getByName("androidTest") { java.srcDir("src/embeddedCoreAndroidTest/java") }
+            getByName("testIsolated") { java.srcDir("src/embeddedCoreUnitTest/java") }
         }
         if (isolatedNativeRuntimeOptIn) {
             // JNI ownership smoke tests are compiled only for the explicit native

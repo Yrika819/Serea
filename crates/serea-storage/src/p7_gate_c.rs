@@ -1193,7 +1193,7 @@ impl LedgerFileGuard {
 
     /// Reserve logical capacity for an exact encoded record set while this
     /// guard retains the namespace's cross-process writer lock.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "p7-integration-dev"))]
     pub(crate) fn ensure_append_capacity(
         &self,
         records: &[LedgerFrame],

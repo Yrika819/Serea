@@ -18,7 +18,11 @@ pub struct Migration {
 
 /// Ordered migration source catalog. schema_migrations is the only version authority.
 pub struct Migrations;
-static EMBEDDED: [Migration; 8 + cfg!(all(feature = "p7-experimental", test)) as usize] = [
+static EMBEDDED: [Migration;
+    8 + cfg!(all(
+        feature = "p7-experimental",
+        any(test, feature = "p7-integration-dev")
+    )) as usize] = [
     Migration {
         version: 1,
         name: "0001_initial",
@@ -59,7 +63,7 @@ static EMBEDDED: [Migration; 8 + cfg!(all(feature = "p7-experimental", test)) as
         name: "0008_approval_lifecycle_routing",
         sql: include_str!("../migrations/0008_approval_lifecycle_routing.sql"),
     },
-    #[cfg(all(feature = "p7-experimental", test))]
+    #[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
     Migration {
         version: 9,
         name: "test-fixture-p7-experimental-memory-v9",
@@ -69,7 +73,10 @@ static EMBEDDED: [Migration; 8 + cfg!(all(feature = "p7-experimental", test)) as
 
 impl Migrations {
     /// Latest version understood by this binary.
-    pub const LATEST: u32 = if cfg!(all(feature = "p7-experimental", test)) {
+    pub const LATEST: u32 = if cfg!(all(
+        feature = "p7-experimental",
+        any(test, feature = "p7-integration-dev")
+    )) {
         9
     } else {
         8

@@ -172,12 +172,28 @@ pub struct P7ExperimentalMemory {
 
 // Development-only coordinators are nested here so they may exercise the
 // fixture internally without making P7ExperimentalMemory part of the crate API.
-#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[cfg(all(
+    feature = "p7-experimental",
+    feature = "p7-gate-c",
+    any(test, feature = "p7-integration-dev")
+))]
 #[path = "p7_conversation_extraction_tests.rs"]
+#[allow(dead_code, unused_imports)]
 mod p7_conversation_extraction;
-#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[cfg(all(
+    feature = "p7-experimental",
+    feature = "p7-gate-c",
+    any(test, feature = "p7-integration-dev")
+))]
+pub use p7_conversation_extraction::ExtractionError as P7DevExtractionError;
+#[cfg(all(
+    feature = "p7-experimental",
+    feature = "p7-gate-c",
+    any(test, feature = "p7-integration-dev")
+))]
 #[path = "p7_integrated_recovery_tests.rs"]
-mod p7_integrated_recovery_tests;
+#[allow(dead_code, unused_imports)]
+pub mod p7_integrated_recovery;
 #[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
 #[path = "p7_memory_retrieval_tests.rs"]
 mod p7_memory_retrieval_tests;
@@ -381,6 +397,8 @@ impl P7ExperimentalMemory {
 
     /// Retrieve owner-local lexical candidates, preserving source attribution and applying a
     /// deterministic UTF-8 byte budget. FTS5 remains lexical and never implies semantic match.
+    // These independent caps mirror the retrieval contract directly.
+    #[allow(clippy::too_many_arguments)]
     pub fn retrieve_context(
         &self,
         store: &Store,
@@ -734,7 +752,7 @@ fn record_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
         expires_at_ms: r.get(4)?,
     })
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "p7-integration-dev"))]
 impl P7ExperimentalMemory {
     pub(crate) fn fake(owner: String, nonce: u64) -> Self {
         Self {

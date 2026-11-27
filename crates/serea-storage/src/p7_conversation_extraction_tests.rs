@@ -122,7 +122,7 @@ pub(super) struct MemoryCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ExtractionError {
+pub enum ExtractionError {
     InvalidRequestId,
     ConversationNotComplete,
     MissingConversationId,

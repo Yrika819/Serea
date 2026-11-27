@@ -163,7 +163,7 @@ impl Store {
 
     /// Executes an experimental P7 query while SQLite itself rejects writes.
     /// The flag is restored on ordinary errors and Rust unwinding.
-    #[cfg(all(feature = "p7-experimental", test))]
+    #[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
     pub(crate) fn p7_read_only<T>(
         &self,
         body: impl FnOnce(&mut Connection) -> Result<T, StoreError>,

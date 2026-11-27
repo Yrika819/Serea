@@ -37,7 +37,7 @@ internal interface CredentialReader { fun readForRequest(): String }
 data class ProviderUsage(val inputTokens: Int?, val outputTokens: Int?)
 data class CloudReply(val text: String, val usage: ProviderUsage?)
 
-enum class ProviderFailureKind { DISABLED, CREDENTIAL_MISSING, CREDENTIAL_INVALID, AUTHENTICATION, FORBIDDEN, MODEL_UNAVAILABLE, RATE_LIMITED, SERVER, NETWORK, TIMEOUT, INVALID_RESPONSE, LIMIT_EXCEEDED }
+enum class ProviderFailureKind { DISABLED, CREDENTIAL_MISSING, CREDENTIAL_INVALID, AUTHENTICATION, FORBIDDEN, MODEL_UNAVAILABLE, USAGE_CREDITS_EXHAUSTED, RATE_LIMITED, SERVER, NETWORK, TIMEOUT, INVALID_RESPONSE, LIMIT_EXCEEDED }
 open class ProviderFailure(val kind: ProviderFailureKind, val mayHaveDispatched: Boolean = true) : Exception(
     when (kind) {
         ProviderFailureKind.DISABLED -> "Cloud mode is disabled."
@@ -46,6 +46,7 @@ open class ProviderFailure(val kind: ProviderFailureKind, val mayHaveDispatched:
         ProviderFailureKind.AUTHENTICATION -> "The provider rejected the API key. Review or replace it in Settings."
         ProviderFailureKind.FORBIDDEN -> "The provider account is not permitted to use this model."
         ProviderFailureKind.MODEL_UNAVAILABLE -> "The selected cloud model is unavailable."
+        ProviderFailureKind.USAGE_CREDITS_EXHAUSTED -> "Free usage is unavailable or exhausted. No paid fallback was attempted."
         ProviderFailureKind.RATE_LIMITED -> "The provider rate limit was reached. Wait before sending again."
         ProviderFailureKind.SERVER -> "The provider is temporarily unavailable. No automatic retry was made."
         ProviderFailureKind.NETWORK -> "The network request could not be completed."
@@ -161,7 +162,8 @@ class OllamaCloudAdapter private constructor(
                 throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
             }
         }
-        if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > capabilities.maxInputBytes) {
+        if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > capabilities.maxInputBytes ||
+            payload.messages.sumOf { Math.multiplyExact(it.second.length.toLong(), 4L) } > OllamaCloudRequestLimits.INPUT_TOKENS) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
         if (outputTokenLimit !in 1..capabilities.maxOutputTokens) {
@@ -234,6 +236,7 @@ class OllamaCloudAdapter private constructor(
         response.use {
             if (!response.isSuccessful) throw ProviderFailure(when (response.code) {
                 401 -> ProviderFailureKind.AUTHENTICATION
+                402 -> ProviderFailureKind.USAGE_CREDITS_EXHAUSTED
                 403 -> ProviderFailureKind.FORBIDDEN
                 404 -> ProviderFailureKind.MODEL_UNAVAILABLE
                 429 -> ProviderFailureKind.RATE_LIMITED
@@ -289,7 +292,7 @@ class OllamaCloudAdapter private constructor(
         private const val MAX_INPUT_BYTES = 16 * 1024
         private const val MAX_RESPONSE_BYTES = 1024 * 1024
         private const val MAX_LINE_BYTES = 64 * 1024
-        private const val MAX_OUTPUT_TOKENS = 512
+        private const val MAX_OUTPUT_TOKENS = OllamaCloudRequestLimits.OUTPUT_TOKENS
         // Retained solely for the old fixed public contract probe. This is not a Catalog entry or recommendation.
         private val LEGACY_PROBE_MODEL_IDS = setOf("gemma4:31b")
         private fun validProviderModelId(value: String) = value.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")) && !value.contains("://")
@@ -339,11 +342,75 @@ class OllamaCloudAdapter private constructor(
     }
 }
 
-/** The only UI-facing cloud composition: all ordinary messages remain UNKNOWN and are denied. */
-class CloudCandidatePort internal constructor(private val adapter: OllamaCloudAdapter) {
-    suspend fun runFixedPublicContractProbe(onDelta: (String) -> Unit = {}): CloudReply =
-        adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta, selectedModelId = null,
-            outputTokenLimit = adapter.capabilities.maxOutputTokens)
+/** A one-shot, synthetic request path for proving the approved Cloud contract. */
+internal class CloudCandidatePort(private val chat: ModelChatPort, private val nowMillis: () -> Long = System::currentTimeMillis) {
+    suspend fun runFixedPublicContractProbe(): ModelChatResponse {
+        val id = java.util.UUID.randomUUID().toString()
+        val now = nowMillis()
+        val prompt = "Reply with exactly: Serea cloud contract probe passed."
+        val request = ModelChatRequest(
+            conversationId = "ollama-contract-probe-$id",
+            message = prompt,
+            sendId = "ollama-contract-probe-send-$id",
+            timeoutMillis = 60_000,
+            classification = DataClassification.PUBLIC,
+            egressContract = EgressContract(
+                conversationId = "ollama-contract-probe-$id",
+                currentMessageId = "ollama-contract-probe-send-$id",
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = OllamaGemma4CloudCatalog.DESTINATION,
+                plannedBody = prompt,
+                context = emptyList(),
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = now,
+                expiresAtMillis = Math.addExact(now, 60_000),
+                selectedModelId = null,
+                target = EgressTarget.CLOUD,
+                plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+            ),
+            selectedModelId = null,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        return kotlinx.coroutines.withContext(CloudProviderRequestContext(OllamaCloudRequestLimits.OUTPUT_TOKENS)) {
+            chat.send(request)
+        }
+    }
+
+    companion object {
+        fun create(
+            credentials: CredentialReader,
+            usage: UsageRepository,
+            testEndpoint: HttpUrl? = null,
+            testClient: OkHttpClient? = null,
+            clock: () -> Long = System::currentTimeMillis,
+        ): CloudCandidatePort {
+            val catalog = OllamaGemma4CloudCatalog.create()
+            val chat = DirectProviderChatComposition.create(
+                credentials = credentials,
+                usage = usage,
+                settings = CloudSettings(enabled = true, modelId = OllamaGemma4CloudCatalog.MODEL_ID),
+                catalog = catalog,
+                routingPolicy = {
+                    ModelRoutingPolicy(
+                        mode = ModelSelectionMode.MANUAL,
+                        manualModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                        maxInputTokens = OllamaCloudRequestLimits.INPUT_TOKENS,
+                        requestedOutputTokens = OllamaCloudRequestLimits.OUTPUT_TOKENS,
+                        allowedProviderIds = setOf(OllamaGemma4CloudCatalog.PROVIDER_ID),
+                    )
+                },
+                testEndpoint = testEndpoint,
+                testClient = testClient,
+                usageAttributionResolver = CatalogUsageAttributionResolver(
+                    catalog, OllamaGemma4CloudCatalog.prices(),
+                    clock = { java.time.Instant.ofEpochMilli(clock()) },
+                ),
+                maxConcurrentRequests = OllamaCloudRequestLimits.CONCURRENT_REQUESTS,
+            )
+            return CloudCandidatePort(chat, clock)
+        }
+    }
 }
 
 /** Ordinary chat path. An exact, fresh gate approval must exist before any credential or socket use. */
@@ -401,7 +468,7 @@ internal class CloudProviderModelChatPort(
             if (failure is ProviderPreDispatchFailure || !failure.mayHaveDispatched) {
                 throw PreDispatchModelChatFailure(failure.message ?: "The local provider request was rejected before dispatch.")
             }
-            throw ModelChatFailure(failure.message ?: "Cloud request failed.")
+            throw ProviderModelChatFailure(failure.kind, failure.message ?: "Cloud request failed.")
         }
     }
 }
@@ -418,6 +485,7 @@ internal object DirectProviderChatComposition {
         testClient: OkHttpClient? = null,
         usageAttributionResolver: UsageAttributionResolver? = null,
         cloudProviderRegistry: CloudProviderRegistry? = null,
+        maxConcurrentRequests: Int? = null,
     ): ModelChatPort {
         val registry: CloudProviderRegistry
         val cloudPort = if (cloudProviderRegistry != null) {
@@ -435,6 +503,7 @@ internal object DirectProviderChatComposition {
         val gated = EgressCheckedModelChatPort(
             UsageControlledModelChatPort(
                 cloudPort, usage,
+                maxConcurrentRequests = maxConcurrentRequests,
                 attributionResolver = usageAttributionResolver ?: CatalogUsageAttributionResolver(catalog),
             ),
             expectedTarget = EgressTarget.CLOUD,

@@ -95,6 +95,61 @@ class LocalModelCatalog(
     private fun validate(entries: List<ModelDescriptor>) { require(entries.map { it.id }.distinct().size == entries.size) }
 }
 
+/** Ollama facts reviewed from official sources on 2026-11-27; account entitlement stays owner-confirmed. */
+internal object OllamaGemma4CloudCatalog {
+    const val MODEL_ID = "gemma4"
+    const val PROVIDER_ID = "ollama"
+    const val DESTINATION = "https://ollama.com/api/chat"
+    const val REVIEWED_AT = "2026-11-27T00:00:00Z"
+    const val PRICE_EXPIRES_AT = "2026-12-04T00:00:00Z"
+    const val PRICE_SOURCE = "https://ollama.com/pricing"
+    const val MODEL_SOURCE = "https://ollama.com/library/gemma4:cloud"
+
+    fun create(clock: () -> Instant = Instant::now) = LocalModelCatalog(
+        entries = listOf(
+            ModelDescriptor(
+                id = MODEL_ID,
+                providerId = PROVIDER_ID,
+                displayName = "Gemma 4 Cloud",
+                contextWindow = Knowledge.Known(256_000),
+                // This is Serea's approved per-request ceiling, not a provider-published maximum.
+                maxOutput = Knowledge.Known(OllamaCloudRequestLimits.MAX_OUTPUT_TOKENS),
+                capabilities = ModelCapabilities(input = setOf("text/plain")),
+                pricing = ModelPricing(
+                    inputPerMillion = Knowledge.Known(0.14),
+                    outputPerMillion = Knowledge.Known(0.40),
+                    currencyCode = Knowledge.Known("USD"),
+                ),
+                availability = ModelAvailability.AVAILABLE,
+                authorized = true,
+                lastVerifiedAt = REVIEWED_AT,
+                source = "$MODEL_SOURCE; API model ID and context window checked $REVIEWED_AT",
+                contractLimits = Knowledge.Known(
+                    ModelContractLimits(monthlyRequests = OllamaCloudRequestLimits.MONTHLY_REQUESTS),
+                ),
+                verificationStatus = ModelVerificationStatus.VERIFIED,
+                expiresAt = PRICE_EXPIRES_AT,
+            ),
+        ),
+        clock = clock,
+    )
+
+    fun prices(): VerifiedModelPriceCatalog = VerifiedModelPriceCatalog { modelId ->
+        if (modelId != MODEL_ID) null else VerifiedModelPriceSnapshot(
+            modelId = MODEL_ID,
+            price = VerifiedPriceSnapshot(
+                inputPricePerMillion = "0.14",
+                outputPricePerMillion = "0.40",
+                currency = "USD",
+                source = PRICE_SOURCE,
+                verifiedAt = REVIEWED_AT,
+                revision = "ollama-pricing-2026-11-27",
+            ),
+            expiresAt = PRICE_EXPIRES_AT,
+        )
+    }
+}
+
 /** Explicitly fictional catalog for local tests. It cannot be mistaken for verified production data. */
 internal class FakeModelCatalog(
     entries: List<ModelDescriptor> = emptyList(),

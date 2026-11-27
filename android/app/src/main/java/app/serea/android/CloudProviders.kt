@@ -5,6 +5,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
+/** Owner-approved client-side ceilings. They do not prove the account will incur no charge. */
+internal object OllamaCloudRequestLimits {
+    const val DAILY_REQUESTS = 20L
+    const val MONTHLY_REQUESTS = 200L
+    const val INPUT_TOKENS = 4_096
+    const val OUTPUT_TOKENS = 1_024
+    const val CONCURRENT_REQUESTS = 1
+    const val DAILY_TOKEN_BUDGET = DAILY_REQUESTS * (INPUT_TOKENS + OUTPUT_TOKENS)
+    const val MONTHLY_TOKEN_BUDGET = MONTHLY_REQUESTS * (INPUT_TOKENS + OUTPUT_TOKENS)
+}
+
 /** Per-send routing data passed outside the frozen common ModelChatRequest contract. */
 internal class CloudProviderRequestContext(val outputTokenLimit: Int) : AbstractCoroutineContextElement(Key) {
     init { require(outputTokenLimit > 0) }

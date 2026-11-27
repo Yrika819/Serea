@@ -5,6 +5,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.EventListener
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,11 +16,17 @@ import okhttp3.Response
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
+import com.google.gson.stream.JsonReader
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.io.StringReader
+import java.math.BigDecimal
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import okio.BufferedSource
 
 /** Cloud mode is deliberately off until the Owner ratifies the data-egress contract. */
 /** The historical model string is not a default; callers must name an explicitly reviewed candidate. */
@@ -41,7 +48,8 @@ open class ProviderFailure(val kind: ProviderFailureKind, val mayHaveDispatched:
         ProviderFailureKind.RATE_LIMITED -> "The provider rate limit was reached. Wait before sending again."
         ProviderFailureKind.SERVER -> "The provider is temporarily unavailable. No automatic retry was made."
         ProviderFailureKind.NETWORK -> "The network request could not be completed."
-        ProviderFailureKind.TIMEOUT -> "The request timed out; its remote outcome is unknown. Retry only after review."
+        ProviderFailureKind.TIMEOUT -> if (mayHaveDispatched) "The request timed out; its remote outcome is unknown. Retry only after review."
+            else "The request timed out before it was sent."
         ProviderFailureKind.INVALID_RESPONSE -> "The provider returned an invalid response."
         ProviderFailureKind.LIMIT_EXCEEDED -> "The request exceeds the local size limit."
     }
@@ -77,11 +85,17 @@ class EgressApprovedPayload private constructor(
 class OllamaCloudAdapter private constructor(
     private val credentials: CredentialReader,
     private val settings: CloudSettings,
-    private val client: OkHttpClient,
+    suppliedClient: OkHttpClient,
     private val endpoint: HttpUrl,
     private val catalog: ModelCatalog,
     private val allowedProviderIds: Set<String>,
 ) {
+    // Injected clients must not silently replay this POST or forward credentials on redirects.
+    private val client = suppliedClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
     internal constructor(credentials: CredentialReader, settings: CloudSettings) : this(
         credentials, settings,
         OkHttpClient.Builder()
@@ -156,14 +170,18 @@ class OllamaCloudAdapter private constructor(
                 .post(Gson().toJson(requestJson).toRequestBody(JSON_MEDIA_TYPE)).build()
         }
         return suspendCancellableCoroutine { continuation ->
-            val call = client.newCall(request)
+            val dispatchPossible = AtomicBoolean(false)
+            val callClient = client.newBuilder().eventListener(object : EventListener() {
+                override fun requestBodyStart(call: Call) { dispatchPossible.set(true) }
+            }).build()
+            val call = callClient.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, error: IOException) {
                     if (!continuation.isActive) return
                     val failure = if (error is InterruptedIOException) {
-                        ProviderFailure(ProviderFailureKind.TIMEOUT)
-                    } else ProviderFailure(ProviderFailureKind.NETWORK)
+                        ProviderFailure(ProviderFailureKind.TIMEOUT, dispatchPossible.get())
+                    } else ProviderFailure(ProviderFailureKind.NETWORK, dispatchPossible.get())
                     continuation.resumeWith(Result.failure(failure))
                 }
 
@@ -211,28 +229,31 @@ class OllamaCloudAdapter private constructor(
             val source = body.source()
             while (!source.exhausted()) {
                 if (!active()) throw CancellationException("Provider request cancelled")
-                val line = try { source.readUtf8LineStrict(MAX_LINE_BYTES.toLong()) }
-                    catch (_: java.io.EOFException) {
-                        // NDJSON producers may omit the final newline. At EOF the bounded
-                        // line reader has already buffered at most MAX_LINE_BYTES + 1 bytes.
-                        if (source.buffer.size > MAX_LINE_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
-                        source.readUtf8()
-                    }
-                val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1
-                total += lineBytes
-                if (total > MAX_RESPONSE_BYTES || lineBytes > MAX_LINE_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+                val nextLine = readBoundedLine(source) ?: break
+                total += nextLine.bytesRead
+                if (total > MAX_RESPONSE_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+                val line = nextLine.text
                 if (line.isBlank()) continue
-                val json = try { JsonParser.parseString(line).asJsonObject } catch (_: Exception) { throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE) }
+                if (completed) throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
+                val json = try {
+                    JsonReader(StringReader(line)).also { it.isLenient = false }.let { reader ->
+                        Gson().getAdapter(JsonObject::class.java).read(reader).also {
+                            if (reader.peek() != com.google.gson.stream.JsonToken.END_DOCUMENT) throw IllegalStateException()
+                        }
+                    }
+                } catch (_: Exception) { throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE) }
                 val delta = try { json.getAsJsonObject("message")?.get("content")?.asString.orEmpty() }
                     catch (_: Exception) { throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE) }
                 answerBytes += delta.toByteArray(Charsets.UTF_8).size
                 if (answerBytes > MAX_RESPONSE_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
                 if (delta.isNotEmpty()) { answer.append(delta); onDelta(delta) }
-                try {
-                    inputTokens = json.get("prompt_eval_count")?.takeUnless { it.isJsonNull }?.asInt?.coerceAtLeast(0) ?: inputTokens
-                    outputTokens = json.get("eval_count")?.takeUnless { it.isJsonNull }?.asInt?.coerceAtLeast(0) ?: outputTokens
-                    if (json.get("done")?.asBoolean == true) { completed = true; break }
-                } catch (_: Exception) { throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE) }
+                inputTokens = providerTokenCount(json.get("prompt_eval_count")) ?: inputTokens
+                outputTokens = providerTokenCount(json.get("eval_count")) ?: outputTokens
+                val done = json.get("done")
+                if (done != null && !done.isJsonNull && (!done.isJsonPrimitive || !done.asJsonPrimitive.isBoolean)) {
+                    throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
+                }
+                if (done?.asBoolean == true) completed = true
             }
             if (!completed) throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
             if (answer.isEmpty()) throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
@@ -249,6 +270,47 @@ class OllamaCloudAdapter private constructor(
         private val LEGACY_PROBE_MODEL_IDS = setOf("gemma4:31b")
         private fun validProviderModelId(value: String) = value.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")) && !value.contains("://")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        private data class ProviderLine(val text: String, val bytesRead: Int)
+
+        /** Read exact wire bytes so CRLF and invalid UTF-8 cannot bypass the response limits. */
+        private fun readBoundedLine(source: BufferedSource): ProviderLine? {
+            val bytes = java.io.ByteArrayOutputStream()
+            var consumed = 0
+            while (true) {
+                if (!source.request(1)) {
+                    if (consumed == 0) return null
+                    break
+                }
+                val next = source.readByte()
+                consumed++
+                if (consumed > MAX_LINE_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+                if (next == '\n'.code.toByte()) break
+                bytes.write(next.toInt() and 0xff)
+            }
+            val lineBytes = bytes.toByteArray()
+            val contentLength = if (lineBytes.lastOrNull() == '\r'.code.toByte()) lineBytes.size - 1 else lineBytes.size
+            val text = try {
+                Charsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(lineBytes, 0, contentLength)).toString()
+            } catch (_: Exception) {
+                throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
+            }
+            return ProviderLine(text, consumed)
+        }
+
+        /** Invalid or out-of-range provider telemetry remains unknown; it never wraps or becomes zero. */
+        private fun providerTokenCount(value: com.google.gson.JsonElement?): Int? {
+            if (value == null || value.isJsonNull || !value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) return null
+            return try {
+                val exact = BigDecimal(value.asString).toBigIntegerExact()
+                if (exact.signum() < 0 || exact > Int.MAX_VALUE.toBigInteger()) null else exact.toInt()
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 }
 

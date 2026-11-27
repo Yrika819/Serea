@@ -10,7 +10,16 @@ internal class CloudProviderRequestContext(val outputTokenLimit: Int) : Abstract
     init { require(outputTokenLimit > 0) }
 
     private val dispatchPossible = AtomicBoolean(false)
-    internal fun markDispatchPossible() { dispatchPossible.set(true) }
+    private val undispatchedConfirmed = AtomicBoolean(false)
+    internal fun markDispatchPossible() {
+        undispatchedConfirmed.set(false)
+        dispatchPossible.set(true)
+    }
+    /** A cancellation may release usage only after an explicit positive no-dispatch proof. */
+    internal fun markDefinitelyUndispatched() {
+        if (!dispatchPossible.get()) undispatchedConfirmed.set(true)
+    }
+    internal fun isDefinitelyUndispatched(): Boolean = undispatchedConfirmed.get() && !dispatchPossible.get()
     internal fun dispatchMayHaveOccurred(): Boolean = dispatchPossible.get()
 
     companion object Key : CoroutineContext.Key<CloudProviderRequestContext>

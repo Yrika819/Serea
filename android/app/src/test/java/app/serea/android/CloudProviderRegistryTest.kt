@@ -241,14 +241,14 @@ class CloudProviderRegistryTest {
         assertEquals(0, dao.reservationCount)
     }
 
-    @Test fun missingInvalidAndOverReservedProviderUsageStaysUnknown() = runBlocking {
+    @Test fun missingInvalidAndOutputOverLimitUsageStaysUnknownButInputMayExceedEstimate() = runBlocking {
         val provider = SyntheticProvider("synthetic-a", setOf("user"))
         val models = catalog()
         val dao = MemoryUsageDao()
         val port = { sendId: String -> composition(models, registry(provider, SyntheticProvider("synthetic-b", setOf("user"))), dao,
             "synthetic-a/model-v1", sendId) }
 
-        listOf(null, ProviderUsage(-1, 1), ProviderUsage(100, 1), ProviderUsage(1, 33)).forEachIndexed { index, usage ->
+        listOf(null, ProviderUsage(-1, 1), ProviderUsage(1, 33)).forEachIndexed { index, usage ->
             provider.replyUsage = usage
             val sendId = "send-usage-$index"
             assertEquals("reply from synthetic-a", port(sendId).send(request("synthetic-a/model-v1", sendId)).text)
@@ -261,6 +261,12 @@ class CloudProviderRegistryTest {
             assertEquals(null, ledger?.providerOutputTokens)
             assertEquals(null, ledger?.estimatedCost)
         }
+        val actualInputSend = "send-input-above-estimate"
+        provider.replyUsage = ProviderUsage(100, 1)
+        assertEquals("reply from synthetic-a", port(actualInputSend).send(request("synthetic-a/model-v1", actualInputSend)).text)
+        assertEquals(UsageLedgerState.SETTLED.name, dao.reservation(actualInputSend)?.state)
+        assertEquals(100L, dao.ledger(actualInputSend)?.providerInputTokens)
+        assertEquals(1L, dao.ledger(actualInputSend)?.providerOutputTokens)
         assertEquals(4, provider.sendCount)
     }
 
@@ -333,6 +339,21 @@ class CloudProviderRegistryTest {
         assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservation("send-cancel-after")?.state)
         assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.ledger("send-cancel-after")?.usageStatus)
         assertEquals(1L, dao.unresolvedCount())
+
+        // No transport dispatch observation is not proof that no request was sent.
+        val unobservedEntered = CompletableDeferred<Unit>()
+        a.pause = CompletableDeferred()
+        a.pauseEntered = unobservedEntered
+        a.confirmNoDispatchBeforePause = false
+        a.replyUsage = null
+        a.failAfterDispatch = false
+        val unobserved = launch { composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-cancel-unobserved")
+            .send(request("synthetic-a/model-v1", "send-cancel-unobserved")) }
+        unobservedEntered.await()
+        unobserved.cancel()
+        unobserved.join()
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservation("send-cancel-unobserved")?.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.ledger("send-cancel-unobserved")?.usageStatus)
     }
 
     private class SyntheticProvider(
@@ -352,6 +373,7 @@ class CloudProviderRegistryTest {
         var pause: CompletableDeferred<Unit>? = null
         var pauseEntered: CompletableDeferred<Unit>? = null
         var markDispatchBeforePause = false
+        var confirmNoDispatchBeforePause = true
 
         override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?, outputTokenLimit: Int): CloudReply {
             sendCount++
@@ -360,6 +382,7 @@ class CloudProviderRegistryTest {
             val pauseGate = pause
             if (pauseGate != null) {
                 if (markDispatchBeforePause) currentCoroutineContext()[CloudProviderRequestContext]?.markDispatchPossible()
+                else if (confirmNoDispatchBeforePause) currentCoroutineContext()[CloudProviderRequestContext]?.markDefinitelyUndispatched()
                 pauseEntered?.complete(Unit)
                 pauseGate.await()
             }

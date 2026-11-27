@@ -324,7 +324,11 @@ interface UsageDao {
         val usageUnknownReason = when {
             inputTokens == null || outputTokens == null -> "Provider usage was absent or incomplete."
             inputTokens < 0 || outputTokens < 0 -> "Provider usage contained an invalid negative token count."
-            inputTokens > item.inputTokens || outputTokens > item.outputTokens -> "Provider usage exceeded the reserved token bounds."
+            // Input reservation is an estimate used to authorize the dispatch. A provider's
+            // reported input may legitimately be larger; record that actual value and let the
+            // checked window arithmetic and subsequent reservation limits account for it.
+            // Output is a request contract, so reporting more than requested remains unknown.
+            outputTokens > item.outputTokens -> "Provider output usage exceeded the requested output limit."
             else -> null
         }
         if (usageUnknownReason != null) {
@@ -511,7 +515,7 @@ internal class UsageControlledModelChatPort(
         } catch (cancelled: CancellationException) {
             val requestContext = currentCoroutineContext()[CloudProviderRequestContext]
             withContext(NonCancellable) {
-                if (requestContext != null && !requestContext.dispatchMayHaveOccurred()) {
+                if (requestContext?.isDefinitelyUndispatched() == true) {
                     val released = usage.releaseBeforeDispatch(request.sendId)
                     if (!released) usage.outcomeUnknown(request.sendId, "A pre-dispatch cancellation could not safely release its reservation.")
                 } else {

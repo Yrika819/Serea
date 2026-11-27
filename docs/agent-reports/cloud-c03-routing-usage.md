@@ -13,6 +13,14 @@ Branch `cloud/serea-v13-c03-routing-usage` is based on C-02 HEAD `12efc37c16d1db
 - C-01 token telemetry parsing now bounds decimal values before integer conversion. Extremely large exponents are rejected as unknown without expanding a huge integer.
 - Existing send-ID reservation uniqueness continues to prevent a second dispatch after settlement or an uncertain result.
 
+## C-03R Formal regression repair
+
+- A provider's input count may exceed the conservative input reservation estimate. It is now settled and costed from the reported input count; checked arithmetic still rejects an overflow atomically, and later reservations see the actual window usage. Missing/negative usage and output usage above the requested cap remain `USAGE_UNKNOWN` with the reservation retained.
+- Cancellation releases a reservation only when the call path positively marks it definitely undispatched. An unobserved HTTP-start callback or a generic provider cancellation is not treated as proof; these retain `OUTCOME_UNKNOWN`. Synthetic tests cover positive pre-dispatch proof, observed dispatch, and unobserved generic cancellation.
+- API 26 Formal run `45960159623` isolated the two requested regressions to the old input-estimate comparison: the fake provider's actual input was rejected and the reservation stayed unknown, while the overflow case then had no actual near-`Long.MAX_VALUE` window total to overflow. The API 26 run also had unrelated passing instrumentation groups; corrected targeted DB tests are included in the subsequent run.
+- API 35 Formal artifact from run `45960159623` shows only `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` failing at `awaitTestImeSession` with a 10-second Compose timeout (`SereaAppShellTest.kt:1661`, helper line 110). This is local UI/IME behavior outside C-03 ownership and no causal provider/accounting change is indicated. No UI test or UI source was modified.
+- The C-03R source change leaves Gradle, Formal configuration, Required Gates, and identity checks unchanged. The CI rerun is needed for API 26 confirmation; no CI check has been weakened.
+
 ## Verification
 
 JDK 17, synthetic providers and MockWebServer only:

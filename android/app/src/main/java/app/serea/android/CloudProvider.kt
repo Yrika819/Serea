@@ -87,15 +87,25 @@ class OllamaCloudAdapter private constructor(
     private val settings: CloudSettings,
     suppliedClient: OkHttpClient,
     private val endpoint: HttpUrl,
-    private val catalog: ModelCatalog,
-    private val allowedProviderIds: Set<String>,
-) {
+    internal val catalog: ModelCatalog,
+    internal val allowedProviderIds: Set<String>,
+) : CloudChatProvider {
+    override val providerId: String = "ollama"
+    override val destination: String = "https://ollama.com/api/chat"
+    override val capabilities = CloudProviderCapabilities(
+        supportsStreaming = true,
+        supportedRoles = setOf("system", "user", "assistant"),
+        maxInputBytes = MAX_INPUT_BYTES,
+        maxOutputTokens = MAX_OUTPUT_TOKENS,
+    )
+    override val allowsTestFixtureModels: Boolean get() = endpoint.host == "127.0.0.1" || endpoint.host == "localhost"
     // Injected clients must not silently replay this POST or forward credentials on redirects.
     private val client = suppliedClient.newBuilder()
         .retryOnConnectionFailure(false)
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
+    internal val enabled: Boolean get() = settings.enabled
     internal constructor(credentials: CredentialReader, settings: CloudSettings) : this(
         credentials, settings,
         OkHttpClient.Builder()
@@ -125,7 +135,7 @@ class OllamaCloudAdapter private constructor(
         }, catalog, allowedProviderIds,
     )
 
-    suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}, selectedModelId: String? = null): CloudReply {
+    override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?): CloudReply {
         if (payload.target != EgressTarget.CLOUD) throw ProviderPreDispatchFailure(ProviderFailureKind.FORBIDDEN)
         if (!settings.enabled) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val fixedProbe = payload.conversationId == null && payload.sendId == null && payload.selectedModelId == null
@@ -150,7 +160,7 @@ class OllamaCloudAdapter private constructor(
                 throw ProviderFailure(ProviderFailureKind.INVALID_RESPONSE)
             }
         }
-        if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > MAX_INPUT_BYTES) {
+        if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > capabilities.maxInputBytes) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
         val request = withContext(Dispatchers.IO) {
@@ -161,8 +171,8 @@ class OllamaCloudAdapter private constructor(
                 add("messages", JsonArray().apply {
                     payload.messages.forEach { (role, content) -> add(JsonObject().apply { addProperty("role", role); addProperty("content", content) }) }
                 })
-                addProperty("stream", true)
-                add("options", JsonObject().apply { addProperty("num_predict", MAX_OUTPUT_TOKENS) })
+                addProperty("stream", capabilities.supportsStreaming)
+                add("options", JsonObject().apply { addProperty("num_predict", capabilities.maxOutputTokens) })
             }
             Request.Builder().url(endpoint)
                 .header("Authorization", "Bearer $key")
@@ -205,6 +215,9 @@ class OllamaCloudAdapter private constructor(
             })
         }
     }
+
+    internal suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}): CloudReply =
+        send(payload, onDelta, selectedModelId = null)
 
     private fun consume(response: Response, onDelta: (String) -> Unit, active: () -> Boolean): CloudReply {
         response.use {
@@ -317,13 +330,30 @@ class OllamaCloudAdapter private constructor(
 /** The only UI-facing cloud composition: all ordinary messages remain UNKNOWN and are denied. */
 class CloudCandidatePort internal constructor(private val adapter: OllamaCloudAdapter) {
     suspend fun runFixedPublicContractProbe(onDelta: (String) -> Unit = {}): CloudReply =
-        adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta)
+        adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta, selectedModelId = null)
 }
 
 /** Ordinary chat path. An exact, fresh gate approval must exist before any credential or socket use. */
 internal class OllamaModelChatPort(
-    private val adapter: OllamaCloudAdapter,
+    adapter: OllamaCloudAdapter,
     private val clock: () -> Long = System::currentTimeMillis,
+) : ModelChatPort {
+    private val delegate = CloudProviderModelChatPort(
+        adapter.catalog,
+        CloudProviderRegistry(listOf(adapter), adapter.allowedProviderIds),
+        clock,
+        adapter.enabled,
+    )
+
+    override suspend fun send(request: ModelChatRequest): ModelChatResponse = delegate.send(request)
+}
+
+/** Shared Chat contract/gate validation followed by one registry-selected provider transport. */
+internal class CloudProviderModelChatPort(
+    private val catalog: ModelCatalog,
+    private val providers: CloudProviderRegistry,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val enabled: Boolean = true,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         val contract = request.egressContract ?: throw PreDispatchModelChatFailure("Cloud send intent has not been approved.")
@@ -350,8 +380,9 @@ internal class OllamaModelChatPort(
             payload.bodySourceLineage.toSet() != requestBodyLineage) {
             throw PreDispatchModelChatFailure("The approved provider payload no longer matches the routed send.")
         }
+        if (!enabled) throw PreDispatchModelChatFailure("Cloud mode is disabled.")
         return try {
-            adapter.send(payload, selectedModelId = request.selectedModelId).let { ModelChatResponse(it.text, it.usage) }
+            providers.sendOnce(payload, request.selectedModelId, catalog).let { ModelChatResponse(it.text, it.usage) }
         } catch (failure: ProviderFailure) {
             if (failure is ProviderPreDispatchFailure || !failure.mayHaveDispatched) {
                 throw PreDispatchModelChatFailure(failure.message ?: "The local provider request was rejected before dispatch.")
@@ -372,14 +403,21 @@ internal object DirectProviderChatComposition {
         testEndpoint: HttpUrl? = null,
         testClient: OkHttpClient? = null,
         usageAttributionResolver: UsageAttributionResolver? = null,
+        cloudProviderRegistry: CloudProviderRegistry? = null,
     ): ModelChatPort {
-        require((testEndpoint == null) == (testClient == null)) { "A loopback test endpoint and client must be supplied together." }
-        val adapter = if (testEndpoint != null && testClient != null)
-            OllamaCloudAdapter(credentials, settings, testEndpoint, testClient, catalog, setOf("ollama"))
-        else OllamaCloudAdapter(credentials, settings, catalog, setOf("ollama"))
+        val cloudPort = if (cloudProviderRegistry != null) {
+            require(testEndpoint == null && testClient == null) { "Synthetic provider registries cannot be combined with the Ollama test endpoint." }
+            CloudProviderModelChatPort(catalog, cloudProviderRegistry, enabled = settings.enabled)
+        } else {
+            require((testEndpoint == null) == (testClient == null)) { "A loopback test endpoint and client must be supplied together." }
+            val adapter = if (testEndpoint != null && testClient != null)
+                OllamaCloudAdapter(credentials, settings, testEndpoint, testClient, catalog, setOf("ollama"))
+            else OllamaCloudAdapter(credentials, settings, catalog, setOf("ollama"))
+            OllamaModelChatPort(adapter)
+        }
         val gated = EgressCheckedModelChatPort(
             UsageControlledModelChatPort(
-                OllamaModelChatPort(adapter), usage,
+                cloudPort, usage,
                 attributionResolver = usageAttributionResolver ?: CatalogUsageAttributionResolver(catalog),
             ),
             expectedTarget = EgressTarget.CLOUD,

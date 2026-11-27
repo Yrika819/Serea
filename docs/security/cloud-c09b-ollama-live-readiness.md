@@ -1,7 +1,7 @@
 # C-09B — Ollama Cloud live readiness
 
-Date: 2026-11-27  
-Branch: `cloud/serea-v13-c09b-ollama-live-readiness`  
+Date: 2026-11-27
+Branch: `cloud/serea-v13-c09b-ollama-live-readiness`
 Base: C-09A PR #274 HEAD `64e65673f9f95948628b71d457e42795079497f2`
 
 ## Owner decision and official-source review

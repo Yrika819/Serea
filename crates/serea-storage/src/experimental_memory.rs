@@ -102,7 +102,7 @@ impl MemoryKind {
     }
 }
 /// Immutable source association; source_task_id is deliberately not a live FK.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryProvenance {
     pub source_id: String,
     pub source_task_id: Option<String>,
@@ -133,6 +133,23 @@ pub struct MemoryPage {
     pub records: Vec<MemoryRecord>,
     pub has_more: bool,
 }
+/// One lexical P7 candidate with its immutable source attribution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryRetrievalEntry {
+    pub record: MemoryRecord,
+    pub provenance: MemoryProvenance,
+    /// Deterministic lexical score only; it is not a semantic similarity value.
+    pub lexical_score: u32,
+    /// UTF-8 bytes charged for this entry's body and source identifier.
+    pub context_bytes: usize,
+}
+/// Bounded retrieval output. Context accounting is exact UTF-8 bytes, not tokens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryRetrievalPage {
+    pub entries: Vec<MemoryRetrievalEntry>,
+    pub used_context_bytes: usize,
+    pub has_more: bool,
+}
 struct SearchRequest<'a> {
     class: MemoryClass,
     query: &'a str,
@@ -161,6 +178,9 @@ mod p7_conversation_extraction;
 #[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
 #[path = "p7_integrated_recovery_tests.rs"]
 mod p7_integrated_recovery_tests;
+#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[path = "p7_memory_retrieval_tests.rs"]
+mod p7_memory_retrieval_tests;
 /// Provisional values supplied for synthetic testing only.
 pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemoryConfig {
     status: ProvisionalValue::TestOnly,
@@ -359,6 +379,133 @@ impl P7ExperimentalMemory {
         )
     }
 
+    /// Retrieve owner-local lexical candidates, preserving source attribution and applying a
+    /// deterministic UTF-8 byte budget. FTS5 remains lexical and never implies semantic match.
+    pub fn retrieve_context(
+        &self,
+        store: &Store,
+        class: MemoryClass,
+        query: &str,
+        now: EpochMillis,
+        max_candidates: usize,
+        max_results: usize,
+        context_budget_bytes: usize,
+    ) -> Result<MemoryRetrievalPage, StoreError> {
+        const MAX_CONTEXT_BUDGET_BYTES: usize = 1_048_576;
+        if query.is_empty()
+            || query.len() > EXPERIMENTAL_PROVISIONAL.max_query_bytes
+            || max_candidates == 0
+            || max_candidates > EXPERIMENTAL_PROVISIONAL.max_candidates
+            || max_results == 0
+            || max_results > EXPERIMENTAL_PROVISIONAL.max_page
+            || context_budget_bytes == 0
+            || context_budget_bytes > MAX_CONTEXT_BUDGET_BYTES
+        {
+            return Err(StoreError::Sqlite);
+        }
+
+        let literal = format!("\"{}\"", query.replace('"', "\"\""));
+        let mut candidates = store.p7_read_only(|conn| {
+            with_vm_budget(
+                conn,
+                EXPERIMENTAL_PROVISIONAL.max_query_vm_ops,
+                |conn| {
+                    ensure_ready_conn(conn, &self.owner_id)?;
+                    let mut statement = conn.prepare(
+                        "SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms,
+                                p.source_id,p.source_task_id,p.source_class_rank,p.metadata_bytes
+                         FROM p7_memory_fts f
+                         JOIN p7_memory_items m ON m.memory_id=f.memory_id AND m.owner_id=f.owner_id
+                         JOIN p7_memory_provenance p ON p.memory_id=m.memory_id AND p.owner_id=m.owner_id
+                         WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3
+                           AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4
+                           AND NOT EXISTS (SELECT 1 FROM p7_memory_tombstones t
+                                           WHERE t.owner_id=m.owner_id AND t.memory_id=m.memory_id)
+                         ORDER BY m.memory_id COLLATE BINARY LIMIT ?5",
+                    )?;
+                    let rows = statement.query_map(
+                        params![
+                            literal,
+                            self.owner_id,
+                            class.rank(),
+                            now.get(),
+                            EXPERIMENTAL_PROVISIONAL.max_candidates as i64 + 1
+                        ],
+                        |row| {
+                            let class_rank = row.get::<_, i64>(1)?;
+                            let record = MemoryRecord {
+                                memory_id: row.get(0)?,
+                                class: if class_rank == 0 {
+                                    MemoryClass::Public
+                                } else {
+                                    MemoryClass::Personal
+                                },
+                                kind: match row.get::<_, String>(2)?.as_str() {
+                                    "WORKING" => MemoryKind::Working,
+                                    "EPISODIC" => MemoryKind::Episodic,
+                                    "SEMANTIC" => MemoryKind::Semantic,
+                                    _ => MemoryKind::Preference,
+                                },
+                                body: row.get(3)?,
+                                expires_at_ms: row.get(4)?,
+                            };
+                            let source_class_rank = row.get::<_, i64>(7)?;
+                            let provenance = MemoryProvenance {
+                                source_id: row.get(5)?,
+                                source_task_id: row.get(6)?,
+                                source_class: if source_class_rank == 0 {
+                                    MemoryClass::Public
+                                } else {
+                                    MemoryClass::Personal
+                                },
+                                metadata_bytes: row.get::<_, i64>(8)? as usize,
+                            };
+                            Ok(MemoryRetrievalEntry {
+                                record,
+                                provenance,
+                                lexical_score: 0,
+                                context_bytes: 0,
+                            })
+                        },
+                    )?;
+                    rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+                },
+            )
+        })?;
+
+        let mut candidate_truncated = candidates.len() > EXPERIMENTAL_PROVISIONAL.max_candidates;
+        candidates.truncate(EXPERIMENTAL_PROVISIONAL.max_candidates);
+        candidates = rank_and_dedup_candidates(candidates, query)?;
+        candidate_truncated |= candidates.len() > max_candidates;
+        candidates.truncate(max_candidates);
+
+        let unique_candidate_count = candidates.len();
+        let mut entries = Vec::new();
+        let mut used_context_bytes = 0usize;
+        let mut budget_omitted = false;
+        for candidate in candidates {
+            if entries.len() == max_results {
+                break;
+            }
+            let next = used_context_bytes
+                .checked_add(candidate.context_bytes)
+                .ok_or(StoreError::Sqlite)?;
+            if next > context_budget_bytes {
+                budget_omitted = true;
+                continue;
+            }
+            used_context_bytes = next;
+            entries.push(candidate);
+        }
+        let has_more =
+            candidate_truncated || unique_candidate_count > entries.len() || budget_omitted;
+        Ok(MemoryRetrievalPage {
+            entries,
+            used_context_bytes,
+            has_more,
+        })
+    }
+
     /// Explicit maintenance check; ordinary search never mutates or verifies the index.
     pub fn verify_fts_integrity(&self, store: &Store) -> Result<(), StoreError> {
         store.transact(|tx| {
@@ -494,6 +641,46 @@ fn ensure_ready_conn(conn: &Connection, owner: &str) -> Result<(), StoreError> {
     } else {
         Err(StoreError::Sqlite)
     }
+}
+fn lexical_relevance(query: &str, body: &str) -> u32 {
+    let query_folded = query.to_lowercase();
+    let body_folded = body.to_lowercase();
+    let exact_phrase = !query_folded.is_empty() && body_folded.contains(&query_folded);
+    let matched_terms = query_folded
+        .split_whitespace()
+        .filter(|term| !term.is_empty() && body_folded.contains(*term))
+        .count()
+        .min(u32::MAX as usize) as u32;
+    u32::from(exact_phrase) * 100 + matched_terms
+}
+fn rank_and_dedup_candidates(
+    mut candidates: Vec<MemoryRetrievalEntry>,
+    query: &str,
+) -> Result<Vec<MemoryRetrievalEntry>, StoreError> {
+    for entry in &mut candidates {
+        entry.lexical_score = lexical_relevance(query, &entry.record.body);
+        entry.context_bytes = entry
+            .record
+            .body
+            .len()
+            .checked_add(entry.provenance.source_id.len())
+            .ok_or(StoreError::Sqlite)?;
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .lexical_score
+            .cmp(&left.lexical_score)
+            .then_with(|| left.record.memory_id.cmp(&right.record.memory_id))
+            .then_with(|| left.record.body.cmp(&right.record.body))
+            .then_with(|| left.provenance.source_id.cmp(&right.provenance.source_id))
+            .then_with(|| {
+                left.provenance
+                    .source_task_id
+                    .cmp(&right.provenance.source_task_id)
+            })
+    });
+    candidates.dedup_by(|right, left| right.record.memory_id == left.record.memory_id);
+    Ok(candidates)
 }
 fn with_vm_budget<T>(
     conn: &mut Connection,

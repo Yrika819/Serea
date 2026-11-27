@@ -464,7 +464,15 @@ fn validate_candidate(
     }
 
     let mut unique_refs = BTreeSet::new();
-    let mut source_class = DataClass::Public;
+    // A generic extractor may synthesize from any eligible input turn, so a
+    // candidate inherits the highest class of the full sanitized conversation,
+    // even if its citations name a narrower subset.
+    let mut source_class = conversation
+        .turns
+        .iter()
+        .map(|turn| turn.classification)
+        .max()
+        .unwrap_or(DataClass::Public);
     let mut cited = Vec::with_capacity(candidate.source_ids.len());
     for source_id in &candidate.source_ids {
         if !unique_refs.insert(source_id.clone()) {
@@ -969,6 +977,41 @@ mod tests {
                 &inherited_personal,
                 "inherited-class",
                 vec![candidate(DataClass::Public, &["public-label"])],
+            ),
+            Err(ExtractionError::CandidateRejected)
+        );
+
+        let mixed_conversation = conversation(vec![
+            turn(
+                "public-turn",
+                Some("conversation-c05"),
+                TurnState::Complete,
+                DataClass::Public,
+                vec![source(
+                    "public-turn-source",
+                    DataClass::Public,
+                    DataOrigin::UserAuthored,
+                )],
+            ),
+            turn(
+                "personal-turn",
+                Some("conversation-c05"),
+                TurnState::Complete,
+                DataClass::Personal,
+                vec![source(
+                    "personal-turn-source",
+                    DataClass::Personal,
+                    DataOrigin::UserAuthored,
+                )],
+            ),
+        ]);
+        assert_eq!(
+            extract(
+                &store,
+                &memory,
+                &mixed_conversation,
+                "mixed-downgrade",
+                vec![candidate(DataClass::Public, &["public-turn"])],
             ),
             Err(ExtractionError::CandidateRejected)
         );

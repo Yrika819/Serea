@@ -113,7 +113,7 @@ internal object OllamaGemma4CloudCatalog {
                 displayName = "Gemma 4 Cloud",
                 contextWindow = Knowledge.Known(256_000),
                 // This is Serea's approved per-request ceiling, not a provider-published maximum.
-                maxOutput = Knowledge.Known(OllamaCloudRequestLimits.MAX_OUTPUT_TOKENS),
+                maxOutput = Knowledge.Known(OllamaCloudRequestLimits.OUTPUT_TOKENS),
                 capabilities = ModelCapabilities(input = setOf("text/plain")),
                 pricing = ModelPricing(
                     inputPerMillion = Knowledge.Known(0.14),

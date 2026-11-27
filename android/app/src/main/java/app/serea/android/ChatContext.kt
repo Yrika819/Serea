@@ -37,8 +37,8 @@ object ChatContextBuilder {
     }
 
     /**
-     * Builds context for a selected model. Input is budgeted with the router's conservative
-     * four-characters-per-estimated-token rule; the result is only a character bound, never an
+     * Builds context for a selected model. The router's conservative estimate charges four
+     * estimated tokens per UTF-16 code unit; the result is only a character bound, never an
      * exact tokenizer count. Unknown model limits keep the legacy fixed context cap.
      */
     fun buildForModel(
@@ -102,7 +102,7 @@ object ChatContextBuilder {
         val selected = ArrayDeque<ContextMessage>()
         for (message in context.asReversed()) {
             if (message.status != "COMPLETED") continue
-            if (expectedConversationId != null && message.conversationId != null && message.conversationId != expectedConversationId) continue
+            if (expectedConversationId != null && message.conversationId != expectedConversationId) continue
             if (remaining <= 0) break
             val clipped = truncateAtCodePointBoundary(message.text, remaining)
             if (clipped.isNotEmpty()) {

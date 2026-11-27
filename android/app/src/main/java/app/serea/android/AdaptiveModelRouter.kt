@@ -303,7 +303,7 @@ internal class RoutedModelChatPort(
         val current = policy()
         val relevantContextCharacters = request.context.asSequence()
             .filter { it.status == "COMPLETED" }
-            .filter { it.conversationId == null || it.conversationId == request.conversationId }
+            .filter { it.conversationId == request.conversationId }
             .fold(0L) { total, item -> Math.addExact(total, item.text.length.toLong()) }
             .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val selected = router.select(

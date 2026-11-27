@@ -70,10 +70,11 @@ class ChatContextBuilderTest {
         assertEquals(legacy, unknown)
     }
 
-    @Test fun incompleteFailedAndOtherConversationHistoryAreExcluded() {
+    @Test fun incompleteFailedOtherAndUnownedConversationHistoryAreExcluded() {
         val selected = ChatContextBuilder.build(
             listOf(
                 message("other", "other", conversation = "conversation-b"),
+                message("unowned", "must not cross an unknown conversation boundary", conversation = null),
                 message("pending", "pending", status = "PENDING"),
                 message("failed", "failed", status = "FAILED"),
                 message("complete", "current"),
@@ -117,7 +118,10 @@ class ChatContextBuilderTest {
     }
 
     @Test fun routedRequestFitsModelBudgetBeforeBuildingEgressContract() = kotlinx.coroutines.runBlocking {
-        val catalog = FakeModelCatalog(listOf(model(Knowledge.Known(1_000))), clock = { now })
+        val routedModel = model(Knowledge.Known(1_000)).copy(
+            pricing = ModelPricing(Knowledge.Known(1.0), Knowledge.Known(1.0), Knowledge.Known("USD")),
+        )
+        val catalog = FakeModelCatalog(listOf(routedModel), clock = { now })
         val received = kotlinx.coroutines.CompletableDeferred<ModelChatRequest>()
         val delegate = object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse {
@@ -151,14 +155,18 @@ class ChatContextBuilderTest {
                 mode = ModelSelectionMode.MANUAL,
                 manualModelId = "synthetic/model-v1",
                 allowedProviderIds = setOf("synthetic"),
+                maxEstimatedCost = 0.0005,
+                budgetCurrencyCode = "USD",
                 requestedOutputTokens = 200,
             ) },
         )
         val request = ModelChatRequest(
             conversationId = "conversation-a", message = "hello", sendId = "send-c04",
             context = listOf(
-                ContextMessage(MessageRole.USER, "x".repeat(800), DataClassification.PUBLIC, "same-conversation",
+                ContextMessage(MessageRole.USER, "x".repeat(50), DataClassification.PUBLIC, "same-conversation",
                     DataOrigin.USER_AUTHORED, conversationId = "conversation-a"),
+                ContextMessage(MessageRole.USER, "u".repeat(800), DataClassification.PUBLIC, "unowned-conversation",
+                    DataOrigin.USER_AUTHORED, conversationId = null),
                 ContextMessage(MessageRole.USER, "wrong", DataClassification.PUBLIC, "other-conversation",
                     DataOrigin.USER_AUTHORED, conversationId = "conversation-b"),
                 ContextMessage(MessageRole.ASSISTANT, "pending", DataClassification.PUBLIC, "incomplete",
@@ -170,9 +178,56 @@ class ChatContextBuilderTest {
         assertEquals("synthetic reply", routed.send(request).text)
         val adapted = received.await()
         assertEquals("synthetic/model-v1", adapted.selectedModelId)
-        assertEquals(195, adapted.context.single().text.length)
+        assertEquals(50, adapted.context.single().text.length)
         assertEquals("conversation-a", adapted.egressContract?.conversationId)
         assertEquals(adapted.context, adapted.egressContract?.context)
         assertNull(request.selectedModelId)
+    }
+
+    @Test fun existingEgressApprovalIsRejectedInsteadOfRewrittenWhenContextWouldChange() = kotlinx.coroutines.runBlocking {
+        val catalog = FakeModelCatalog(listOf(model(Knowledge.Known(1_000))), clock = { now })
+        var delegateCalls = 0
+        val delegate = object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                delegateCalls++
+                return ModelChatResponse("must not dispatch")
+            }
+        }
+        val routed = RoutedModelChatPort(
+            delegate = delegate,
+            router = AdaptiveModelRouter(catalog),
+            policy = { ModelRoutingPolicy(
+                mode = ModelSelectionMode.MANUAL,
+                manualModelId = "synthetic/model-v1",
+                allowedProviderIds = setOf("synthetic"),
+                requestedOutputTokens = 200,
+            ) },
+        )
+        val approvedContext = listOf(ContextMessage(
+            MessageRole.USER, "unowned but previously approved content", DataClassification.PUBLIC,
+            "unowned-source", DataOrigin.USER_AUTHORED, conversationId = null,
+        ))
+        val originalContract = EgressContract(
+            conversationId = "conversation-a", currentMessageId = "send-approved",
+            origin = DataOrigin.USER_AUTHORED, classification = DataClassification.PUBLIC,
+            destination = ChatEgressGate.LOCAL_DEMO_DESTINATION, plannedBody = "hello",
+            context = approvedContext, preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = null, expiresAtMillis = null,
+            selectedModelId = "synthetic/model-v1", target = EgressTarget.LOCAL_DEMO,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        val request = ModelChatRequest(
+            conversationId = "conversation-a", message = "hello", sendId = "send-approved",
+            context = approvedContext, egressContract = originalContract,
+        )
+
+        val failure = org.junit.Assert.assertThrows(ModelChatFailure::class.java) {
+            kotlinx.coroutines.runBlocking { routed.send(request) }
+        }
+
+        assertTrue(failure is PreDispatchModelChatFailure)
+        assertEquals(0, delegateCalls)
+        assertEquals(approvedContext, request.egressContract?.context)
+        assertEquals(approvedContext, originalContract.context)
     }
 }

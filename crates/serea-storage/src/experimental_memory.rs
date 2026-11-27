@@ -156,7 +156,7 @@ pub struct P7ExperimentalMemory {
 // Development-only coordinators are nested here so they may exercise the
 // fixture internally without making P7ExperimentalMemory part of the crate API.
 #[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
-#[path = "p7_conversation_extraction.rs"]
+#[path = "p7_conversation_extraction_tests.rs"]
 mod p7_conversation_extraction;
 #[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
 #[path = "p7_integrated_recovery_tests.rs"]

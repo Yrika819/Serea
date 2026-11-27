@@ -6,7 +6,7 @@
 use super::{MemoryClass, MemoryDraft, MemoryKind, MemoryProvenance, P7ExperimentalMemory};
 use crate::{Store, StoreError};
 use rusqlite::OptionalExtension;
-use serea_protocol::EpochMillis;
+use serea_protocol::{Clock, EpochMillis};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -135,6 +135,8 @@ pub(super) enum ExtractionError {
     ConcurrentExtraction,
     DailyLimitReached,
     ClockRollback,
+    LeaseExpired,
+    StaleLease,
     RequestConflict,
     StaleGeneration,
     StorageFailed,
@@ -238,16 +240,20 @@ pub(super) fn extract_and_save(
     input: &CompletedConversation,
     request_id: &ExtractionRequestId,
     extractor: &impl MemoryExtractor,
-    now: EpochMillis,
+    clock: &dyn Clock,
 ) -> Result<SaveSummary, ExtractionError> {
     let validated = validate_conversation(memory, input)?;
+    let admission_time = clock.now_ms().map_err(|_| ExtractionError::StorageFailed)?;
     let admission = ExtractionAdmission::begin(
         memory,
         store,
         request_id,
         conversation_digest(&validated),
-        now,
+        admission_time,
     )?;
+    if let Some((summary, _)) = &admission.committed {
+        return Ok(*summary);
+    }
     let candidates = match extractor.extract(&validated) {
         Ok(candidates) => candidates,
         Err(error) => {
@@ -275,7 +281,7 @@ pub(super) fn extract_and_save(
             }
         }
     }
-    admission.commit(memory, store, &drafts, now)
+    admission.commit(memory, store, &drafts, clock)
 }
 
 /// Test-only persistent lease state. The TTL is deliberately provisional;
@@ -283,6 +289,7 @@ pub(super) fn extract_and_save(
 struct ExtractionAdmission {
     owner_id: String,
     request_id: String,
+    lease_id: i64,
     input_digest: [u8; 32],
     generation: i64,
     committed: Option<(SaveSummary, Vec<u8>)>,
@@ -327,12 +334,12 @@ impl ExtractionAdmission {
                 rusqlite::params![memory.owner_id, now_ms],
             )?;
 
-            let prior: Option<(Vec<u8>, i64, String, i64, Option<Vec<u8>>, i64, i64)> = tx.inner.query_row(
-                "SELECT input_digest,captured_generation,state,expires_at_ms,candidate_digest,inserted_count,existing_count FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2",
+            let prior: Option<(Vec<u8>, i64, String, i64, Option<Vec<u8>>, i64, i64, i64)> = tx.inner.query_row(
+                "SELECT input_digest,captured_generation,state,expires_at_ms,candidate_digest,inserted_count,existing_count,lease_id FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2",
                 rusqlite::params![memory.owner_id, request_id.0],
-                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
             ).optional()?;
-            if let Some((prior_digest, prior_generation, state, expires, candidate_digest, inserted, existing)) = prior {
+            if let Some((prior_digest, prior_generation, state, expires, candidate_digest, inserted, existing, prior_lease_id)) = prior {
                 if prior_digest.as_slice() != input_digest {
                     return Ok(AdmissionDecision::Refused(ExtractionError::RequestConflict));
                 }
@@ -342,9 +349,13 @@ impl ExtractionAdmission {
                     return Ok(AdmissionDecision::Refused(ExtractionError::StaleGeneration));
                 }
                 if state == "COMMITTED" {
+                    let Some(candidate_digest) = candidate_digest.filter(|digest| digest.len() == 32)
+                    else {
+                        return Ok(AdmissionDecision::Refused(ExtractionError::StorageFailed));
+                    };
                     let lease = ExtractionAdmission {
-                        owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), input_digest,
-                        generation, committed: Some((SaveSummary { inserted: inserted as usize, already_present: existing as usize }, candidate_digest.unwrap_or_default())),
+                        owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), lease_id: prior_lease_id, input_digest,
+                        generation, committed: Some((SaveSummary { inserted: inserted as usize, already_present: existing as usize }, candidate_digest)),
                     };
                     return Ok(AdmissionDecision::Replay(lease));
                 }
@@ -375,14 +386,23 @@ impl ExtractionAdmission {
                 return Ok(AdmissionDecision::Refused(ExtractionError::DailyLimitReached));
             }
             let expires = now_ms.checked_add(TEST_EXTRACTION_LEASE_TTL_MS).ok_or(StoreError::Sqlite)?;
+            let lease_id: i64 = tx.inner.query_row(
+                "SELECT next_lease_id FROM p7_extraction_clock WHERE owner_id=?1",
+                [&memory.owner_id], |row| row.get(0),
+            )?;
+            let next_lease_id = lease_id.checked_add(1).ok_or(StoreError::Sqlite)?;
+            tx.inner.execute(
+                "UPDATE p7_extraction_clock SET next_lease_id=?2 WHERE owner_id=?1",
+                rusqlite::params![memory.owner_id, next_lease_id],
+            )?;
             let changed = tx.inner.execute(
-                "INSERT INTO p7_extraction_admissions(owner_id,request_id,input_digest,captured_generation,admitted_at_ms,expires_at_ms,utc_day,state) VALUES(?1,?2,?3,?4,?5,?6,?7,'ACTIVE') ON CONFLICT(owner_id,request_id) DO UPDATE SET admitted_at_ms=excluded.admitted_at_ms,expires_at_ms=excluded.expires_at_ms,utc_day=excluded.utc_day,state='ACTIVE',candidate_digest=NULL,inserted_count=0,existing_count=0 WHERE input_digest=excluded.input_digest AND captured_generation=excluded.captured_generation AND state IN ('EXPIRED','FAILED')",
-                rusqlite::params![memory.owner_id, request_id.0, input_digest.as_slice(), generation, now_ms, expires, day],
+                "INSERT INTO p7_extraction_admissions(owner_id,request_id,input_digest,captured_generation,admitted_at_ms,expires_at_ms,utc_day,state,lease_id) VALUES(?1,?2,?3,?4,?5,?6,?7,'ACTIVE',?8) ON CONFLICT(owner_id,request_id) DO UPDATE SET admitted_at_ms=excluded.admitted_at_ms,expires_at_ms=excluded.expires_at_ms,utc_day=excluded.utc_day,state='ACTIVE',candidate_digest=NULL,inserted_count=0,existing_count=0,lease_id=excluded.lease_id WHERE input_digest=excluded.input_digest AND captured_generation=excluded.captured_generation AND state IN ('EXPIRED','FAILED')",
+                rusqlite::params![memory.owner_id, request_id.0, input_digest.as_slice(), generation, now_ms, expires, day, lease_id],
             )?;
             if changed != 1 { return Ok(AdmissionDecision::Refused(ExtractionError::RequestConflict)); }
             tx.inner.execute("UPDATE p7_resource_accounting SET extraction_starts_today=?2,utc_day=?3 WHERE owner_id=?1", rusqlite::params![memory.owner_id, starts_today + 1, day.to_string()])?;
             update_active_count(tx, &memory.owner_id)?;
-            Ok(AdmissionDecision::Admitted(ExtractionAdmission { owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), input_digest, generation, committed: None }))
+            Ok(AdmissionDecision::Admitted(ExtractionAdmission { owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), lease_id, input_digest, generation, committed: None }))
         }).map_err(map_storage_error)?;
         match decision {
             AdmissionDecision::Admitted(lease) | AdmissionDecision::Replay(lease) => Ok(lease),
@@ -392,7 +412,7 @@ impl ExtractionAdmission {
 
     fn abort(&self, store: &Store) -> Result<(), ExtractionError> {
         store.transact(|tx| {
-            tx.inner.execute("UPDATE p7_extraction_admissions SET state='FAILED' WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE' AND captured_generation=?3", rusqlite::params![self.owner_id, self.request_id, self.generation])?;
+            tx.inner.execute("UPDATE p7_extraction_admissions SET state='FAILED' WHERE owner_id=?1 AND request_id=?2 AND lease_id=?3 AND state='ACTIVE' AND captured_generation=?4", rusqlite::params![self.owner_id, self.request_id, self.lease_id, self.generation])?;
             update_active_count(tx, &self.owner_id)
         }).map_err(map_storage_error)
     }
@@ -402,7 +422,7 @@ impl ExtractionAdmission {
         memory: &P7ExperimentalMemory,
         store: &Store,
         drafts: &[MemoryDraft],
-        now: EpochMillis,
+        clock: &dyn Clock,
     ) -> Result<SaveSummary, ExtractionError> {
         let digest = drafts_digest(drafts);
         if let Some((summary, prior_digest)) = &self.committed {
@@ -412,13 +432,34 @@ impl ExtractionAdmission {
                 Err(ExtractionError::RequestConflict)
             };
         }
-        let now_ms = now.get();
         let result = store.transact(|tx| {
             super::ensure_ready(tx, &self.owner_id)?;
+            // Sample after BEGIN IMMEDIATE has acquired the writer transaction,
+            // so time spent waiting for another writer cannot stale this check.
+            let now = match clock.now_ms() {
+                Ok(now) => now,
+                Err(_) => return Ok(Err(ExtractionError::StorageFailed)),
+            };
+            let now_ms = now.get();
+            let last_observed: i64 = tx.inner.query_row(
+                "SELECT last_observed_ms FROM p7_extraction_clock WHERE owner_id=?1",
+                [&self.owner_id], |row| row.get(0),
+            )?;
+            if now_ms < last_observed {
+                return Ok(Err(ExtractionError::ClockRollback));
+            }
+            tx.inner.execute(
+                "UPDATE p7_extraction_clock SET last_observed_ms=?2 WHERE owner_id=?1",
+                rusqlite::params![self.owner_id, now_ms],
+            )?;
             let generation: i64 = tx.inner.query_row("SELECT generation FROM p7_ledger_state WHERE owner_id=?1 AND read_state='READY' AND pending_operation_id IS NULL", [&self.owner_id], |row| row.get(0))?;
-            let operation: Option<(Vec<u8>, i64, i64, String)> = tx.inner.query_row("SELECT input_digest,captured_generation,expires_at_ms,state FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2", rusqlite::params![self.owner_id,self.request_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
-            let (input_digest, captured, expires, state) = operation.ok_or(StoreError::ConstraintViolation)?;
-            if input_digest.as_slice() != self.input_digest || captured != self.generation || generation != self.generation || state != "ACTIVE" || now_ms >= expires { return Err(StoreError::ConstraintViolation); }
+            let operation: Option<(Vec<u8>, i64, i64, String, i64)> = tx.inner.query_row("SELECT input_digest,captured_generation,expires_at_ms,state,lease_id FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2", rusqlite::params![self.owner_id,self.request_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
+            let (input_digest, captured, expires, state, lease_id) = match operation {
+                Some(operation) => operation,
+                None => return Ok(Err(ExtractionError::StaleLease)),
+            };
+            if input_digest.as_slice() != self.input_digest || captured != self.generation || generation != self.generation || lease_id != self.lease_id || state != "ACTIVE" { return Ok(Err(ExtractionError::StaleLease)); }
+            if now_ms >= expires { return Ok(Err(ExtractionError::LeaseExpired)); }
             let mut inserted = 0;
             let mut existing = 0;
             for (index, draft) in drafts.iter().enumerate() {
@@ -428,13 +469,17 @@ impl ExtractionAdmission {
                 }
             }
             let digest = drafts_digest(drafts);
-            let changed = tx.inner.execute("UPDATE p7_extraction_admissions SET state='COMMITTED',candidate_digest=?4,inserted_count=?5,existing_count=?6 WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE' AND captured_generation=?3 AND expires_at_ms>?7", rusqlite::params![self.owner_id,self.request_id,self.generation,digest.as_slice(),inserted as i64,existing as i64,now_ms])?;
-            if changed != 1 { return Err(StoreError::ConstraintViolation); }
+            let changed = tx.inner.execute("UPDATE p7_extraction_admissions SET state='COMMITTED',candidate_digest=?5,inserted_count=?6,existing_count=?7 WHERE owner_id=?1 AND request_id=?2 AND lease_id=?3 AND state='ACTIVE' AND captured_generation=?4 AND expires_at_ms>?8", rusqlite::params![self.owner_id,self.request_id,self.lease_id,self.generation,digest.as_slice(),inserted as i64,existing as i64,now_ms])?;
+            if changed != 1 { return Ok(Err(ExtractionError::StaleLease)); }
             update_active_count(tx, &self.owner_id)?;
-            Ok(SaveSummary { inserted: inserted as usize, already_present: existing as usize })
+            Ok(Ok(SaveSummary { inserted: inserted as usize, already_present: existing as usize }))
         });
         match result {
-            Ok(summary) => Ok(summary),
+            Ok(Ok(summary)) => Ok(summary),
+            Ok(Err(error)) => {
+                let _ = self.abort(store);
+                Err(error)
+            }
             Err(error) => {
                 // The candidate transaction has rolled back. Release the
                 // durable admission on ordinary errors; process death skips
@@ -447,7 +492,7 @@ impl ExtractionAdmission {
 }
 
 fn ensure_extraction_tables(tx: &mut crate::Tx<'_>) -> Result<(), StoreError> {
-    tx.inner.execute_batch("CREATE TABLE IF NOT EXISTS p7_extraction_clock(owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id),last_observed_ms INTEGER NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS p7_extraction_admissions(owner_id TEXT NOT NULL REFERENCES p7_owners(owner_id),request_id TEXT NOT NULL,input_digest BLOB NOT NULL CHECK(length(input_digest)=32),captured_generation INTEGER NOT NULL,admitted_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL,utc_day INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('ACTIVE','COMMITTED','EXPIRED','FAILED','FENCED')),candidate_digest BLOB,inserted_count INTEGER NOT NULL DEFAULT 0,existing_count INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(owner_id,request_id)) STRICT;")?;
+    tx.inner.execute_batch("CREATE TABLE IF NOT EXISTS p7_extraction_clock(owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id),last_observed_ms INTEGER NOT NULL,next_lease_id INTEGER NOT NULL DEFAULT 1 CHECK(next_lease_id>0)) STRICT; CREATE TABLE IF NOT EXISTS p7_extraction_admissions(owner_id TEXT NOT NULL REFERENCES p7_owners(owner_id),request_id TEXT NOT NULL,input_digest BLOB NOT NULL CHECK(length(input_digest)=32),captured_generation INTEGER NOT NULL,admitted_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL,utc_day INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('ACTIVE','COMMITTED','EXPIRED','FAILED','FENCED')),candidate_digest BLOB,inserted_count INTEGER NOT NULL DEFAULT 0,existing_count INTEGER NOT NULL DEFAULT 0,lease_id INTEGER NOT NULL CHECK(lease_id>0),PRIMARY KEY(owner_id,request_id)) STRICT;")?;
     Ok(())
 }
 
@@ -762,7 +807,7 @@ mod tests {
     use serea_protocol::{Clock, ProtocolError};
     use std::path::Path;
     use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
 
     const OWNER: &str = "own_00000000000000000000000000000071";
@@ -774,6 +819,22 @@ mod tests {
     impl Clock for FixedClock {
         fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
             EpochMillis::new(NOW_MS)
+        }
+    }
+
+    struct MutableClock(AtomicI64);
+    impl MutableClock {
+        fn new(now_ms: i64) -> Self {
+            Self(AtomicI64::new(now_ms))
+        }
+
+        fn set(&self, now_ms: i64) {
+            self.0.store(now_ms, Ordering::SeqCst);
+        }
+    }
+    impl Clock for MutableClock {
+        fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
+            EpochMillis::new(self.0.load(Ordering::SeqCst))
         }
     }
 
@@ -863,7 +924,7 @@ mod tests {
             &input,
             &ExtractionRequestId::new("process-crash-request").unwrap(),
             &CandidateFixtureExtractor { candidates },
-            EpochMillis::new(NOW_MS).unwrap(),
+            &FixedClock,
         );
         panic!("the crash seam should exit while the final SQLite transaction is open");
     }
@@ -908,7 +969,7 @@ mod tests {
             &input,
             &ExtractionRequestId::new("process-crash-request").unwrap(),
             &CandidateFixtureExtractor { candidates },
-            EpochMillis::new(NOW_MS + TEST_EXTRACTION_LEASE_TTL_MS + 1).unwrap(),
+            &MutableClock::new(NOW_MS + TEST_EXTRACTION_LEASE_TTL_MS + 1),
         )
         .unwrap();
         assert_eq!(
@@ -1039,7 +1100,7 @@ mod tests {
             input,
             &ExtractionRequestId::new(request_id).unwrap(),
             &CandidateFixtureExtractor { candidates },
-            EpochMillis::new(NOW_MS).unwrap(),
+            &FixedClock,
         )
     }
 
@@ -1079,7 +1140,7 @@ mod tests {
             &input,
             &ExtractionRequestId::new("extract-request-1").unwrap(),
             &MockMemoryExtractor,
-            EpochMillis::new(NOW_MS).unwrap(),
+            &FixedClock,
         )
         .unwrap();
 
@@ -1173,20 +1234,29 @@ mod tests {
                 already_present: 1
             }
         );
+        let validated = validate_conversation(&memory, &input).unwrap();
+        let replay = ExtractionAdmission::begin(
+            &memory,
+            &store,
+            &ExtractionRequestId::new("same-request").unwrap(),
+            conversation_digest(&validated),
+            EpochMillis::new(NOW_MS).unwrap(),
+        )
+        .unwrap();
+        let changed_draft = validate_candidate(
+            &validated,
+            MemoryCandidate {
+                candidate_key: "stable-preference".into(),
+                body: "different content under a committed request".into(),
+                classification: DataClass::Public,
+                source_ids: vec!["turn-1".into(), "public-source".into()],
+                kind: MemoryKind::Preference,
+            },
+            &ExtractionRequestId::new("same-request").unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            extract(
-                &store,
-                &memory,
-                &input,
-                "same-request",
-                vec![MemoryCandidate {
-                    candidate_key: "stable-preference".into(),
-                    body: "different content under a committed request".into(),
-                    classification: DataClass::Public,
-                    source_ids: vec!["turn-1".into(), "public-source".into()],
-                    kind: MemoryKind::Preference,
-                }],
-            ),
+            replay.commit(&memory, &store, &[changed_draft], &FixedClock),
             Err(ExtractionError::RequestConflict)
         );
         let mut changed_input = input.clone();
@@ -1203,6 +1273,68 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn completed_request_replay_does_not_execute_extractor_again() {
+        struct CountingExtractor<'a> {
+            calls: &'a AtomicU64,
+        }
+        impl MemoryExtractor for CountingExtractor<'_> {
+            fn extract(
+                &self,
+                _conversation: &ValidatedConversation,
+            ) -> Result<Vec<MemoryCandidate>, ExtractionError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![candidate(
+                    DataClass::Public,
+                    &["turn-1", "public-source"],
+                )])
+            }
+        }
+
+        let (store, memory) = setup();
+        let input = conversation(vec![turn(
+            "turn-1",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "public-source",
+                DataClass::Public,
+                DataOrigin::Other,
+            )],
+        )]);
+        let calls = AtomicU64::new(0);
+        let extractor = CountingExtractor { calls: &calls };
+        for _ in 0..4 {
+            assert_eq!(
+                extract_and_save(
+                    &memory,
+                    &store,
+                    &input,
+                    &ExtractionRequestId::new("completed-replay").unwrap(),
+                    &extractor,
+                    &FixedClock,
+                )
+                .unwrap(),
+                SaveSummary {
+                    inserted: 1,
+                    already_present: 0
+                }
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let starts: i64 = store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT extraction_starts_today FROM p7_resource_accounting WHERE owner_id=?1",
+                    [OWNER],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(starts, 1);
     }
 
     #[test]
@@ -1297,9 +1429,9 @@ mod tests {
                 &input,
                 &ExtractionRequestId::new("forget-race").unwrap(),
                 &ForgetDuringExtraction { store: &store },
-                EpochMillis::new(NOW_MS).unwrap(),
+                &FixedClock,
             ),
-            Err(ExtractionError::StorageFailed)
+            Err(ExtractionError::StaleLease)
         );
         let count: i64 = store
             .transact(|tx| {
@@ -1403,7 +1535,7 @@ mod tests {
             &input,
             &ExtractionRequestId::new("filtered-request").unwrap(),
             &InspectExtractor,
-            EpochMillis::new(NOW_MS).unwrap(),
+            &FixedClock,
         )
         .unwrap();
         assert_eq!(result.inserted, 1);
@@ -1650,7 +1782,7 @@ mod tests {
             &input,
             &ExtractionRequestId::new("extractor-fails").unwrap(),
             &FailingExtractor,
-            EpochMillis::new(NOW_MS).unwrap(),
+            &FixedClock,
         );
         let combined = preserve_chat_result("synthetic original reply", memory_result);
         assert_eq!(combined.chat_result, "synthetic original reply");
@@ -1862,5 +1994,170 @@ mod tests {
             .err(),
             Some(ExtractionError::ClockRollback)
         );
+    }
+
+    #[test]
+    fn expired_request_re_admission_fences_old_commit_and_abort_tokens() {
+        let (store, memory) = setup();
+        let input = conversation(vec![turn(
+            "turn-1",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "public-source",
+                DataClass::Public,
+                DataOrigin::Other,
+            )],
+        )]);
+        let request = ExtractionRequestId::new("same-request-expired").unwrap();
+        let validated = validate_conversation(&memory, &input).unwrap();
+        let digest = conversation_digest(&validated);
+        let old = ExtractionAdmission::begin(
+            &memory,
+            &store,
+            &request,
+            digest,
+            EpochMillis::new(NOW_MS).unwrap(),
+        )
+        .unwrap();
+        let renewal_time = NOW_MS + TEST_EXTRACTION_LEASE_TTL_MS + 1;
+        let current = ExtractionAdmission::begin(
+            &memory,
+            &store,
+            &request,
+            digest,
+            EpochMillis::new(renewal_time).unwrap(),
+        )
+        .unwrap();
+        assert_ne!(old.lease_id, current.lease_id);
+
+        let draft = validate_candidate(
+            &validated,
+            candidate(DataClass::Public, &["turn-1", "public-source"]),
+            &request,
+        )
+        .unwrap();
+        old.abort(&store).unwrap();
+        assert_eq!(
+            old.commit(
+                &memory,
+                &store,
+                std::slice::from_ref(&draft),
+                &MutableClock::new(renewal_time + 1),
+            ),
+            Err(ExtractionError::StaleLease)
+        );
+        let (current_lease, active): (i64, i64) = store
+            .transact(|tx| {
+                Ok((
+                    tx.inner.query_row(
+                        "SELECT lease_id FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE'",
+                        rusqlite::params![OWNER, request.0],
+                        |row| row.get(0),
+                    )?,
+                    tx.inner.query_row(
+                        "SELECT concurrent_extractions FROM p7_resource_accounting WHERE owner_id=?1",
+                        [OWNER],
+                        |row| row.get(0),
+                    )?,
+                ))
+            })
+            .unwrap();
+        assert_eq!((current_lease, active), (current.lease_id, 1));
+        assert_eq!(
+            current.commit(
+                &memory,
+                &store,
+                &[draft],
+                &MutableClock::new(renewal_time + 1),
+            ),
+            Ok(SaveSummary {
+                inserted: 1,
+                already_present: 0
+            })
+        );
+    }
+
+    #[test]
+    fn final_commit_uses_fresh_clock_and_rejects_expiry_or_rollback() {
+        struct AdvanceClockExtractor<'a> {
+            clock: &'a MutableClock,
+            final_time: i64,
+        }
+        impl MemoryExtractor for AdvanceClockExtractor<'_> {
+            fn extract(
+                &self,
+                _conversation: &ValidatedConversation,
+            ) -> Result<Vec<MemoryCandidate>, ExtractionError> {
+                self.clock.set(self.final_time);
+                Ok(vec![candidate(
+                    DataClass::Public,
+                    &["turn-1", "public-source"],
+                )])
+            }
+        }
+
+        let input = conversation(vec![turn(
+            "turn-1",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "public-source",
+                DataClass::Public,
+                DataOrigin::Other,
+            )],
+        )]);
+
+        let (store, memory) = setup();
+        let expired_clock = MutableClock::new(NOW_MS);
+        assert_eq!(
+            extract_and_save(
+                &memory,
+                &store,
+                &input,
+                &ExtractionRequestId::new("fresh-expiry-check").unwrap(),
+                &AdvanceClockExtractor {
+                    clock: &expired_clock,
+                    final_time: NOW_MS + TEST_EXTRACTION_LEASE_TTL_MS,
+                },
+                &expired_clock,
+            ),
+            Err(ExtractionError::LeaseExpired)
+        );
+        let count: i64 = store
+            .transact(|tx| {
+                Ok(tx
+                    .inner
+                    .query_row("SELECT count(*) FROM p7_memory_items", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let (store, memory) = setup();
+        let rollback_clock = MutableClock::new(NOW_MS);
+        assert_eq!(
+            extract_and_save(
+                &memory,
+                &store,
+                &input,
+                &ExtractionRequestId::new("fresh-rollback-check").unwrap(),
+                &AdvanceClockExtractor {
+                    clock: &rollback_clock,
+                    final_time: NOW_MS - 1,
+                },
+                &rollback_clock,
+            ),
+            Err(ExtractionError::ClockRollback)
+        );
+        let count: i64 = store
+            .transact(|tx| {
+                Ok(tx
+                    .inner
+                    .query_row("SELECT count(*) FROM p7_memory_items", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

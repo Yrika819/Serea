@@ -22,33 +22,102 @@ internal fun defaultSourceLineage(origin: DataOrigin): Set<DataOrigin> = when (o
 object ChatContextBuilder {
     const val MAX_INPUT_CHARS = 12_000
     const val MAX_CONTEXT_TOKENS = 4_096
-    // One UTF-16 code unit per budget token is intentionally conservative; tokenizer output varies.
-    private const val CHARS_PER_TOKEN = 1
-    const val MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN
+    const val MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS
 
     /**
      * Includes only completed turns. Newest turns win when the approximate token budget is
      * exhausted; an oldest partial turn may be clipped at a Unicode code point boundary.
      */
     fun build(history: List<ChatMessage>, currentInput: String = "", expectedConversationId: String? = null): List<ContextMessage> {
-        var remaining = (MAX_CONTEXT_CHARS - currentInput.length).coerceAtLeast(0)
+        val remaining = (MAX_CONTEXT_CHARS - currentInput.length).coerceAtLeast(0)
+        return selectRecent(history.map { message ->
+            ContextMessage(message.role, message.text, message.classification, message.id, message.origin,
+                message.status, message.conversationId, message.sourceLineage.toSet())
+        }, remaining, expectedConversationId)
+    }
+
+    /**
+     * Builds context for a selected model. Input is budgeted with the router's conservative
+     * four-characters-per-estimated-token rule; the result is only a character bound, never an
+     * exact tokenizer count. Unknown model limits keep the legacy fixed context cap.
+     */
+    fun buildForModel(
+        history: List<ChatMessage>,
+        currentInput: String,
+        expectedConversationId: String?,
+        model: ModelDescriptor,
+        requestedOutputTokens: Int,
+        maxInputTokens: Long? = null,
+    ): List<ContextMessage> {
+        val budget = historyCharacterBudget(model.contextWindow.knownInt(), currentInput, requestedOutputTokens, maxInputTokens)
+        return build(history, currentInput, expectedConversationId, budget)
+    }
+
+    private fun build(
+        history: List<ChatMessage>,
+        currentInput: String,
+        expectedConversationId: String?,
+        historyCharacterBudget: Int,
+    ): List<ContextMessage> = selectRecent(history.map { message ->
+        ContextMessage(message.role, message.text, message.classification, message.id, message.origin,
+            message.status, message.conversationId, message.sourceLineage.toSet())
+    }, historyCharacterBudget, expectedConversationId)
+
+    /** Trims an already-built history list after routing while preserving all retained metadata. */
+    internal fun fitForModel(
+        context: List<ContextMessage>,
+        currentInput: String,
+        expectedConversationId: String?,
+        modelContextWindowTokens: Int?,
+        requestedOutputTokens: Int,
+        maxInputTokens: Long? = null,
+    ): List<ContextMessage> = selectRecent(
+        context,
+        historyCharacterBudget(modelContextWindowTokens, currentInput, requestedOutputTokens, maxInputTokens),
+        expectedConversationId,
+    )
+
+    /** Computes a conservative history character allowance without claiming tokenization. */
+    internal fun historyCharacterBudget(
+        modelContextWindowTokens: Int?,
+        currentInput: String,
+        requestedOutputTokens: Int,
+        maxInputTokens: Long? = null,
+    ): Int {
+        require(requestedOutputTokens > 0)
+        require(maxInputTokens == null || maxInputTokens > 0)
+        if (modelContextWindowTokens == null) return (MAX_CONTEXT_CHARS - currentInput.length).coerceAtLeast(0)
+        val contextLimit = modelContextWindowTokens
+        if (contextLimit <= 0) return 0
+        val bodyEstimatedTokens = Math.multiplyExact(currentInput.length.toLong(), ESTIMATED_TOKENS_PER_CHAR)
+        val contextInputLimit = (contextLimit.toLong() - requestedOutputTokens).coerceAtLeast(0)
+        val inputLimit = minOf(contextInputLimit, maxInputTokens ?: Long.MAX_VALUE)
+        val remainingEstimatedTokens = (inputLimit - bodyEstimatedTokens).coerceAtLeast(0)
+        val historyChars = (remainingEstimatedTokens / ESTIMATED_TOKENS_PER_CHAR).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        return minOf(MAX_CONTEXT_CHARS, historyChars)
+    }
+
+    private fun selectRecent(context: List<ContextMessage>, maxCharacters: Int, expectedConversationId: String?): List<ContextMessage> {
+        var remaining = maxCharacters.coerceAtLeast(0)
         val selected = ArrayDeque<ContextMessage>()
-        for (message in history.asReversed()) {
+        for (message in context.asReversed()) {
             if (message.status != "COMPLETED") continue
-            if (expectedConversationId != null && message.conversationId != expectedConversationId) continue
+            if (expectedConversationId != null && message.conversationId != null && message.conversationId != expectedConversationId) continue
             if (remaining <= 0) break
-            var clippedLength = minOf(message.text.length, remaining)
-            if (clippedLength in 1 until message.text.length &&
-                message.text[clippedLength - 1].isHighSurrogate() && message.text[clippedLength].isLowSurrogate()) {
-                clippedLength--
-            }
-            val clipped = message.text.substring(0, clippedLength)
+            val clipped = truncateAtCodePointBoundary(message.text, remaining)
             if (clipped.isNotEmpty()) {
-                selected.addFirst(ContextMessage(message.role, clipped, message.classification, message.id, message.origin,
-                    message.status, message.conversationId, message.sourceLineage.toSet()))
+                selected.addFirst(message.copy(text = clipped, sourceLineage = message.sourceLineage.toSet()))
                 remaining -= clipped.length
             }
         }
         return selected.toList()
     }
+
+    private fun truncateAtCodePointBoundary(value: String, maxCharacters: Int): String {
+        var length = minOf(value.length, maxCharacters)
+        if (length in 1 until value.length && value[length - 1].isHighSurrogate() && value[length].isLowSurrogate()) length--
+        return value.substring(0, length)
+    }
+
+    private const val ESTIMATED_TOKENS_PER_CHAR = 4L
 }

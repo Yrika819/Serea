@@ -153,9 +153,11 @@ pub struct P7ExperimentalMemory {
     _test_auth_context: u64,
 }
 
-// The coordinator integration is nested here so it may exercise the fixture
-// internally without making P7ExperimentalMemory part of the crate API. The
-// only supported test composition is the coordinator in this child module.
+// Development-only coordinators are nested here so they may exercise the
+// fixture internally without making P7ExperimentalMemory part of the crate API.
+#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[path = "p7_conversation_extraction.rs"]
+mod p7_conversation_extraction;
 #[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
 #[path = "p7_integrated_recovery_tests.rs"]
 mod p7_integrated_recovery_tests;
@@ -211,30 +213,7 @@ impl P7ExperimentalMemory {
         draft: &MemoryDraft,
         now: EpochMillis,
     ) -> Result<(), StoreError> {
-        if draft.body.is_empty()
-            || draft.body.len() > 4096
-            || draft.provenance.metadata_bytes > 4096
-            || draft.provenance.source_id.is_empty()
-            || draft.provenance.source_id.len() > 1024
-            || draft
-                .provenance
-                .metadata_bytes
-                .checked_add(draft.provenance.source_id.len())
-                .and_then(|n| {
-                    n.checked_add(
-                        draft
-                            .provenance
-                            .source_task_id
-                            .as_ref()
-                            .map_or(0, String::len),
-                    )
-                })
-                .is_none_or(|n| n > 4096)
-            // Derived Memory inherits the maximum class of its sources.
-            || draft.provenance.source_class.rank() > draft.class.rank()
-        {
-            return Err(StoreError::Sqlite);
-        }
+        validate_draft(draft)?;
         let expires = now
             .get()
             .checked_add(draft.kind.lifetime())
@@ -248,6 +227,87 @@ impl P7ExperimentalMemory {
             tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![draft.memory_id,self.owner_id,draft.class.rank(),draft.kind.name(),draft.body,now.get(),expires])?;
             tx.inner.execute("INSERT INTO p7_memory_provenance(memory_id,owner_id,source_id,source_task_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![draft.memory_id,self.owner_id,draft.provenance.source_id,draft.provenance.source_task_id,draft.provenance.source_class.rank(),draft.provenance.metadata_bytes as i64,now.get()])?;
             Ok(()) })
+    }
+
+    /// Idempotent candidate insert for the disabled synthetic extraction path.
+    /// The extraction request is scoped to this owner and checked in the same
+    /// transaction as the memory row, so retries cannot create a second row.
+    pub(super) fn insert_once(
+        &self,
+        store: &Store,
+        draft: &MemoryDraft,
+        now: EpochMillis,
+    ) -> Result<bool, StoreError> {
+        validate_draft(draft)?;
+        let request_id = draft
+            .provenance
+            .source_task_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or(StoreError::Sqlite)?;
+        let expires = now
+            .get()
+            .checked_add(draft.kind.lifetime())
+            .ok_or(StoreError::Sqlite)?;
+
+        store.transact(|tx| {
+            ensure_ready(tx, &self.owner_id)?;
+            let retired: bool = tx.inner.query_row(
+                "SELECT EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=?1 AND memory_id=?2)",
+                params![self.owner_id, draft.memory_id],
+                |row| row.get(0),
+            )?;
+            if retired {
+                return Err(StoreError::ConstraintViolation);
+            }
+
+            let prior_request: Option<String> = tx
+                .inner
+                .query_row(
+                    "SELECT memory_id FROM p7_memory_provenance WHERE owner_id=?1 AND source_task_id=?2",
+                    params![self.owner_id, request_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(memory_id) = prior_request {
+                return if memory_id == draft.memory_id {
+                    Ok(false)
+                } else {
+                    Err(StoreError::ConstraintViolation)
+                };
+            }
+
+            let prior_body: Option<(i64, String, String, String, i64)> = tx
+                .inner
+                .query_row(
+                    "SELECT m.class_rank,m.kind,m.body,p.source_id,p.source_class_rank FROM p7_memory_items m JOIN p7_memory_provenance p USING(owner_id,memory_id) WHERE m.owner_id=?1 AND m.memory_id=?2",
+                    params![self.owner_id, draft.memory_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                )
+                .optional()?;
+            if let Some((class_rank, kind, body, source_id, source_class_rank)) = prior_body {
+                return if class_rank == draft.class.rank()
+                    && kind == draft.kind.name()
+                    && body == draft.body
+                    && source_id == draft.provenance.source_id
+                    && source_class_rank == draft.provenance.source_class.rank()
+                {
+                    Ok(false)
+                } else {
+                    Err(StoreError::ConstraintViolation)
+                };
+            }
+
+            tx.inner.execute(
+                "INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![draft.memory_id,self.owner_id,draft.class.rank(),draft.kind.name(),draft.body,now.get(),expires],
+            )?;
+            tx.inner.execute(
+                "INSERT INTO p7_memory_provenance(memory_id,owner_id,source_id,source_task_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![draft.memory_id,self.owner_id,draft.provenance.source_id,request_id,draft.provenance.source_class.rank(),draft.provenance.metadata_bytes as i64,now.get()],
+            )?;
+            Ok(true)
+        })
     }
     /// Owner/class-filtered lexical retrieval with literal quoted FTS input and stable order.
     pub fn search(
@@ -364,6 +424,32 @@ impl P7ExperimentalMemory {
             let mut records=rows.collect::<Result<Vec<_>,_>>()?; let has_more=records.len()>limit; records.truncate(limit); Ok(MemoryPage{records,has_more})
         })
     }
+}
+fn validate_draft(draft: &MemoryDraft) -> Result<(), StoreError> {
+    if draft.body.is_empty()
+        || draft.body.len() > 4096
+        || draft.provenance.metadata_bytes > 4096
+        || draft.provenance.source_id.is_empty()
+        || draft.provenance.source_id.len() > 1024
+        || draft
+            .provenance
+            .metadata_bytes
+            .checked_add(draft.provenance.source_id.len())
+            .and_then(|n| {
+                n.checked_add(
+                    draft
+                        .provenance
+                        .source_task_id
+                        .as_ref()
+                        .map_or(0, String::len),
+                )
+            })
+            .is_none_or(|n| n > 4096)
+        || draft.provenance.source_class.rank() > draft.class.rank()
+    {
+        return Err(StoreError::Sqlite);
+    }
+    Ok(())
 }
 fn ensure_ready(tx: &mut Tx<'_>, owner: &str) -> Result<(), StoreError> {
     let state:Option<(String,String)>=tx.inner.query_row("SELECT o.state,l.read_state FROM p7_owners o JOIN p7_ledger_state l USING(owner_id) WHERE owner_id=?1",[owner],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;

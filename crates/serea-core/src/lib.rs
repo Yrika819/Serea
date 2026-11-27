@@ -14,6 +14,13 @@ use serea_scheduler::{ScheduleError, Scheduler, SchedulerRecoveryReport};
 use serea_storage::{CheckpointOutcome, EventReplayPage, Store, StoreError};
 use serea_task_engine::{EngineError, TaskEngine, TaskRecord, TransitionContext};
 
+/// Isolated synthetic P7 Memory adapter. Development use only.
+#[cfg(all(feature = "p7-memory-integration-dev", debug_assertions))]
+pub mod dev_memory;
+
+#[cfg(all(feature = "p7-memory-integration-dev", not(debug_assertions)))]
+compile_error!("p7-memory-integration-dev is development-only and cannot be built optimized");
+
 /// Content-free audit sequence facts used by synthetic host verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuditSequenceSummary {

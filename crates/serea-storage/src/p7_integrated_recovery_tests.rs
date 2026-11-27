@@ -2206,7 +2206,7 @@ fn p7_ir03_crash_during_memory_blob_gc_replays_cleanup_after_reopen() {
         drop(gate);
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2214,7 +2214,8 @@ fn p7_ir03_crash_during_memory_blob_gc_replays_cleanup_after_reopen() {
             .env("SEREA_P7_CRASH_ROOT", "gc-crash-memory")
             .env("SEREA_P7_CRASH_OP", "gc-crash-op")
             .env("SEREA_P7_CRASH_AT", point)
-            .status().unwrap();
+            .status()
+            .unwrap();
         assert_eq!(status.code(), Some(73), "child did not crash at {point}");
         let reopened =
             SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2310,7 +2311,7 @@ fn ir04_last_chunk_before_pending_recovers_after_red_reproduction() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2318,7 +2319,8 @@ fn ir04_last_chunk_before_pending_recovers_after_red_reproduction() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-root")
         .env("SEREA_P7_CRASH_OP", "ir04-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(
         status.code(),
         Some(73),
@@ -2396,7 +2398,7 @@ fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
         drop(gate);
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2442,7 +2444,7 @@ fn ir04_pending_adoption_sqlite_crash_has_atomic_outcomes() {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
                 .arg("--exact")
-                .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+                .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
                 .arg("--nocapture")
                 .env("SEREA_P7_CRASH_DB", scratch.db())
                 .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2495,7 +2497,7 @@ fn ir04_multichunk_closure_recovers_after_last_chunk_before_pending() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2503,7 +2505,8 @@ fn ir04_multichunk_closure_recovers_after_last_chunk_before_pending() {
         .env("SEREA_P7_CRASH_ROOTS", ids.join(","))
         .env("SEREA_P7_CRASH_OP", "ir04-multichunk-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2545,14 +2548,15 @@ fn crash_before_intent_leaves_ready_generation_and_memory_unchanged() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
         .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
         .env("SEREA_P7_CRASH_ROOT", "pre-intent-root")
         .env("SEREA_P7_CRASH_AT", "before-intent")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2576,8 +2580,9 @@ fn recovery_itself_is_idempotent_across_process_termination() {
     drop(gate);
     let run_child = |point: &str| {
         let mut command = Command::new(std::env::current_exe().unwrap());
-        command.arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        command
+            .arg("--exact")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2627,7 +2632,7 @@ fn ir04_recovered_forget_runs_blob_gc_after_last_chunk_crash() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2635,7 +2640,8 @@ fn ir04_recovered_forget_runs_blob_gc_after_last_chunk_crash() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-gc-root")
         .env("SEREA_P7_CRASH_OP", "ir04-gc-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2699,7 +2705,7 @@ fn ir04_near_capacity_last_chunk_crash_uses_reserved_recovery_space() {
     assert_eq!(before_frames, 1015);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2707,7 +2713,8 @@ fn ir04_near_capacity_last_chunk_crash_uses_reserved_recovery_space() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-capacity-crash")
         .env("SEREA_P7_CRASH_OP", "ir04-capacity-crash-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(
         status.code(),
         Some(73),
@@ -2737,7 +2744,7 @@ fn ir04_concurrent_startup_recovery_adopts_once_and_both_handles_are_safe() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2745,7 +2752,8 @@ fn ir04_concurrent_startup_recovery_adopts_once_and_both_handles_are_safe() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-concurrent-root")
         .env("SEREA_P7_CRASH_OP", "ir04-concurrent-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let paths = (scratch.db(), scratch.ledger(), scratch.checkpoint());
     let start = Arc::new(Barrier::new(3));

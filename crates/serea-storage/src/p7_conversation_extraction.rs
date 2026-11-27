@@ -5,6 +5,7 @@
 
 use super::{MemoryClass, MemoryDraft, MemoryKind, MemoryProvenance, P7ExperimentalMemory};
 use crate::{Store, StoreError};
+use rusqlite::OptionalExtension;
 use serea_protocol::EpochMillis;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 const SYNTHETIC_INPUT_MAX_BYTES: usize = 64 * 1024;
 const SYNTHETIC_CANDIDATE_MAX_BYTES: usize = 4096;
 const SYNTHETIC_LINEAGE_MAX_BYTES: usize = 1024;
+// Provisional test-only expiry; never a production lease guarantee.
+const TEST_EXTRACTION_LEASE_TTL_MS: i64 = 60_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConversationState {
@@ -129,6 +132,11 @@ pub(super) enum ExtractionError {
     InvalidSourceLineage,
     CandidateRejected,
     ExtractorFailed,
+    ConcurrentExtraction,
+    DailyLimitReached,
+    ClockRollback,
+    RequestConflict,
+    StaleGeneration,
     StorageFailed,
 }
 
@@ -233,105 +241,278 @@ pub(super) fn extract_and_save(
     now: EpochMillis,
 ) -> Result<SaveSummary, ExtractionError> {
     let validated = validate_conversation(memory, input)?;
-    let _admission = ExtractionAdmission::begin(memory, store, now)?;
-    let candidates = extractor.extract(&validated)?;
+    let admission = ExtractionAdmission::begin(
+        memory,
+        store,
+        request_id,
+        conversation_digest(&validated),
+        now,
+    )?;
+    let candidates = match extractor.extract(&validated) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            admission.abort(store)?;
+            return Err(error);
+        }
+    };
     if candidates.len() > crate::p7_gate_c::ACCEPTED_V1_BOUNDS.max_active_items {
+        admission.abort(store)?;
         return Err(ExtractionError::CandidateRejected);
     }
 
-    let mut summary = SaveSummary {
-        inserted: 0,
-        already_present: 0,
-    };
     let mut candidate_keys = BTreeSet::new();
+    let mut drafts = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         if !candidate_keys.insert(candidate.candidate_key.clone()) {
+            admission.abort(store)?;
             return Err(ExtractionError::CandidateRejected);
         }
-        let draft = validate_candidate(&validated, candidate, request_id)?;
-        match memory
-            .insert_once(store, &draft, now)
-            .map_err(map_storage_error)?
-        {
-            true => summary.inserted += 1,
-            false => summary.already_present += 1,
+        match validate_candidate(&validated, candidate, request_id) {
+            Ok(draft) => drafts.push(draft),
+            Err(error) => {
+                admission.abort(store)?;
+                return Err(error);
+            }
         }
     }
-    Ok(summary)
+    admission.commit(memory, store, &drafts, now)
 }
 
-/// Reuses P7's existing durable accounting row for the Owner-approved daily
-/// start and concurrent extraction ceilings. The bounds are read from ADR-0043
-/// and this guard is test-only with its containing module.
-struct ExtractionAdmission<'a> {
-    owner_id: &'a str,
-    store: &'a Store,
+/// Test-only persistent lease state. The TTL is deliberately provisional;
+/// the accepted 20/day and one concurrent/Owner limits come from Gate C.
+struct ExtractionAdmission {
+    owner_id: String,
+    request_id: String,
+    input_digest: [u8; 32],
+    generation: i64,
+    committed: Option<(SaveSummary, Vec<u8>)>,
 }
 
-impl<'a> ExtractionAdmission<'a> {
+enum AdmissionDecision {
+    Admitted(ExtractionAdmission),
+    Replay(ExtractionAdmission),
+    Refused(ExtractionError),
+}
+
+impl ExtractionAdmission {
     fn begin(
-        memory: &'a P7ExperimentalMemory,
-        store: &'a Store,
+        memory: &P7ExperimentalMemory,
+        store: &Store,
+        request_id: &ExtractionRequestId,
+        input_digest: [u8; 32],
         now: EpochMillis,
     ) -> Result<Self, ExtractionError> {
-        let bounds = crate::p7_gate_c::ACCEPTED_V1_BOUNDS;
-        let day = now.get().div_euclid(86_400_000).to_string();
-        store
-            .transact(|tx| {
-                super::ensure_ready(tx, &memory.owner_id)?;
-                let last_day: String = tx.inner.query_row(
-                    "SELECT utc_day FROM p7_resource_accounting WHERE owner_id=?1",
-                    [&memory.owner_id],
-                    |row| row.get(0),
-                )?;
-                let requested_day = day
-                    .parse::<i64>()
-                    .map_err(|_| StoreError::ConstraintViolation)?;
-                let previous_day = if last_day.is_empty() {
-                    None
-                } else {
-                    Some(
-                        last_day
-                            .parse::<i64>()
-                            .map_err(|_| StoreError::ConstraintViolation)?,
-                    )
-                };
-                if previous_day.is_some_and(|previous| requested_day < previous) {
-                    return Err(StoreError::ConstraintViolation);
+        let now_ms = now.get();
+        let day = now_ms.div_euclid(86_400_000);
+        let decision = store.transact(|tx| {
+            ensure_extraction_tables(tx)?;
+            super::ensure_ready(tx, &memory.owner_id)?;
+            let generation: i64 = tx.inner.query_row(
+                "SELECT generation FROM p7_ledger_state WHERE owner_id=?1 AND read_state='READY' AND pending_operation_id IS NULL",
+                [&memory.owner_id], |row| row.get(0),
+            )?;
+            tx.inner.execute(
+                "INSERT OR IGNORE INTO p7_extraction_clock(owner_id,last_observed_ms) VALUES(?1,?2)",
+                rusqlite::params![memory.owner_id, now_ms],
+            )?;
+            let last_seen: i64 = tx.inner.query_row(
+                "SELECT last_observed_ms FROM p7_extraction_clock WHERE owner_id=?1",
+                [&memory.owner_id], |row| row.get(0),
+            )?;
+            if now_ms < last_seen {
+                return Ok(AdmissionDecision::Refused(ExtractionError::ClockRollback));
+            }
+            tx.inner.execute(
+                "UPDATE p7_extraction_clock SET last_observed_ms=?2 WHERE owner_id=?1",
+                rusqlite::params![memory.owner_id, now_ms],
+            )?;
+
+            let prior: Option<(Vec<u8>, i64, String, i64, Option<Vec<u8>>, i64, i64)> = tx.inner.query_row(
+                "SELECT input_digest,captured_generation,state,expires_at_ms,candidate_digest,inserted_count,existing_count FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2",
+                rusqlite::params![memory.owner_id, request_id.0],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+            ).optional()?;
+            if let Some((prior_digest, prior_generation, state, expires, candidate_digest, inserted, existing)) = prior {
+                if prior_digest.as_slice() != input_digest {
+                    return Ok(AdmissionDecision::Refused(ExtractionError::RequestConflict));
                 }
-                let changed = tx.inner.execute(
-                    "UPDATE p7_resource_accounting SET extraction_starts_today=CASE WHEN utc_day=?2 THEN extraction_starts_today+1 ELSE 1 END,concurrent_extractions=concurrent_extractions+1,utc_day=?2 WHERE owner_id=?1 AND concurrent_extractions < ?3 AND (utc_day<>?2 OR extraction_starts_today < ?4)",
-                    rusqlite::params![memory.owner_id, day, bounds.concurrent_extractions_per_owner as i64, bounds.extraction_starts_per_utc_day as i64],
-                )?;
-                if changed == 1 {
-                    Ok(())
-                } else {
-                    Err(StoreError::ConstraintViolation)
+                if prior_generation != generation || state == "FENCED" {
+                    tx.inner.execute("UPDATE p7_extraction_admissions SET state='FENCED' WHERE owner_id=?1 AND request_id=?2 AND state<>'COMMITTED'", rusqlite::params![memory.owner_id, request_id.0])?;
+                    update_active_count(tx, &memory.owner_id)?;
+                    return Ok(AdmissionDecision::Refused(ExtractionError::StaleGeneration));
                 }
-            })
-            .map_err(map_storage_error)?;
-        Ok(Self {
-            owner_id: &memory.owner_id,
-            store,
-        })
+                if state == "COMMITTED" {
+                    let lease = ExtractionAdmission {
+                        owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), input_digest,
+                        generation, committed: Some((SaveSummary { inserted: inserted as usize, already_present: existing as usize }, candidate_digest.unwrap_or_default())),
+                    };
+                    return Ok(AdmissionDecision::Replay(lease));
+                }
+                if state == "ACTIVE" && expires > now_ms {
+                    return Ok(AdmissionDecision::Refused(ExtractionError::ConcurrentExtraction));
+                }
+                if state != "ACTIVE" && state != "EXPIRED" && state != "FAILED" {
+                    return Ok(AdmissionDecision::Refused(ExtractionError::StaleGeneration));
+                }
+                tx.inner.execute("UPDATE p7_extraction_admissions SET state='EXPIRED' WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE'", rusqlite::params![memory.owner_id, request_id.0])?;
+            }
+
+            tx.inner.execute("UPDATE p7_extraction_admissions SET state='FENCED' WHERE owner_id=?1 AND state='ACTIVE' AND captured_generation<>?2", rusqlite::params![memory.owner_id, generation])?;
+            tx.inner.execute("UPDATE p7_extraction_admissions SET state='EXPIRED' WHERE owner_id=?1 AND state='ACTIVE' AND expires_at_ms<=?2", rusqlite::params![memory.owner_id, now_ms])?;
+            let active: i64 = tx.inner.query_row("SELECT count(*) FROM p7_extraction_admissions WHERE owner_id=?1 AND state='ACTIVE'", [&memory.owner_id], |row| row.get(0))?;
+            if active >= crate::p7_gate_c::ACCEPTED_V1_BOUNDS.concurrent_extractions_per_owner as i64 {
+                update_active_count(tx, &memory.owner_id)?;
+                return Ok(AdmissionDecision::Refused(ExtractionError::ConcurrentExtraction));
+            }
+            let (stored_day, starts): (String, i64) = tx.inner.query_row("SELECT utc_day,extraction_starts_today FROM p7_resource_accounting WHERE owner_id=?1", [&memory.owner_id], |row| Ok((row.get(0)?,row.get(1)?)))?;
+            let previous_day = if stored_day.is_empty() { None } else { Some(stored_day.parse::<i64>().map_err(|_| StoreError::ConstraintViolation)?) };
+            if previous_day.is_some_and(|previous| day < previous) {
+                return Ok(AdmissionDecision::Refused(ExtractionError::ClockRollback));
+            }
+            let starts_today = if previous_day == Some(day) { starts } else { 0 };
+            if starts_today >= crate::p7_gate_c::ACCEPTED_V1_BOUNDS.extraction_starts_per_utc_day as i64 {
+                update_active_count(tx, &memory.owner_id)?;
+                return Ok(AdmissionDecision::Refused(ExtractionError::DailyLimitReached));
+            }
+            let expires = now_ms.checked_add(TEST_EXTRACTION_LEASE_TTL_MS).ok_or(StoreError::Sqlite)?;
+            let changed = tx.inner.execute(
+                "INSERT INTO p7_extraction_admissions(owner_id,request_id,input_digest,captured_generation,admitted_at_ms,expires_at_ms,utc_day,state) VALUES(?1,?2,?3,?4,?5,?6,?7,'ACTIVE') ON CONFLICT(owner_id,request_id) DO UPDATE SET admitted_at_ms=excluded.admitted_at_ms,expires_at_ms=excluded.expires_at_ms,utc_day=excluded.utc_day,state='ACTIVE',candidate_digest=NULL,inserted_count=0,existing_count=0 WHERE input_digest=excluded.input_digest AND captured_generation=excluded.captured_generation AND state IN ('EXPIRED','FAILED')",
+                rusqlite::params![memory.owner_id, request_id.0, input_digest.as_slice(), generation, now_ms, expires, day],
+            )?;
+            if changed != 1 { return Ok(AdmissionDecision::Refused(ExtractionError::RequestConflict)); }
+            tx.inner.execute("UPDATE p7_resource_accounting SET extraction_starts_today=?2,utc_day=?3 WHERE owner_id=?1", rusqlite::params![memory.owner_id, starts_today + 1, day.to_string()])?;
+            update_active_count(tx, &memory.owner_id)?;
+            Ok(AdmissionDecision::Admitted(ExtractionAdmission { owner_id: memory.owner_id.clone(), request_id: request_id.0.clone(), input_digest, generation, committed: None }))
+        }).map_err(map_storage_error)?;
+        match decision {
+            AdmissionDecision::Admitted(lease) | AdmissionDecision::Replay(lease) => Ok(lease),
+            AdmissionDecision::Refused(error) => Err(error),
+        }
+    }
+
+    fn abort(&self, store: &Store) -> Result<(), ExtractionError> {
+        store.transact(|tx| {
+            tx.inner.execute("UPDATE p7_extraction_admissions SET state='FAILED' WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE' AND captured_generation=?3", rusqlite::params![self.owner_id, self.request_id, self.generation])?;
+            update_active_count(tx, &self.owner_id)
+        }).map_err(map_storage_error)
+    }
+
+    fn commit(
+        &self,
+        memory: &P7ExperimentalMemory,
+        store: &Store,
+        drafts: &[MemoryDraft],
+        now: EpochMillis,
+    ) -> Result<SaveSummary, ExtractionError> {
+        let digest = drafts_digest(drafts);
+        if let Some((summary, prior_digest)) = &self.committed {
+            return if prior_digest.as_slice() == digest {
+                Ok(*summary)
+            } else {
+                Err(ExtractionError::RequestConflict)
+            };
+        }
+        let now_ms = now.get();
+        let result = store.transact(|tx| {
+            super::ensure_ready(tx, &self.owner_id)?;
+            let generation: i64 = tx.inner.query_row("SELECT generation FROM p7_ledger_state WHERE owner_id=?1 AND read_state='READY' AND pending_operation_id IS NULL", [&self.owner_id], |row| row.get(0))?;
+            let operation: Option<(Vec<u8>, i64, i64, String)> = tx.inner.query_row("SELECT input_digest,captured_generation,expires_at_ms,state FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2", rusqlite::params![self.owner_id,self.request_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
+            let (input_digest, captured, expires, state) = operation.ok_or(StoreError::ConstraintViolation)?;
+            if input_digest.as_slice() != self.input_digest || captured != self.generation || generation != self.generation || state != "ACTIVE" || now_ms >= expires { return Err(StoreError::ConstraintViolation); }
+            let mut inserted = 0;
+            let mut existing = 0;
+            for (index, draft) in drafts.iter().enumerate() {
+                if memory.insert_once_in_tx(tx, draft, now)? { inserted += 1; } else { existing += 1; }
+                if index == 0 && std::env::var_os("SEREA_P7_CRASH_DURING_EXTRACTION_COMMIT").is_some() {
+                    std::process::exit(74);
+                }
+            }
+            let digest = drafts_digest(drafts);
+            let changed = tx.inner.execute("UPDATE p7_extraction_admissions SET state='COMMITTED',candidate_digest=?4,inserted_count=?5,existing_count=?6 WHERE owner_id=?1 AND request_id=?2 AND state='ACTIVE' AND captured_generation=?3 AND expires_at_ms>?7", rusqlite::params![self.owner_id,self.request_id,self.generation,digest.as_slice(),inserted as i64,existing as i64,now_ms])?;
+            if changed != 1 { return Err(StoreError::ConstraintViolation); }
+            update_active_count(tx, &self.owner_id)?;
+            Ok(SaveSummary { inserted: inserted as usize, already_present: existing as usize })
+        });
+        match result {
+            Ok(summary) => Ok(summary),
+            Err(error) => {
+                // The candidate transaction has rolled back. Release the
+                // durable admission on ordinary errors; process death skips
+                // this path and is recovered by expiry on the next admission.
+                let _ = self.abort(store);
+                Err(map_storage_error(error))
+            }
+        }
     }
 }
 
-impl Drop for ExtractionAdmission<'_> {
-    fn drop(&mut self) {
-        let _ = self.store.transact(|tx| {
-            super::ensure_ready(tx, self.owner_id)?;
-            let changed = tx.inner.execute(
-                "UPDATE p7_resource_accounting SET concurrent_extractions=concurrent_extractions-1 WHERE owner_id=?1 AND concurrent_extractions > 0",
-                [self.owner_id],
-            )?;
-            if changed == 1 {
-                Ok(())
-            } else {
-                Err(StoreError::ConstraintViolation)
-            }
-        });
+fn ensure_extraction_tables(tx: &mut crate::Tx<'_>) -> Result<(), StoreError> {
+    tx.inner.execute_batch("CREATE TABLE IF NOT EXISTS p7_extraction_clock(owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id),last_observed_ms INTEGER NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS p7_extraction_admissions(owner_id TEXT NOT NULL REFERENCES p7_owners(owner_id),request_id TEXT NOT NULL,input_digest BLOB NOT NULL CHECK(length(input_digest)=32),captured_generation INTEGER NOT NULL,admitted_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL,utc_day INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('ACTIVE','COMMITTED','EXPIRED','FAILED','FENCED')),candidate_digest BLOB,inserted_count INTEGER NOT NULL DEFAULT 0,existing_count INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(owner_id,request_id)) STRICT;")?;
+    Ok(())
+}
+
+fn update_active_count(tx: &mut crate::Tx<'_>, owner_id: &str) -> Result<(), StoreError> {
+    tx.inner.execute("UPDATE p7_resource_accounting SET concurrent_extractions=(SELECT count(*) FROM p7_extraction_admissions WHERE owner_id=?1 AND state='ACTIVE') WHERE owner_id=?1", [owner_id])?;
+    Ok(())
+}
+
+fn hash_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value);
+}
+
+fn conversation_digest(conversation: &ValidatedConversation) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    hash_field(&mut digest, conversation.owner_id.as_bytes());
+    hash_field(&mut digest, conversation.conversation_id.as_bytes());
+    for turn in &conversation.turns {
+        hash_field(&mut digest, turn.turn_id.as_bytes());
+        hash_field(&mut digest, turn.text.as_bytes());
+        hash_field(&mut digest, class_code(turn.classification).as_bytes());
+        hash_field(&mut digest, origin_code(turn.origin).as_bytes());
+        hash_field(
+            &mut digest,
+            &[match turn.role {
+                TurnRole::User => 1,
+                TurnRole::Assistant => 2,
+            }],
+        );
+        for source in &turn.source_lineage {
+            hash_field(&mut digest, source.source_id.as_bytes());
+            hash_field(&mut digest, class_code(source.classification).as_bytes());
+            hash_field(&mut digest, origin_code(source.origin).as_bytes());
+        }
     }
+    digest.finalize().into()
+}
+
+fn drafts_digest(drafts: &[MemoryDraft]) -> [u8; 32] {
+    let mut ordered: Vec<_> = drafts.iter().collect();
+    ordered.sort_by(|left, right| left.memory_id.cmp(&right.memory_id));
+    let mut digest = Sha256::new();
+    for draft in ordered {
+        hash_field(&mut digest, draft.memory_id.as_bytes());
+        hash_field(&mut digest, draft.body.as_bytes());
+        hash_field(&mut digest, draft.provenance.source_id.as_bytes());
+        hash_field(&mut digest, draft.kind.name().as_bytes());
+        hash_field(
+            &mut digest,
+            class_code(match draft.class {
+                MemoryClass::Public => DataClass::Public,
+                MemoryClass::Personal => DataClass::Personal,
+            })
+            .as_bytes(),
+        );
+        hash_field(
+            &mut digest,
+            class_code(match draft.provenance.source_class {
+                MemoryClass::Public => DataClass::Public,
+                MemoryClass::Personal => DataClass::Personal,
+            })
+            .as_bytes(),
+        );
+    }
+    digest.finalize().into()
 }
 
 fn validate_conversation(
@@ -579,10 +760,15 @@ mod tests {
     use crate::{Store, experimental_memory::P7ExperimentalMemory};
     use rusqlite::params;
     use serea_protocol::{Clock, ProtocolError};
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Barrier};
 
     const OWNER: &str = "own_00000000000000000000000000000071";
     const OTHER_OWNER: &str = "own_00000000000000000000000000000072";
     const NOW_MS: i64 = 1_800_000_000_000;
+    static NEXT_CRASH_DB: AtomicU64 = AtomicU64::new(1);
 
     struct FixedClock;
     impl Clock for FixedClock {
@@ -611,6 +797,187 @@ mod tests {
             })
             .unwrap();
         (store, P7ExperimentalMemory::fake(OWNER.to_owned(), 71))
+    }
+
+    fn seed_file_store(path: &Path) {
+        let store = Store::open(path, &FixedClock).unwrap();
+        store
+            .transact(|tx| {
+                tx.inner.execute(
+                    "INSERT INTO p7_owners VALUES(?1,71,'ACTIVE',?2)",
+                    params![OWNER, NOW_MS],
+                )?;
+                tx.inner.execute(
+                    "INSERT INTO p7_resource_accounting(owner_id) VALUES(?1)",
+                    [OWNER],
+                )?;
+                tx.inner.execute(
+                    "INSERT INTO p7_ledger_state(owner_id,read_state) VALUES(?1,'READY')",
+                    [OWNER],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn crash_input_and_candidates() -> (CompletedConversation, Vec<MemoryCandidate>) {
+        let input = conversation(vec![turn(
+            "crash-turn",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "crash-source",
+                DataClass::Public,
+                DataOrigin::UserAuthored,
+            )],
+        )]);
+        let first = MemoryCandidate {
+            candidate_key: "crash-one".into(),
+            body: "synthetic crash first".into(),
+            classification: DataClass::Public,
+            source_ids: vec!["crash-turn".into(), "crash-source".into()],
+            kind: MemoryKind::Episodic,
+        };
+        let second = MemoryCandidate {
+            candidate_key: "crash-two".into(),
+            body: "synthetic crash second".into(),
+            classification: DataClass::Public,
+            source_ids: vec!["crash-turn".into(), "crash-source".into()],
+            kind: MemoryKind::Episodic,
+        };
+        (input, vec![first, second])
+    }
+
+    #[test]
+    fn extraction_process_child_entry() {
+        let Ok(path) = std::env::var("SEREA_P7_C06_CRASH_DB") else {
+            return;
+        };
+        let store = Store::open(Path::new(&path), &FixedClock).unwrap();
+        let memory = P7ExperimentalMemory::fake(OWNER.to_owned(), 71);
+        let (input, candidates) = crash_input_and_candidates();
+        let _ = extract_and_save(
+            &memory,
+            &store,
+            &input,
+            &ExtractionRequestId::new("process-crash-request").unwrap(),
+            &CandidateFixtureExtractor { candidates },
+            EpochMillis::new(NOW_MS).unwrap(),
+        );
+        panic!("the crash seam should exit while the final SQLite transaction is open");
+    }
+
+    #[test]
+    fn process_death_mid_batch_recovers_by_expiry_without_partial_memory_rows() {
+        let dir = std::env::temp_dir().join(format!(
+            "serea-c06-extraction-{}-{}",
+            std::process::id(),
+            NEXT_CRASH_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("synthetic.sqlite");
+        seed_file_store(&path);
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("experimental_memory::p7_conversation_extraction::tests::extraction_process_child_entry")
+            .arg("--nocapture")
+            .env("SEREA_P7_C06_CRASH_DB", &path)
+            .env("SEREA_P7_CRASH_DURING_EXTRACTION_COMMIT", "1")
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .status().unwrap();
+        assert_eq!(status.code(), Some(74));
+
+        let store = Store::open(&path, &FixedClock).unwrap();
+        let memory = P7ExperimentalMemory::fake(OWNER.to_owned(), 71);
+        let (rows, starts, active, operation_state): (i64, i64, i64, String) = store.transact(|tx| Ok((
+            tx.inner.query_row("SELECT count(*) FROM p7_memory_items WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+            tx.inner.query_row("SELECT extraction_starts_today FROM p7_resource_accounting WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+            tx.inner.query_row("SELECT concurrent_extractions FROM p7_resource_accounting WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+            tx.inner.query_row("SELECT state FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id='process-crash-request'", [OWNER], |row| row.get(0))?,
+        ))).unwrap();
+        assert_eq!(
+            (rows, starts, active, operation_state.as_str()),
+            (0, 1, 1, "ACTIVE")
+        );
+
+        let (input, candidates) = crash_input_and_candidates();
+        let recovered = extract_and_save(
+            &memory,
+            &store,
+            &input,
+            &ExtractionRequestId::new("process-crash-request").unwrap(),
+            &CandidateFixtureExtractor { candidates },
+            EpochMillis::new(NOW_MS + TEST_EXTRACTION_LEASE_TTL_MS + 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered,
+            SaveSummary {
+                inserted: 2,
+                already_present: 0
+            }
+        );
+        let rows: i64 = store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT count(*) FROM p7_memory_items WHERE owner_id=?1",
+                    [OWNER],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(rows, 2);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn independent_file_connections_admit_only_one_active_owner_extraction() {
+        let dir = std::env::temp_dir().join(format!(
+            "serea-c06-admission-race-{}-{}",
+            std::process::id(),
+            NEXT_CRASH_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("synthetic.sqlite");
+        seed_file_store(&path);
+        let path = Arc::new(path);
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = (0..2)
+            .map(|index| {
+                let path = Arc::clone(&path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let store = Store::open(path.as_path(), &FixedClock).unwrap();
+                    let memory = P7ExperimentalMemory::fake(OWNER.to_owned(), 71);
+                    let request = ExtractionRequestId::new(format!("parallel-{index}")).unwrap();
+                    barrier.wait();
+                    ExtractionAdmission::begin(
+                        &memory,
+                        &store,
+                        &request,
+                        [3u8; 32],
+                        EpochMillis::new(NOW_MS).unwrap(),
+                    )
+                    .is_ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        let admitted = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .filter(|admitted| *admitted)
+            .count();
+        assert_eq!(admitted, 1);
+        let store = Store::open(path.as_path(), &FixedClock).unwrap();
+        let counts: (i64, i64) = store.transact(|tx| Ok((
+            tx.inner.query_row("SELECT concurrent_extractions FROM p7_resource_accounting WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+            tx.inner.query_row("SELECT extraction_starts_today FROM p7_resource_accounting WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+        ))).unwrap();
+        assert_eq!(counts, (1, 1));
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn source(id: &str, class: DataClass, origin: DataOrigin) -> SourceLineage {
@@ -795,8 +1162,8 @@ mod tests {
             )
             .unwrap(),
             SaveSummary {
-                inserted: 0,
-                already_present: 1
+                inserted: 1,
+                already_present: 0
             }
         );
         assert_eq!(
@@ -806,6 +1173,28 @@ mod tests {
                 already_present: 1
             }
         );
+        assert_eq!(
+            extract(
+                &store,
+                &memory,
+                &input,
+                "same-request",
+                vec![MemoryCandidate {
+                    candidate_key: "stable-preference".into(),
+                    body: "different content under a committed request".into(),
+                    classification: DataClass::Public,
+                    source_ids: vec!["turn-1".into(), "public-source".into()],
+                    kind: MemoryKind::Preference,
+                }],
+            ),
+            Err(ExtractionError::RequestConflict)
+        );
+        let mut changed_input = input.clone();
+        changed_input.turns[0].text.push_str(" modified");
+        assert_eq!(
+            extract(&store, &memory, &changed_input, "same-request", vec![]),
+            Err(ExtractionError::RequestConflict)
+        );
         let count: i64 = store
             .transact(|tx| {
                 Ok(tx
@@ -814,6 +1203,117 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_storage_failure_after_the_first_candidate_rolls_back_the_entire_batch() {
+        let (store, memory) = setup();
+        let input = conversation(vec![turn(
+            "turn-1",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "public-source",
+                DataClass::Public,
+                DataOrigin::Other,
+            )],
+        )]);
+        let second_id = deterministic_memory_id(OWNER, "conversation-c05", "second");
+        store.transact(|tx| {
+            tx.inner.execute_batch(&format!(
+                "CREATE TRIGGER reject_second_provenance BEFORE INSERT ON p7_memory_provenance WHEN NEW.memory_id='{second_id}' BEGIN SELECT RAISE(ABORT,'synthetic middle write failure'); END;"
+            ))?;
+            Ok(())
+        }).unwrap();
+        let first = candidate(DataClass::Public, &["turn-1", "public-source"]);
+        let second = MemoryCandidate {
+            candidate_key: "second".into(),
+            body: "second synthetic fact".into(),
+            classification: DataClass::Public,
+            source_ids: vec!["turn-1".into(), "public-source".into()],
+            kind: MemoryKind::Episodic,
+        };
+        assert_eq!(
+            extract(&store, &memory, &input, "atomic-batch", vec![first, second]),
+            Err(ExtractionError::StorageFailed)
+        );
+        let (items, provenance, fts, active): (i64, i64, i64, i64) = store.transact(|tx| Ok((
+            tx.inner.query_row("SELECT count(*) FROM p7_memory_items", [], |row| row.get(0))?,
+            tx.inner.query_row("SELECT count(*) FROM p7_memory_provenance", [], |row| row.get(0))?,
+            tx.inner.query_row("SELECT count(*) FROM p7_memory_fts", [], |row| row.get(0))?,
+            tx.inner.query_row("SELECT concurrent_extractions FROM p7_resource_accounting WHERE owner_id=?1", [OWNER], |row| row.get(0))?,
+        ))).unwrap();
+        assert_eq!((items, provenance, fts), (0, 0, 0));
+        assert_eq!(
+            active, 0,
+            "ordinary storage failure releases persistent admission"
+        );
+    }
+
+    struct ForgetDuringExtraction<'a> {
+        store: &'a Store,
+    }
+    impl MemoryExtractor for ForgetDuringExtraction<'_> {
+        fn extract(
+            &self,
+            _conversation: &ValidatedConversation,
+        ) -> Result<Vec<MemoryCandidate>, ExtractionError> {
+            // Models a completed authenticated Forget between admission and the final save.
+            self.store
+                .transact(|tx| {
+                    tx.inner.execute(
+                        "UPDATE p7_ledger_state SET generation=generation+1 WHERE owner_id=?1",
+                        [OWNER],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            Ok(vec![candidate(
+                DataClass::Public,
+                &["turn-1", "public-source"],
+            )])
+        }
+    }
+
+    #[test]
+    fn completed_forget_generation_fences_an_already_running_extraction() {
+        let (store, memory) = setup();
+        let input = conversation(vec![turn(
+            "turn-1",
+            Some("conversation-c05"),
+            TurnState::Complete,
+            DataClass::Public,
+            vec![source(
+                "public-source",
+                DataClass::Public,
+                DataOrigin::Other,
+            )],
+        )]);
+        assert_eq!(
+            extract_and_save(
+                &memory,
+                &store,
+                &input,
+                &ExtractionRequestId::new("forget-race").unwrap(),
+                &ForgetDuringExtraction { store: &store },
+                EpochMillis::new(NOW_MS).unwrap(),
+            ),
+            Err(ExtractionError::StorageFailed)
+        );
+        let count: i64 = store
+            .transact(|tx| {
+                Ok(tx
+                    .inner
+                    .query_row("SELECT count(*) FROM p7_memory_items", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        let state: (i64, i64, String) = store.transact(|tx| Ok(tx.inner.query_row(
+            "SELECT l.generation,r.concurrent_extractions,a.state FROM p7_ledger_state l JOIN p7_resource_accounting r USING(owner_id) JOIN p7_extraction_admissions a USING(owner_id) WHERE l.owner_id=?1",
+            [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        )?)).unwrap();
+        assert_eq!(state, (1, 0, "FAILED".into()));
     }
 
     #[test]
@@ -1277,20 +1777,52 @@ mod tests {
     #[test]
     fn extraction_admission_reuses_accepted_daily_and_concurrency_limits() {
         let (store, memory) = setup();
-        let now = EpochMillis::new(NOW_MS).unwrap();
-        let held = ExtractionAdmission::begin(&memory, &store, now).unwrap();
+        let request_id = |n| ExtractionRequestId::new(format!("admission-{n}")).unwrap();
+        let mut now_ms = NOW_MS;
+        let first_id = request_id(0);
+        let digest = [9u8; 32];
+        let _lease = ExtractionAdmission::begin(
+            &memory,
+            &store,
+            &first_id,
+            digest,
+            EpochMillis::new(now_ms).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            ExtractionAdmission::begin(&memory, &store, now).err(),
-            Some(ExtractionError::StorageFailed)
+            ExtractionAdmission::begin(
+                &memory,
+                &store,
+                &request_id(1),
+                digest,
+                EpochMillis::new(now_ms).unwrap(),
+            )
+            .err(),
+            Some(ExtractionError::ConcurrentExtraction)
         );
-        drop(held);
 
-        for _ in 1..crate::p7_gate_c::ACCEPTED_V1_BOUNDS.extraction_starts_per_utc_day {
-            drop(ExtractionAdmission::begin(&memory, &store, now).unwrap());
+        for n in 1..crate::p7_gate_c::ACCEPTED_V1_BOUNDS.extraction_starts_per_utc_day {
+            now_ms += TEST_EXTRACTION_LEASE_TTL_MS + 1;
+            ExtractionAdmission::begin(
+                &memory,
+                &store,
+                &request_id(n),
+                digest,
+                EpochMillis::new(now_ms).unwrap(),
+            )
+            .unwrap();
         }
+        now_ms += TEST_EXTRACTION_LEASE_TTL_MS + 1;
         assert_eq!(
-            ExtractionAdmission::begin(&memory, &store, now).err(),
-            Some(ExtractionError::StorageFailed)
+            ExtractionAdmission::begin(
+                &memory,
+                &store,
+                &request_id(21),
+                digest,
+                EpochMillis::new(now_ms).unwrap(),
+            )
+            .err(),
+            Some(ExtractionError::DailyLimitReached)
         );
 
         let (starts, concurrent, day): (i64, i64, String) = store
@@ -1304,11 +1836,11 @@ mod tests {
             .unwrap();
         assert_eq!(starts, 20);
         assert_eq!(concurrent, 0);
-        assert_eq!(day, NOW_MS.div_euclid(86_400_000).to_string());
+        assert_eq!(day, now_ms.div_euclid(86_400_000).to_string());
 
-        let next_day = EpochMillis::new(NOW_MS + 86_400_000).unwrap();
-        let next_day_reservation = ExtractionAdmission::begin(&memory, &store, next_day).unwrap();
-        drop(next_day_reservation);
+        let next_day_ms = NOW_MS + 86_400_000;
+        let next_day = EpochMillis::new(next_day_ms).unwrap();
+        ExtractionAdmission::begin(&memory, &store, &request_id(22), digest, next_day).unwrap();
         let starts_next_day: i64 = store
             .transact(|tx| {
                 Ok(tx.inner.query_row(
@@ -1320,8 +1852,15 @@ mod tests {
             .unwrap();
         assert_eq!(starts_next_day, 1);
         assert_eq!(
-            ExtractionAdmission::begin(&memory, &store, now).err(),
-            Some(ExtractionError::StorageFailed)
+            ExtractionAdmission::begin(
+                &memory,
+                &store,
+                &request_id(23),
+                digest,
+                EpochMillis::new(now_ms).unwrap()
+            )
+            .err(),
+            Some(ExtractionError::ClockRollback)
         );
     }
 }

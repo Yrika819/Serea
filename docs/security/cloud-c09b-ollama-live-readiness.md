@@ -88,6 +88,16 @@ The C-09B Cloud changes relative to Base are in:
 - `android/app/src/test/java/app/serea/android/CloudProviderRegistryTest.kt` and `OllamaCloudAdapterTest.kt` — synthetic route, provider and failure coverage.
 - `docs/security/cloud-c09b-ollama-live-readiness.md` — this implementation record.
 
-Local work also edits `MainActivity.kt`. During any future integration, review and combine individual Cloud Settings changes with the local Chat/Core/ownership changes; do not replace the whole file from this branch. C-09BR does not edit `MainActivity.kt`, Chat/Core composition, Gradle, signing or campaign scripts. The only C-09BR code change is `android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt`.
+Local work also edits `MainActivity.kt`. During any future integration, review and combine individual Cloud Settings changes with the local Chat/Core/ownership changes; do not replace the whole file from this branch. C-09BR does not edit `MainActivity.kt`, Chat/Core composition, Gradle, signing or campaign scripts. C-09BR changes only Android instrumentation test expectations in `android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt` and `android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt`.
 
 The corrected Formal suite, Android Required Gate, and APK provenance must be checked on the resulting exact C-09BR HEAD before providing an APK candidate. An emulator APK is not evidence of physical-device compatibility or package/signature coexistence. Any Owner-installed candidate remains subject to exact artifact digest, signing-certificate and package-ID review; do not overwrite an existing app or profile with personal data.
+
+### Formal follow-up on `f2fa66f30491a7d09e475fbd76d250aff29ecc81`
+
+After the first correction, API 26 and API 35 both passed all 19 `SereaAppShellTest` cases, including the three recovered tests. Each then exposed the same three stale assumptions in the 16-test `ChatScreenTest` group:
+
+- `correctedSoftLimitInputCanBeSavedAndRestored` entered 21, but the approved daily-request cap is 20. It now saves and restores 19, a valid value below the cap.
+- `softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch` used 101 while the current monthly default is 200, so that value is valid. The mismatch case now uses 201.
+- `previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled` looked for a removed “Cloud connection test” button. It now checks the current “合成probeを1回送信” action remains disabled without credential/free-use confirmation.
+
+The three test identities and all unrelated validation assertions remain. These are test-expectation corrections to the current Cloud limits and Settings UI; no provider behavior changed. The same run's Personal Beta identity job failed before tests because Maven Central returned HTTP 429 while downloading `failureaccess-1.0.3.jar` and `error_prone_annotations-2.50.0.jar`; the failed build means that identity result is not a product test result and requires a failed-job retry on the corrected HEAD.

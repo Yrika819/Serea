@@ -375,7 +375,7 @@ impl SyntheticCoordinator {
         if db.exists() || ledger.exists() || checkpoint_path.exists() {
             return Err(StoreError::Open);
         }
-        let store = Store::open(db, &TestClock)?;
+        let store = Store::open_p7_integration_fixture(db, &TestClock)?;
         let owner = OwnerId::parse(OWNER).unwrap();
         let keys = SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap();
         let mut replay = EvidenceReplayGuard::default();
@@ -428,7 +428,7 @@ impl SyntheticCoordinator {
         let checkpoint = PersistentCheckpointStore::open_existing(checkpoint_path, &keys)
             .map_err(|_| StoreError::Open)?;
         let coordinator = Self {
-            store: Store::open(db, &TestClock)?,
+            store: Store::open_p7_integration_fixture(db, &TestClock)?,
             memory: P7ExperimentalMemory::fake(OWNER.into(), OWNER_EPOCH),
             ledger_path: ledger.to_path_buf(),
             owner: OwnerId::parse(OWNER).unwrap(),

@@ -7,6 +7,7 @@ use sha2::{Digest as _, Sha256};
 use crate::StoreError;
 
 /// An immutable embedded migration. Applied versions are never reused or edited.
+#[derive(Clone, Copy)]
 pub struct Migration {
     /// Contiguous schema version, starting at one.
     pub version: u32,
@@ -75,10 +76,25 @@ impl Migrations {
         8
     };
 
-    /// The migration sources in deterministic order for the selected build.
-    /// The P7-only development feature appends version 9; default builds remain v8.
+    /// The migration sources for ordinary Store opens. These remain at v8 in
+    /// every non-test build, including explicit P7 development feature builds.
     pub fn embedded() -> &'static [Migration] {
         &EMBEDDED
+    }
+
+    /// Catalog for an explicitly isolated synthetic P7 fixture database.
+    /// This does not change the ordinary Store::open catalog in dev builds.
+    #[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
+    pub fn p7_integration_fixture() -> Vec<Migration> {
+        let mut catalog = EMBEDDED.to_vec();
+        if catalog.last().is_none_or(|migration| migration.version < 9) {
+            catalog.push(Migration {
+                version: 9,
+                name: "test-fixture-p7-experimental-memory-v9",
+                sql: include_str!("../tests/fixtures/p7_experimental_memory_v9.sql"),
+            });
+        }
+        catalog
     }
 
     /// SHA-256 of the raw migration bytes, NOT SCJ-1 canonical JSON. No trimming,

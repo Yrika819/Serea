@@ -577,7 +577,7 @@ TESTS
       else
         gradle_result=1
         if [[ "$diagnostics_result" -ne 0 ]]; then
-          echo "Full 105-test instrumentation was NOT_RUN because a bounded diagnostic stage failed; see stages/ evidence." \
+          echo "Full 106-test instrumentation was NOT_RUN because a bounded diagnostic stage failed; see stages/ evidence." \
             > "$evidence/junit-verification.log"
           printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt"
         else
@@ -660,11 +660,11 @@ TESTS
 
   if [[ -d "$evidence/junit" ]]; then
     python3 "$tool_dir/verify_android_instrumentation.py" "$evidence/junit" \
-      --source-root app/src/androidTest/java --minimum 105 --exact-count 105 \
+      --source-root app/src/androidTest/java --minimum 106 --exact-count 106 \
       --required-test-manifest "$tool_dir/android-instrumentation-required-tests.txt" \
       --additional-test-manifest "$tool_dir/android-instrumentation-additional-tests.txt" \
       --non-required-test-manifest app/src/androidTest/assets/serea-non-required-test-identities.txt \
-      --required-count 103 --additional-count 2 \
+      --required-count 103 --additional-count 3 \
       --api-level "$api_level" --profile-verifier-log "$evidence/logcat-live.txt" \
       --require-class app.serea.android.EncryptedHistoryTest=17 \
       --require-class app.serea.android.ChatScreenTest=16 \

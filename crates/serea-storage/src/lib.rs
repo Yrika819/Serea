@@ -26,7 +26,8 @@ mod capability_registry_tests;
 mod classify;
 mod error;
 mod event;
-#[cfg(all(feature = "p7-experimental", test))]
+#[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
+#[allow(dead_code, unused_imports)]
 mod experimental_memory;
 mod lease;
 mod lifecycle;
@@ -86,10 +87,18 @@ pub use event::{
     EventReplayPage, EventRetentionReport, MAX_EVENT_REPLAY_PAGE, MAX_RETENTION_DELETE_BATCH,
     ReplayItem,
 };
-#[cfg(all(feature = "p7-experimental", test))]
+#[cfg(all(feature = "p7-integration-dev", debug_assertions))]
+pub use experimental_memory::P7DevExtractionError;
+#[cfg(all(feature = "p7-integration-dev", debug_assertions))]
+pub use experimental_memory::p7_integrated_recovery::{
+    P7DevCompletedConversation, P7DevConnection, P7DevForgetStatus, P7DevTurn, P7DevTurnClass,
+    P7DevTurnRole,
+};
+#[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
 pub use experimental_memory::{
     EXPERIMENTAL_PROVISIONAL, ExperimentalMemoryConfig, MemoryClass, MemoryDraft, MemoryKind,
-    MemoryPage, MemoryProvenance, MemoryRecord, ProvisionalValue,
+    MemoryPage, MemoryProvenance, MemoryRecord, MemoryRetrievalEntry, MemoryRetrievalPage,
+    ProvisionalValue,
 };
 
 #[cfg(all(feature = "p7-experimental", not(debug_assertions)))]

@@ -52,7 +52,25 @@ impl Store {
     /// preflight before any persistent connection setting or migration write.
     /// SQLite may create transient WAL sidecars even during read-only inspection.
     pub fn open(path: &Path, clock: &dyn Clock) -> Result<Self, StoreError> {
-        let catalog = Migrations::embedded();
+        Self::open_with_catalog(path, clock, Migrations::embedded())
+    }
+
+    /// Opens a P7 fixture database using its isolated test catalog. Only the
+    /// synthetic connection fixture calls this; ordinary Store::open remains v8.
+    #[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
+    pub(crate) fn open_p7_integration_fixture(
+        path: &Path,
+        clock: &dyn Clock,
+    ) -> Result<Self, StoreError> {
+        let catalog = Migrations::p7_integration_fixture();
+        Self::open_with_catalog(path, clock, &catalog)
+    }
+
+    fn open_with_catalog(
+        path: &Path,
+        clock: &dyn Clock,
+        catalog: &[crate::Migration],
+    ) -> Result<Self, StoreError> {
         migrate::validate_catalog(catalog)?;
         let now = clock.now_ms().map_err(StoreError::Clock)?;
         let fresh = match std::fs::metadata(path) {
@@ -163,7 +181,7 @@ impl Store {
 
     /// Executes an experimental P7 query while SQLite itself rejects writes.
     /// The flag is restored on ordinary errors and Rust unwinding.
-    #[cfg(all(feature = "p7-experimental", test))]
+    #[cfg(all(feature = "p7-experimental", any(test, feature = "p7-integration-dev")))]
     pub(crate) fn p7_read_only<T>(
         &self,
         body: impl FnOnce(&mut Connection) -> Result<T, StoreError>,

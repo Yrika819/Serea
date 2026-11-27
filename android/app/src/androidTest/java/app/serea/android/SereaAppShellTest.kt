@@ -1468,7 +1468,7 @@ class SereaAppShellTest {
 
     @Test fun chatSettingsBackKeepsCredentialScreenshotProtectionScoped() {
         compose.onNodeWithTag("open_settings").performClick()
-        compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
         compose.waitUntil(5_000) {
             compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
         }
@@ -1576,7 +1576,7 @@ class SereaAppShellTest {
         select(SereaDestination.GMAIL)
         select(SereaDestination.SETTINGS)
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("DEMO / 架空のメール — 実アカウントには接続していません").assertIsDisplayed()
         pressBack()
@@ -2168,7 +2168,6 @@ class SereaAppShellTest {
             select(SereaDestination.SETTINGS)
             fontScaleStage("settings-destination-selected")
             compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
-            compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("DEMO · Cloud送信: 無効", substring = false).performScrollTo().assertIsDisplayed()
             pressBack()
             compose.onNodeWithTag("tasks_heading").assertIsDisplayed()

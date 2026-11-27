@@ -6,6 +6,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -133,6 +136,56 @@ class CloudProviderRegistryTest {
         assertEquals(UsageLedgerState.SETTLED.name, dao.reservation("send-b")?.state)
         assertFalse(a.capabilities.supportsStreaming)
         assertTrue(b.capabilities.supportsStreaming)
+    }
+
+    @Test fun syntheticOllamaProbeRunsThroughEgressUsageRouterAndMockTransport() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setBody("""{"message":{"content":"synthetic probe reply"},"done":true,"prompt_eval_count":16,"eval_count":4}"""))
+            val dao = MemoryUsageDao()
+            val port = CloudCandidatePort.create(
+                credentials = object : CredentialReader { override fun readForRequest() = "test-key-only" },
+                usage = UsageRepository(dao),
+                testEndpoint = server.url("/api/chat"),
+                testClient = OkHttpClient(),
+            )
+
+            val reply = port.runFixedPublicContractProbe()
+            val sent = server.takeRequest()
+            val body = sent.body.readUtf8()
+
+            assertEquals("synthetic probe reply", reply.text)
+            assertEquals("Bearer test-key-only", sent.getHeader("Authorization"))
+            assertTrue(body.contains("\"model\":\"gemma4\""))
+            assertTrue(body.contains("\"num_predict\":1024"))
+            assertTrue(body.contains("Serea cloud contract probe"))
+            assertFalse(body.contains("test-key-only"))
+            assertEquals(1, server.requestCount)
+            assertEquals(1, dao.reservationCount)
+            assertEquals("gemma4", dao.allLedgerRows().single().modelId)
+            assertEquals("ollama", dao.allLedgerRows().single().providerId)
+            assertEquals(1_024L, dao.allLedgerRows().single().reservedOutputTokens)
+            assertEquals("SETTLED", dao.allLedgerRows().single().usageStatus)
+            assertEquals(16L, dao.allLedgerRows().single().providerInputTokens)
+            assertEquals(4L, dao.allLedgerRows().single().providerOutputTokens)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test fun ollamaUsageCapsClampHigherSavedSettingsAndLimitInFlightDispatchesToOne() = runBlocking {
+        val dao = MemoryUsageDao()
+        dao.putSettings(UsageSettingsRow(dailyRequests = 500, dailyTokens = 9_000_000,
+            monthlyRequests = 9_000, monthlyTokens = 90_000_000))
+        val usage = UsageRepository(dao) { now }
+
+        assertEquals(UsageLimits(20, 102_400, 200, 1_024_000), usage.snapshot().limits)
+        usage.reserve("cloud-in-flight-1", 4, 12, maxConcurrentRequests = OllamaCloudRequestLimits.CONCURRENT_REQUESTS)
+        val second = runCatching {
+            usage.reserve("cloud-in-flight-2", 4, 12, maxConcurrentRequests = OllamaCloudRequestLimits.CONCURRENT_REQUESTS)
+        }.exceptionOrNull()
+        assertTrue(second is UsageLimitExceededException)
+        assertEquals(1, dao.reservationCount)
     }
 
     @Test fun unknownAndUnapprovedModelsAreRejectedWithoutProviderDispatch() = runBlocking {

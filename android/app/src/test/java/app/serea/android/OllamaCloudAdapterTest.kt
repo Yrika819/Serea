@@ -348,8 +348,9 @@ class OllamaCloudAdapterTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun mapsAuthenticationRateLimitAndServerFailuresWithoutDisplayingBody() = runBlocking {
-        listOf(401 to ProviderFailureKind.AUTHENTICATION, 403 to ProviderFailureKind.FORBIDDEN,
+    @Test fun mapsAuthenticationFreeUsageRateLimitAndServerFailuresWithoutDisplayingBody() = runBlocking {
+        listOf(401 to ProviderFailureKind.AUTHENTICATION, 402 to ProviderFailureKind.USAGE_CREDITS_EXHAUSTED,
+            403 to ProviderFailureKind.FORBIDDEN,
             404 to ProviderFailureKind.MODEL_UNAVAILABLE, 429 to ProviderFailureKind.RATE_LIMITED,
             500 to ProviderFailureKind.SERVER, 503 to ProviderFailureKind.SERVER).forEach { (code, kind) ->
             server.enqueue(MockResponse().setResponseCode(code).setBody("private provider diagnostic"))

@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Currency
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 
 /** Local soft limits only. Provider billing and account-side limits remain authoritative. */
@@ -320,15 +321,20 @@ interface UsageDao {
         val item = reservation(requestId) ?: return
         val savedLedger = ledger(requestId) ?: throw IllegalStateException("Usage reservation is missing its atomic ledger row.")
         if (item.state != "IN_FLIGHT" || savedLedger.usageStatus != UsageLedgerState.IN_FLIGHT.name) return
-        if (inputTokens == null || outputTokens == null) {
+        val usageUnknownReason = when {
+            inputTokens == null || outputTokens == null -> "Provider usage was absent or incomplete."
+            inputTokens < 0 || outputTokens < 0 -> "Provider usage contained an invalid negative token count."
+            inputTokens > item.inputTokens || outputTokens > item.outputTokens -> "Provider usage exceeded the reserved token bounds."
+            else -> null
+        }
+        if (usageUnknownReason != null) {
             putReservation(item.copy(state = UsageLedgerState.USAGE_UNKNOWN.name))
             putLedger(savedLedger.copy(usageStatus = UsageLedgerState.USAGE_UNKNOWN.name, reservationState = UsageLedgerState.USAGE_UNKNOWN.name,
-                costStatus = CostEstimationStatus.UNKNOWN.name, estimatedCost = null, uncertainOutcomeReason = "Provider usage was absent or incomplete."))
-            return // Keep the full reservation; missing usage is not zero.
+                costStatus = CostEstimationStatus.UNKNOWN.name, estimatedCost = null, uncertainOutcomeReason = usageUnknownReason))
+            return // Keep the full reservation; missing, invalid, or over-bound usage is not a definite amount.
         }
-        require(inputTokens >= 0 && outputTokens >= 0) { "Provider token usage must be non-negative." }
-        val actualInput = inputTokens
-        val actualOutput = outputTokens
+        val actualInput = checkNotNull(inputTokens)
+        val actualOutput = checkNotNull(outputTokens)
         listOf(item.dayKey, item.monthKey).forEach { key ->
             val current = window(key) ?: return@forEach
             putWindow(current.copy(
@@ -484,7 +490,8 @@ internal class UsageControlledModelChatPort(
         val promptChars = try { Math.addExact(request.message.length.toLong(), request.context.fold(0L) { total, item -> Math.addExact(total, item.text.length.toLong()) }).also { require(it <= Int.MAX_VALUE) }.toInt() }
             catch (_: ArithmeticException) { throw UsageAccountingOverflowException() }
         val attribution = attributionResolver.resolve(request)
-        usage.reserve(request.sendId, promptChars, outputReservationTokens, attribution)
+        val outputLimit = currentCoroutineContext()[CloudProviderRequestContext]?.outputTokenLimit ?: outputReservationTokens
+        usage.reserve(request.sendId, promptChars, outputLimit, attribution)
         try {
             val response = delegate.send(request)
             withContext(NonCancellable) { usage.complete(request.sendId, response.usage) }
@@ -502,7 +509,15 @@ internal class UsageControlledModelChatPort(
             }
             throw cancelled
         } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request was cancelled after reservation; remote outcome may be unknown.") }
+            val requestContext = currentCoroutineContext()[CloudProviderRequestContext]
+            withContext(NonCancellable) {
+                if (requestContext != null && !requestContext.dispatchMayHaveOccurred()) {
+                    val released = usage.releaseBeforeDispatch(request.sendId)
+                    if (!released) usage.outcomeUnknown(request.sendId, "A pre-dispatch cancellation could not safely release its reservation.")
+                } else {
+                    usage.outcomeUnknown(request.sendId, "Request was cancelled after dispatch may have started; remote outcome is unknown.")
+                }
+            }
             throw cancelled
         } catch (failure: Exception) {
             withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request failed after reservation; remote outcome may be unknown.") }

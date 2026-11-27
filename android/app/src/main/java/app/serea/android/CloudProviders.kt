@@ -1,6 +1,20 @@
 package app.serea.android
 
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+
+/** Per-send routing data passed outside the frozen common ModelChatRequest contract. */
+internal class CloudProviderRequestContext(val outputTokenLimit: Int) : AbstractCoroutineContextElement(Key) {
+    init { require(outputTokenLimit > 0) }
+
+    private val dispatchPossible = AtomicBoolean(false)
+    internal fun markDispatchPossible() { dispatchPossible.set(true) }
+    internal fun dispatchMayHaveOccurred(): Boolean = dispatchPossible.get()
+
+    companion object Key : CoroutineContext.Key<CloudProviderRequestContext>
+}
 
 /** Minimal transport differences that cannot be inferred safely from a model descriptor. */
 data class CloudProviderCapabilities(
@@ -28,8 +42,11 @@ internal interface CloudChatProvider {
         payload: EgressApprovedPayload,
         onDelta: (String) -> Unit = {},
         selectedModelId: String?,
+        outputTokenLimit: Int,
     ): CloudReply
 }
+
+internal data class ResolvedCloudProvider(val provider: CloudChatProvider, val outputTokenLimit: Int)
 
 /** Resolves an approved model to one exact provider transport; it never falls back or retries. */
 internal class CloudProviderRegistry(
@@ -37,6 +54,9 @@ internal class CloudProviderRegistry(
     private val allowedProviderIds: Set<String>,
 ) {
     private val providersById: Map<String, CloudChatProvider>
+
+    internal fun outputLimitFor(providerId: String): Int =
+        if (providerId !in allowedProviderIds) 0 else providersById[providerId]?.capabilities?.maxOutputTokens ?: 0
 
     init {
         require(allowedProviderIds.all { it.matches(Regex("[a-z0-9-]{1,64}")) })
@@ -54,7 +74,8 @@ internal class CloudProviderRegistry(
         payload: EgressApprovedPayload,
         selectedModelId: String?,
         catalog: ModelCatalog,
-    ): CloudChatProvider {
+        outputTokenLimit: Int? = null,
+    ): ResolvedCloudProvider {
         if (payload.target != EgressTarget.CLOUD) throw ProviderPreDispatchFailure(ProviderFailureKind.FORBIDDEN)
         if (selectedModelId.isNullOrBlank() || payload.selectedModelId != selectedModelId) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
@@ -72,7 +93,13 @@ internal class CloudProviderRegistry(
             model.source.isNullOrBlank() || model.lastVerifiedAt.isNullOrBlank() || !catalog.isFresh(model)) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
         }
-        if (knownInt(model.maxOutput) == null) throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
+        val modelOutputLimit = knownInt(model.maxOutput)
+            ?: throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
+        val requestedOutputLimit = outputTokenLimit ?: minOf(modelOutputLimit, provider.capabilities.maxOutputTokens)
+        if (requestedOutputLimit <= 0 || requestedOutputLimit > modelOutputLimit ||
+            requestedOutputLimit > provider.capabilities.maxOutputTokens) {
+            throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+        }
         if (payload.origin != DataOrigin.USER_AUTHORED || payload.classification != DataClassification.PUBLIC ||
             payload.conversationId.isNullOrBlank() || payload.sendId.isNullOrBlank()) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.FORBIDDEN)
@@ -81,18 +108,19 @@ internal class CloudProviderRegistry(
         if (inputBytes > provider.capabilities.maxInputBytes || payload.messages.any { it.first !in provider.capabilities.supportedRoles }) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
-        return provider
+        return ResolvedCloudProvider(provider, requestedOutputLimit)
     }
 
     internal suspend fun sendOnce(
         payload: EgressApprovedPayload,
         selectedModelId: String?,
         catalog: ModelCatalog,
+        outputTokenLimit: Int? = null,
         onDelta: (String) -> Unit = {},
     ): CloudReply {
-        val provider = resolve(payload, selectedModelId, catalog)
+        val route = resolve(payload, selectedModelId, catalog, outputTokenLimit)
         // Exactly one selected transport invocation; retry policy belongs to that transport.
-        return provider.send(payload, onDelta, selectedModelId)
+        return route.provider.send(payload, onDelta, selectedModelId, route.outputTokenLimit)
     }
 
     private fun knownInt(value: Knowledge<Int>): Int? = (value as? Knowledge.Known<*>)?.value as? Int

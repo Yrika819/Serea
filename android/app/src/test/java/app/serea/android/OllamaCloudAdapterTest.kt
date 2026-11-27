@@ -63,6 +63,16 @@ class OllamaCloudAdapterTest {
         assertEquals(1, server.requestCount)
     }
 
+    @Test fun selectedOutputLimitIsAppliedToProviderWireRequest() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"bounded"},"done":true,"prompt_eval_count":1,"eval_count":1}"""))
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = {}, selectedModelId = null,
+            outputTokenLimit = 37)
+        assertEquals("bounded", result.text)
+        val sent = server.takeRequest()
+        assertTrue(sent.body.readUtf8().contains("\"num_predict\":37"))
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun missingProviderUsageRemainsUnknown() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"answer"},"done":true}"""))
         val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
@@ -78,6 +88,14 @@ class OllamaCloudAdapterTest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"boundary"},"done":true,"prompt_eval_count":0,"eval_count":2147483647}"""))
         val boundary = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
         assertEquals(ProviderUsage(0, Int.MAX_VALUE), boundary.usage)
+    }
+
+    @Test fun extremeProviderUsageExponentsAreRejectedWithoutIntegerExpansion() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"bounded"},"done":true,"prompt_eval_count":1e999999999,"eval_count":1e-999999999}"""))
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertEquals("bounded", result.text)
+        assertNull(result.usage)
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun approvedMultiTurnConversationIsSentAsOneMockHttpRequest() = runBlocking {

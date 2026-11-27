@@ -101,3 +101,7 @@ After the first correction, API 26 and API 35 both passed all 19 `SereaAppShellT
 - `previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled` looked for a removed “Cloud connection test” button. It now checks the current “合成probeを1回送信” action remains disabled without credential/free-use confirmation.
 
 The three test identities and all unrelated validation assertions remain. These are test-expectation corrections to the current Cloud limits and Settings UI; no provider behavior changed. The same run's Personal Beta identity job failed before tests because Maven Central returned HTTP 429 while downloading `failureaccess-1.0.3.jar` and `error_prone_annotations-2.50.0.jar`; the failed build means that identity result is not a product test result and requires a failed-job retry on the corrected HEAD.
+
+### Formal follow-up on `d91d7712c3444351e6c13e39c96c31d142316caa`
+
+On API 35, all 19 `SereaAppShellTest` cases passed and the `ChatScreenTest` group reported 16 tests with one failure in `softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch`. The test set daily tokens to 50,001 while the existing monthly-token default is 1,024,000, so the expected mismatch validation did not apply. It now sets 1,024,001, an actually invalid daily-over-monthly value. This preserves the mismatch assertion and changes no product behavior. The API 26 job was still running when this correction was prepared; its eventual result remains to be checked on its own evidence.

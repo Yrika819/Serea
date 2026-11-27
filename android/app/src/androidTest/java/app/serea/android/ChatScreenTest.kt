@@ -828,7 +828,7 @@ class ChatScreenTest {
         val dailyTokens = compose.onNodeWithText("日次tokens")
         dailyTokens.performScrollTo()
         dailyTokens.performTextClearance()
-        dailyTokens.performTextInput("50001")
+        dailyTokens.performTextInput("1024001")
         compose.onNodeWithText("日次tokensは月次tokens以下にしてください。").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
     }

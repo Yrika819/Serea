@@ -45,3 +45,49 @@ The focused Gradle tests could not run in this environment. The wrapper attempte
 4. If the provider reports unavailable/free quota exhausted, stop. There is no paid fallback, model switch, redirect or automatic retry. Inspect Usage for `OUTCOME_UNKNOWN` after timeout/cancellation before considering a separate explicit retry.
 
 ADR-0043's development-only boundary remains in force. ADR-0044 remains `PROPOSED / NOT RATIFIED`; this O-02 decision selects only the initial Owner-personal provider lane.
+
+## C-09BR — Android Formal recovery and first-connection review
+
+Date: 2026-11-27. Target reviewed: PR #275 HEAD `20be4f8e506a5bca2c39ef27af29668ec86286ef`, Tree `d8113c755616e5ce477323accf82783c62af4380`.
+
+### Formal failure and test-only correction
+
+Android workflow run `46011161590`, attempt 3, compiled and built successfully. API 26 and API 35 both launched the Pixel emulator and ran instrumentation. Each reported the same three `SereaAppShellTest` failures (19 tests, 3 failures, 0 errors, 0 skips):
+
+- `fontScaleTwoKeepsTaskProposalReviewAndFooterReachable`
+- `activityRecreationRestoresRouteAndBackStackButNoProposalSession`
+- `chatSettingsBackKeepsCredentialScreenshotProtectionScoped`
+
+All three looked for the removed text `Provider候補: Ollama Cloud`. The current settings route exposes its heading as `destination_title`. C-09BR changes only those test assertions to use that stable tag and the current Settings heading. The screenshot `FLAG_SECURE` checks, route/back-stack assertions, accessibility/reachability assertions, required-test identities, 103-test Original Required Set, three additional-test identities, and provenance checks remain intact. No product defect was identified from these failures. The Android Emulator Required Gate correctly remained failed because the formal evidence did not pass; API 26/35 and aggregate success were not inferred from the build or partial artifacts.
+
+### Limited first-connection control review
+
+This is a source-and-existing-test review only. No credentials were registered, no real request was sent, no account entitlement was checked, and no device was operated.
+
+| Control | Current code and existing evidence | Finding |
+|---|---|---|
+| Free-use confirmation | Settings keeps `freeAllowanceConfirmed` ephemeral, resets it when leaving Settings and after a probe; the send button and handler both require it. | No clear regression found. Account eligibility and remaining quota still require the Owner's own confirmation. |
+| Hardware-backed Keystore | Settings requires a configured credential and `isHardwareBacked()` before enabling and dispatching. `CredentialRepository` rejects unsupported storage. `EncryptedHistoryTest` covers unsupported hardware and secret-at-rest behavior. | Fail closed in the app path; not exercised on a physical target device. |
+| Multiple dispatches | The button enters `cloudProbeRunning` before network work and disables during the operation. Usage admission has a one-in-flight limit; `ollamaUsageCapsClampHigherSavedSettingsAndLimitInFlightDispatchesToOne` checks a second reservation is refused. | No clear duplicate-dispatch regression found in the reviewed path. |
+| Data sent | `runFixedPublicContractProbe()` constructs one hard-coded synthetic PUBLIC / USER_AUTHORED message with empty context; normal Chat is not passed into it. `syntheticOllamaProbeRunsThroughEgressUsageRouterAndMockTransport` checks model/prompt, reservation, reported usage and that its fake key is absent from the body. | The reviewed UI route is limited to the synthetic probe. No real conversation is connected to this route. |
+| Key exposure | Credential handling uses the Keystore reader and an Authorization header; provider failures contain generic status text, and the provider path has no key logging. Mock tests use only fake key strings. | No key-log path found in the reviewed Cloud implementation; this is not a guarantee about unrelated future logging changes. |
+| Timeout, cancellation, unknown outcome | Dispatch observation is tracked, calls are cancelled with the coroutine, redirects/connection retries are disabled, and Usage preserves `OUTCOME_UNKNOWN` after ambiguous post-dispatch failures. `cancellationBeforeDispatchReleasesButAfterDispatchKeepsOutcomeUnknown` and `providerFailureAfterDispatchKeepsUsageOutcomeUnknownWithoutRetry` cover the ledger behavior. | Existing tests preserve the required no-auto-retry behavior. |
+| Demo isolation | Ordinary Chat remains Demo/Fake, Cloud defaults disabled, and the Cloud candidate is opened only from Settings. `demoLabelAndConversationTitleAreVisible` and the Mock contract tests cover the ordinary path and synthetic candidate separately. | No unintended Demo-path connection found. |
+| Model/price freshness | The Gemma 4 model entry and price evidence both expire on 2026-12-04. The router rejects an expired catalog entry before dispatch; the attribution resolver rejects expired model evidence and treats expired price evidence as unknown. `staleMismatchedOrNotYetEffectivePriceEvidenceStaysUnknown` covers the generic stale-price rule. | No stale-evidence bypass found. The current dated catalog must be reviewed again after expiry. |
+
+This review found no clear product regression requiring a provider or security-code change. The C-09BR fix remains limited to the stale UI assertions and this record.
+
+### Cloud/local integration note
+
+The C-09B Cloud changes relative to Base are in:
+
+- `android/app/src/main/java/app/serea/android/MainActivity.kt` — Settings-only Cloud candidate UI, free-use confirmation, credential and screenshot-protection handling, limits and fixed-probe action.
+- `android/app/src/main/java/app/serea/android/CloudProvider.kt` — provider transport, Egress/Usage route, fixed synthetic probe, request limits and failure handling.
+- `android/app/src/main/java/app/serea/android/AdaptiveModelRouter.kt` — dated Gemma 4 catalog, source and freshness evidence.
+- `android/app/src/main/java/app/serea/android/CloudProviders.kt` and `UsageAccounting.kt` — local caps and durable reservations/settlement.
+- `android/app/src/test/java/app/serea/android/CloudProviderRegistryTest.kt` and `OllamaCloudAdapterTest.kt` — synthetic route, provider and failure coverage.
+- `docs/security/cloud-c09b-ollama-live-readiness.md` — this implementation record.
+
+Local work also edits `MainActivity.kt`. During any future integration, review and combine individual Cloud Settings changes with the local Chat/Core/ownership changes; do not replace the whole file from this branch. C-09BR does not edit `MainActivity.kt`, Chat/Core composition, Gradle, signing or campaign scripts. The only C-09BR code change is `android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt`.
+
+The corrected Formal suite, Android Required Gate, and APK provenance must be checked on the resulting exact C-09BR HEAD before providing an APK candidate. An emulator APK is not evidence of physical-device compatibility or package/signature coexistence. Any Owner-installed candidate remains subject to exact artifact digest, signing-certificate and package-ID review; do not overwrite an existing app or profile with personal data.

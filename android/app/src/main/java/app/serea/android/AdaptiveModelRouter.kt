@@ -1,6 +1,7 @@
 package app.serea.android
 
 import java.time.Instant
+import kotlinx.coroutines.withContext
 
 /** Values are UNKNOWN unless supported by a source captured when the catalog entry was verified. */
 sealed interface Knowledge<out T> {
@@ -152,7 +153,12 @@ data class ModelSelectionResult(
 }
 
 /** Deterministic, device-local rules. This component never performs egress or fallback. */
-class AdaptiveModelRouter(private val catalog: ModelCatalog) {
+class AdaptiveModelRouter(
+    private val catalog: ModelCatalog,
+    private val providerOutputLimit: ((String) -> Int?)?,
+) {
+    constructor(catalog: ModelCatalog) : this(catalog, null)
+
     fun classify(request: RoutingRequest): ModelTask = when {
         request.requiresTools -> ModelTask.TOOL_REQUIRED
         request.requiresStructuredOutput -> ModelTask.STRUCTURED
@@ -225,6 +231,8 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (p.maxInputTokens?.let { inputTokens > it } == true || inputTokens + r.requestedOutputTokens > context.toLong()) return "Context上限不足"
         val output = m.maxOutput.knownInt() ?: return "最大出力が未確認"
         if (r.requestedOutputTokens > output) return "最大出力不足"
+        val providerOutput = providerOutputLimit?.invoke(m.providerId)
+        if (providerOutput != null && r.requestedOutputTokens > providerOutput) return "Provider最大出力不足"
         if (r.requiresTools && m.capabilities.toolCalling != Knowledge.Known(true)) return "Tool Calling能力が未確認または非対応"
         if (r.requiresStructuredOutput && m.capabilities.structuredOutput != Knowledge.Known(true)) return "Structured Output能力が未確認または非対応"
         if (task == ModelTask.COMPLEX && m.capabilities.reasoning != Knowledge.Known(true)) return "複雑な分析に必要なReasoning能力が未確認または非対応"
@@ -296,7 +304,9 @@ internal class RoutedModelChatPort(
         val preparedRequest = if (request.egressContract == null && contractFactory != null) {
             routedRequest.copy(egressContract = contractFactory.invoke(request, model))
         } else routedRequest
-        return delegate.send(preparedRequest)
+        return withContext(CloudProviderRequestContext(current.requestedOutputTokens)) {
+            delegate.send(preparedRequest)
+        }
     }
 }
 

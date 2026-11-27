@@ -1,6 +1,7 @@
 package app.serea.android
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -135,7 +136,7 @@ class OllamaCloudAdapter private constructor(
         }, catalog, allowedProviderIds,
     )
 
-    override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?): CloudReply {
+    override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?, outputTokenLimit: Int): CloudReply {
         if (payload.target != EgressTarget.CLOUD) throw ProviderPreDispatchFailure(ProviderFailureKind.FORBIDDEN)
         if (!settings.enabled) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val fixedProbe = payload.conversationId == null && payload.sendId == null && payload.selectedModelId == null
@@ -163,6 +164,9 @@ class OllamaCloudAdapter private constructor(
         if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > capabilities.maxInputBytes) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
+        if (outputTokenLimit !in 1..capabilities.maxOutputTokens) {
+            throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+        }
         val request = withContext(Dispatchers.IO) {
             val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
             catch (_: HistoryUnavailableException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
@@ -172,17 +176,21 @@ class OllamaCloudAdapter private constructor(
                     payload.messages.forEach { (role, content) -> add(JsonObject().apply { addProperty("role", role); addProperty("content", content) }) }
                 })
                 addProperty("stream", capabilities.supportsStreaming)
-                add("options", JsonObject().apply { addProperty("num_predict", capabilities.maxOutputTokens) })
+                add("options", JsonObject().apply { addProperty("num_predict", outputTokenLimit) })
             }
             Request.Builder().url(endpoint)
                 .header("Authorization", "Bearer $key")
                 .header("Accept", "application/x-ndjson")
                 .post(Gson().toJson(requestJson).toRequestBody(JSON_MEDIA_TYPE)).build()
         }
+        val requestContext = currentCoroutineContext()[CloudProviderRequestContext]
         return suspendCancellableCoroutine { continuation ->
             val dispatchPossible = AtomicBoolean(false)
             val callClient = client.newBuilder().eventListener(object : EventListener() {
-                override fun requestBodyStart(call: Call) { dispatchPossible.set(true) }
+                override fun requestHeadersStart(call: Call) {
+                    dispatchPossible.set(true)
+                    requestContext?.markDispatchPossible()
+                }
             }).build()
             val call = callClient.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
@@ -216,8 +224,11 @@ class OllamaCloudAdapter private constructor(
         }
     }
 
-    internal suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}): CloudReply =
-        send(payload, onDelta, selectedModelId = null)
+    internal suspend fun send(
+        payload: EgressApprovedPayload,
+        onDelta: (String) -> Unit = {},
+        selectedModelId: String? = null,
+    ): CloudReply = send(payload, onDelta, selectedModelId, capabilities.maxOutputTokens)
 
     private fun consume(response: Response, onDelta: (String) -> Unit, active: () -> Boolean): CloudReply {
         response.use {
@@ -318,8 +329,9 @@ class OllamaCloudAdapter private constructor(
         private fun providerTokenCount(value: com.google.gson.JsonElement?): Int? {
             if (value == null || value.isJsonNull || !value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) return null
             return try {
-                val exact = BigDecimal(value.asString).toBigIntegerExact()
-                if (exact.signum() < 0 || exact > Int.MAX_VALUE.toBigInteger()) null else exact.toInt()
+                val exact = BigDecimal(value.asString).stripTrailingZeros()
+                if (exact.signum() < 0 || exact.scale() > 0 || exact > BigDecimal.valueOf(Int.MAX_VALUE.toLong())) null
+                else exact.intValueExact()
             } catch (_: Exception) {
                 null
             }
@@ -330,7 +342,8 @@ class OllamaCloudAdapter private constructor(
 /** The only UI-facing cloud composition: all ordinary messages remain UNKNOWN and are denied. */
 class CloudCandidatePort internal constructor(private val adapter: OllamaCloudAdapter) {
     suspend fun runFixedPublicContractProbe(onDelta: (String) -> Unit = {}): CloudReply =
-        adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta, selectedModelId = null)
+        adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta, selectedModelId = null,
+            outputTokenLimit = adapter.capabilities.maxOutputTokens)
 }
 
 /** Ordinary chat path. An exact, fresh gate approval must exist before any credential or socket use. */
@@ -382,7 +395,8 @@ internal class CloudProviderModelChatPort(
         }
         if (!enabled) throw PreDispatchModelChatFailure("Cloud mode is disabled.")
         return try {
-            providers.sendOnce(payload, request.selectedModelId, catalog).let { ModelChatResponse(it.text, it.usage) }
+            val outputTokenLimit = currentCoroutineContext()[CloudProviderRequestContext]?.outputTokenLimit
+            providers.sendOnce(payload, request.selectedModelId, catalog, outputTokenLimit).let { ModelChatResponse(it.text, it.usage) }
         } catch (failure: ProviderFailure) {
             if (failure is ProviderPreDispatchFailure || !failure.mayHaveDispatched) {
                 throw PreDispatchModelChatFailure(failure.message ?: "The local provider request was rejected before dispatch.")
@@ -405,15 +419,18 @@ internal object DirectProviderChatComposition {
         usageAttributionResolver: UsageAttributionResolver? = null,
         cloudProviderRegistry: CloudProviderRegistry? = null,
     ): ModelChatPort {
+        val registry: CloudProviderRegistry
         val cloudPort = if (cloudProviderRegistry != null) {
             require(testEndpoint == null && testClient == null) { "Synthetic provider registries cannot be combined with the Ollama test endpoint." }
-            CloudProviderModelChatPort(catalog, cloudProviderRegistry, enabled = settings.enabled)
+            registry = cloudProviderRegistry
+            CloudProviderModelChatPort(catalog, registry, enabled = settings.enabled)
         } else {
             require((testEndpoint == null) == (testClient == null)) { "A loopback test endpoint and client must be supplied together." }
             val adapter = if (testEndpoint != null && testClient != null)
                 OllamaCloudAdapter(credentials, settings, testEndpoint, testClient, catalog, setOf("ollama"))
             else OllamaCloudAdapter(credentials, settings, catalog, setOf("ollama"))
-            OllamaModelChatPort(adapter)
+            registry = CloudProviderRegistry(listOf(adapter), adapter.allowedProviderIds)
+            CloudProviderModelChatPort(catalog, registry, enabled = settings.enabled)
         }
         val gated = EgressCheckedModelChatPort(
             UsageControlledModelChatPort(
@@ -422,6 +439,10 @@ internal object DirectProviderChatComposition {
             ),
             expectedTarget = EgressTarget.CLOUD,
         )
-        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), policy = routingPolicy)
+        return RoutedModelChatPort(
+            gated,
+            AdaptiveModelRouter(catalog, registry::outputLimitFor),
+            policy = routingPolicy,
+        )
     }
 }

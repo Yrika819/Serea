@@ -1,6 +1,9 @@
 package app.serea.android
 
 import java.time.Instant
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
@@ -85,6 +88,7 @@ class CloudProviderRegistryTest {
         dao: MemoryUsageDao,
         modelId: String,
         sendId: String,
+        outputTokens: Int = 32,
     ): ModelChatPort = DirectProviderChatComposition.create(
         credentials = object : CredentialReader { override fun readForRequest() = error("synthetic providers do not read credentials") },
         usage = UsageRepository(dao) { now },
@@ -92,7 +96,7 @@ class CloudProviderRegistryTest {
         catalog = models,
         routingPolicy = {
             ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = modelId,
-                requestedOutputTokens = 32, allowedProviderIds = setOf("synthetic-a", "synthetic-b", "synthetic-c"))
+                requestedOutputTokens = outputTokens, allowedProviderIds = setOf("synthetic-a", "synthetic-b", "synthetic-c"))
         },
         cloudProviderRegistry = registry,
     )
@@ -115,8 +119,18 @@ class CloudProviderRegistryTest {
         assertEquals("reply from synthetic-b", replyB.text)
         assertEquals(1, a.sendCount)
         assertEquals(1, b.sendCount)
+        assertEquals(32, a.lastOutputTokenLimit)
+        assertEquals(32, b.lastOutputTokenLimit)
+        assertEquals(32L, dao.ledger("send-a")?.reservedOutputTokens)
+        assertEquals(32L, dao.ledger("send-b")?.reservedOutputTokens)
+        assertEquals(1L, dao.reservation("send-a")?.outputTokens)
+        assertEquals(1L, dao.reservation("send-b")?.outputTokens)
+        assertEquals("synthetic-a/model-v1", dao.ledger("send-a")?.modelId)
         assertEquals("synthetic-a", dao.ledger("send-a")?.providerId)
+        assertEquals("synthetic-b/model-v1", dao.ledger("send-b")?.modelId)
         assertEquals("synthetic-b", dao.ledger("send-b")?.providerId)
+        assertEquals(UsageLedgerState.SETTLED.name, dao.reservation("send-a")?.state)
+        assertEquals(UsageLedgerState.SETTLED.name, dao.reservation("send-b")?.state)
         assertFalse(a.capabilities.supportsStreaming)
         assertTrue(b.capabilities.supportsStreaming)
     }
@@ -142,7 +156,7 @@ class CloudProviderRegistryTest {
                 .send(request("synthetic-c/model-v1", "send-unapproved"))
             null
         } catch (failure: ModelChatFailure) { failure }
-        assertTrue(unapproved is PreDispatchModelChatFailure)
+        assertTrue(unapproved != null)
         assertEquals(0, a.sendCount + b.sendCount)
         assertEquals(0, dao.reservationCount)
     }
@@ -202,6 +216,146 @@ class CloudProviderRegistryTest {
         assertEquals(2, provider.sendCount)
     }
 
+    @Test fun modelAndProviderOutputLimitsRejectBeforeReservationOrDispatch() = runBlocking {
+        val a = SyntheticProvider("synthetic-a", setOf("user"), maxOutputTokens = 16)
+        val b = SyntheticProvider("synthetic-b", setOf("user"), maxOutputTokens = 128)
+        val models = catalog()
+        val dao = MemoryUsageDao()
+        val providers = registry(a, b)
+
+        val modelLimit = try {
+            composition(models, providers, dao, "synthetic-b/model-v1", "send-model-limit", outputTokens = 65)
+                .send(request("synthetic-b/model-v1", "send-model-limit"))
+            null
+        } catch (failure: ModelChatFailure) { failure }
+        assertTrue(modelLimit != null)
+        assertEquals(0, dao.reservationCount)
+
+        val providerLimit = try {
+            composition(models, providers, dao, "synthetic-a/model-v1", "send-provider-limit", outputTokens = 32)
+                .send(request("synthetic-a/model-v1", "send-provider-limit"))
+            null
+        } catch (failure: ModelChatFailure) { failure }
+        assertTrue(providerLimit != null)
+        assertEquals(0, a.sendCount + b.sendCount)
+        assertEquals(0, dao.reservationCount)
+    }
+
+    @Test fun missingInvalidAndOutputOverLimitUsageStaysUnknownButInputMayExceedEstimate() = runBlocking {
+        val provider = SyntheticProvider("synthetic-a", setOf("user"))
+        val models = catalog()
+        val dao = MemoryUsageDao()
+        val port = { sendId: String -> composition(models, registry(provider, SyntheticProvider("synthetic-b", setOf("user"))), dao,
+            "synthetic-a/model-v1", sendId) }
+
+        listOf(null, ProviderUsage(-1, 1), ProviderUsage(1, 33)).forEachIndexed { index, usage ->
+            provider.replyUsage = usage
+            val sendId = "send-usage-$index"
+            assertEquals("reply from synthetic-a", port(sendId).send(request("synthetic-a/model-v1", sendId)).text)
+            val reservation = dao.reservation(sendId)
+            val ledger = dao.ledger(sendId)
+            assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, reservation?.state)
+            assertEquals(32L, reservation?.outputTokens)
+            assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, ledger?.usageStatus)
+            assertEquals(null, ledger?.providerInputTokens)
+            assertEquals(null, ledger?.providerOutputTokens)
+            assertEquals(null, ledger?.estimatedCost)
+        }
+        val actualInputSend = "send-input-above-estimate"
+        provider.replyUsage = ProviderUsage(100, 1)
+        assertEquals("reply from synthetic-a", port(actualInputSend).send(request("synthetic-a/model-v1", actualInputSend)).text)
+        assertEquals(UsageLedgerState.SETTLED.name, dao.reservation(actualInputSend)?.state)
+        assertEquals(100L, dao.ledger(actualInputSend)?.providerInputTokens)
+        assertEquals(1L, dao.ledger(actualInputSend)?.providerOutputTokens)
+        assertEquals(4, provider.sendCount)
+    }
+
+    @Test fun repeatedSendIdCannotDispatchAgainAfterSettlement() = runBlocking {
+        val a = SyntheticProvider("synthetic-a", setOf("user"))
+        val b = SyntheticProvider("synthetic-b", setOf("user"))
+        val models = catalog()
+        val dao = MemoryUsageDao()
+        val first = request("synthetic-a/model-v1", "send-duplicate")
+        assertEquals("reply from synthetic-a", composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-duplicate").send(first).text)
+        try {
+            composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-duplicate").send(first)
+            throw AssertionError("duplicate sendId must be refused")
+        } catch (_: DuplicateUsageRequestException) { }
+        assertEquals(1, a.sendCount)
+        assertEquals(0, b.sendCount)
+        assertEquals(UsageLedgerState.SETTLED.name, dao.reservation("send-duplicate")?.state)
+    }
+
+    @Test fun providerFailureAfterDispatchKeepsUsageOutcomeUnknownWithoutRetry() = runBlocking {
+        val a = SyntheticProvider("synthetic-a", setOf("user")).apply { failAfterDispatch = true }
+        val b = SyntheticProvider("synthetic-b", setOf("user"))
+        val models = catalog()
+        val dao = MemoryUsageDao()
+        val sendId = "send-network-failure"
+        try {
+            composition(models, registry(a, b), dao, "synthetic-a/model-v1", sendId)
+                .send(request("synthetic-a/model-v1", sendId))
+            throw AssertionError("dispatched provider failure expected")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(1, a.sendCount)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservation(sendId)?.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.ledger(sendId)?.usageStatus)
+        try {
+            composition(models, registry(a, b), dao, "synthetic-a/model-v1", sendId)
+                .send(request("synthetic-a/model-v1", sendId))
+            throw AssertionError("same sendId retry must be refused")
+        } catch (_: DuplicateUsageRequestException) { }
+        assertEquals(1, a.sendCount)
+        assertEquals(0, b.sendCount)
+    }
+
+    @Test fun cancellationBeforeDispatchReleasesButAfterDispatchKeepsOutcomeUnknown() = runBlocking {
+        val a = SyntheticProvider("synthetic-a", setOf("user"))
+        val b = SyntheticProvider("synthetic-b", setOf("user"))
+        val models = catalog()
+        val dao = MemoryUsageDao()
+
+        val preDispatchEntered = CompletableDeferred<Unit>()
+        a.pause = CompletableDeferred()
+        a.pauseEntered = preDispatchEntered
+        a.markDispatchBeforePause = false
+        val before = launch { composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-cancel-before")
+            .send(request("synthetic-a/model-v1", "send-cancel-before")) }
+        preDispatchEntered.await()
+        before.cancel()
+        before.join()
+        assertEquals(null, dao.reservation("send-cancel-before"))
+        assertEquals(null, dao.ledger("send-cancel-before"))
+
+        val postDispatchEntered = CompletableDeferred<Unit>()
+        a.pause = CompletableDeferred()
+        a.pauseEntered = postDispatchEntered
+        a.markDispatchBeforePause = true
+        val after = launch { composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-cancel-after")
+            .send(request("synthetic-a/model-v1", "send-cancel-after")) }
+        postDispatchEntered.await()
+        after.cancel()
+        after.join()
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservation("send-cancel-after")?.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.ledger("send-cancel-after")?.usageStatus)
+        assertEquals(1L, dao.unresolvedCount())
+
+        // No transport dispatch observation is not proof that no request was sent.
+        val unobservedEntered = CompletableDeferred<Unit>()
+        a.pause = CompletableDeferred()
+        a.pauseEntered = unobservedEntered
+        a.confirmNoDispatchBeforePause = false
+        a.replyUsage = null
+        a.failAfterDispatch = false
+        val unobserved = launch { composition(models, registry(a, b), dao, "synthetic-a/model-v1", "send-cancel-unobserved")
+            .send(request("synthetic-a/model-v1", "send-cancel-unobserved")) }
+        unobservedEntered.await()
+        unobserved.cancel()
+        unobserved.join()
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservation("send-cancel-unobserved")?.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.ledger("send-cancel-unobserved")?.usageStatus)
+    }
+
     private class SyntheticProvider(
         override val providerId: String,
         roles: Set<String>,
@@ -214,12 +368,26 @@ class CloudProviderRegistryTest {
         override val allowsTestFixtureModels = true
         var sendCount = 0
         var failAfterDispatch = false
+        var lastOutputTokenLimit: Int? = null
+        var replyUsage: ProviderUsage? = ProviderUsage(1, 1)
+        var pause: CompletableDeferred<Unit>? = null
+        var pauseEntered: CompletableDeferred<Unit>? = null
+        var markDispatchBeforePause = false
+        var confirmNoDispatchBeforePause = true
 
-        override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?): CloudReply {
+        override suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit, selectedModelId: String?, outputTokenLimit: Int): CloudReply {
             sendCount++
+            lastOutputTokenLimit = outputTokenLimit
             check(selectedModelId == payload.selectedModelId)
+            val pauseGate = pause
+            if (pauseGate != null) {
+                if (markDispatchBeforePause) currentCoroutineContext()[CloudProviderRequestContext]?.markDispatchPossible()
+                else if (confirmNoDispatchBeforePause) currentCoroutineContext()[CloudProviderRequestContext]?.markDefinitelyUndispatched()
+                pauseEntered?.complete(Unit)
+                pauseGate.await()
+            }
             if (failAfterDispatch) throw ProviderFailure(ProviderFailureKind.NETWORK)
-            return CloudReply("reply from $providerId", ProviderUsage(1, 1))
+            return CloudReply("reply from $providerId", replyUsage)
         }
     }
 
@@ -246,6 +414,9 @@ class CloudProviderRegistryTest {
             val old = reservations[id] ?: return 0
             if (old.state != UsageLedgerState.IN_FLIGHT.name) return 0
             reservations[id] = old.copy(state = UsageLedgerState.OUTCOME_UNKNOWN.name)
+            ledgers[id]?.let { row -> ledgers[id] = row.copy(usageStatus = UsageLedgerState.OUTCOME_UNKNOWN.name,
+                reservationState = UsageLedgerState.OUTCOME_UNKNOWN.name, costStatus = CostEstimationStatus.UNKNOWN.name,
+                estimatedCost = null, uncertainOutcomeReason = "Synthetic dispatched result is unknown.") }
             return 1
         }
         override suspend fun settings() = savedSettings

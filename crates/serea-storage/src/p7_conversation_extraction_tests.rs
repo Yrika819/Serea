@@ -148,6 +148,8 @@ pub(super) struct SaveSummary {
     pub already_present: usize,
 }
 
+type PriorAdmissionRow = (Vec<u8>, i64, String, i64, Option<Vec<u8>>, i64, i64, i64);
+
 /// The extractor receives only this validated, owner-bound subset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ValidatedConversation {
@@ -334,7 +336,7 @@ impl ExtractionAdmission {
                 rusqlite::params![memory.owner_id, now_ms],
             )?;
 
-            let prior: Option<(Vec<u8>, i64, String, i64, Option<Vec<u8>>, i64, i64, i64)> = tx.inner.query_row(
+            let prior: Option<PriorAdmissionRow> = tx.inner.query_row(
                 "SELECT input_digest,captured_generation,state,expires_at_ms,candidate_digest,inserted_count,existing_count,lease_id FROM p7_extraction_admissions WHERE owner_id=?1 AND request_id=?2",
                 rusqlite::params![memory.owner_id, request_id.0],
                 |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),

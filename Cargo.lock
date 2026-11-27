@@ -988,6 +988,7 @@ dependencies = [
  "serea-storage",
  "serea-task-engine",
  "serea-testkit",
+ "sha2",
 ]
 
 [[package]]

@@ -53,8 +53,8 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
             "api=35 status=COMPLETED resultCode=2 embedded=true marker=valid\n"
         )
         (evidence / "logcat-live.txt").write_text(f"I SereaProfileVerifier: {profile}")
-        cases = "".join(f'<testcase classname="C{i}" name="t{i}"/>' for i in range(105))
-        (evidence / "junit/results.xml").write_text(f"<testsuite tests=\"105\">{cases}</testsuite>")
+        cases = "".join(f'<testcase classname="C{i}" name="t{i}"/>' for i in range(106))
+        (evidence / "junit/results.xml").write_text(f"<testsuite tests=\"106\">{cases}</testsuite>")
 
     def invoke(self, api26="success", api35="success", verify_api="", build="success"):
         env = dict(os.environ, VERIFY_FAIL_API=verify_api)
@@ -158,10 +158,10 @@ class FormalAggregateFailureInjectionTests(unittest.TestCase):
 
     def test_junit_under_count_and_skipped_are_rejected(self):
         xml = self.root / "api35/junit/results.xml"
-        xml.write_text('<testsuite tests="104">' + ''.join(f'<testcase classname="C{i}" name="t{i}"/>' for i in range(104)) + '</testsuite>')
+        xml.write_text('<testsuite tests="105">' + ''.join(f'<testcase classname="C{i}" name="t{i}"/>' for i in range(105)) + '</testsuite>')
         self.assert_fail_closed()
-        skipped = ''.join(f'<testcase classname="C{i}" name="t{i}">{"<skipped/>" if i == 0 else ""}</testcase>' for i in range(105))
-        xml.write_text(f'<testsuite tests="105">{skipped}</testsuite>')
+        skipped = ''.join(f'<testcase classname="C{i}" name="t{i}">{"<skipped/>" if i == 0 else ""}</testcase>' for i in range(106))
+        xml.write_text(f'<testsuite tests="106">{skipped}</testsuite>')
         self.assert_fail_closed()
 
     def test_each_single_api_job_failure_is_rejected(self):

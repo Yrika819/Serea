@@ -138,9 +138,9 @@ class InstrumentationResultTests(unittest.TestCase):
             if line.strip() and not line.startswith("#")
         }
         self.assertEqual(103, len(required_tests))
-        self.assertEqual(2, len(additional_tests))
+        self.assertEqual(3, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
-        # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
+        # Explicit non-required diagnostics and focused UI cases stay outside the 106 formal tests.
         self.assertEqual(33, len(non_required_tests))
         self.assertFalse(non_required_tests & (required_tests | additional_tests))
         required: dict[str, int] = {}
@@ -188,25 +188,25 @@ class InstrumentationResultTests(unittest.TestCase):
 
             suite = results / "TEST-campaign.xml"
             suite.write_text(
-                f'<testsuite tests="105" failures="0" errors="0" skipped="0">'
+                f'<testsuite tests="106" failures="0" errors="0" skipped="0">'
                 + "".join(cases)
                 + "</testsuite>",
                 encoding="utf-8",
             )
             verifier = repo / "tools/verify_android_instrumentation.py"
             args = [
-                "python3", str(verifier), str(results), "--minimum", "105", "--exact-count", "105",
+                "python3", str(verifier), str(results), "--minimum", "106", "--exact-count", "106",
                 "--source-root", str(source_root), "--required-test-manifest", str(required_manifest),
                 "--additional-test-manifest", str(additional_manifest),
                 "--non-required-test-manifest", str(non_required_manifest), "--required-count", "103",
-                "--additional-count", "2", "--api-level", "35", "--profile-verifier-log", str(profile_log),
+                "--additional-count", "3", "--api-level", "35", "--profile-verifier-log", str(profile_log),
             ]
             for class_name, count in required.items():
                 args.extend(("--require-class", f"{class_name}={count}"))
             complete = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(0, complete.returncode, complete.stderr)
             self.assertIn("Original Required Set: 103/103 PASS", complete.stdout)
-            self.assertIn("Additional Tests: 2/2 PASS; total=105", complete.stdout)
+            self.assertIn("Additional Tests: 3/3 PASS; total=106", complete.stdout)
             self.assertIn("ProfileVerifier runtime evidence: API 35", complete.stdout)
 
             unexpected_source = source_root / "a" / "UnlistedDiagnostic.kt"
@@ -218,14 +218,14 @@ class InstrumentationResultTests(unittest.TestCase):
             unexpected_source.unlink()
 
             suite.write_text(
-                f'<testsuite tests="104" failures="0" errors="0" skipped="0">'
+                f'<testsuite tests="105" failures="0" errors="0" skipped="0">'
                 + "".join(cases[:-1])
                 + "</testsuite>",
                 encoding="utf-8",
             )
             partial = subprocess.run(args, capture_output=True, text=True)
             self.assertNotEqual(0, partial.returncode)
-        self.assertIn("only 104 tests were recorded; expected at least 105", partial.stderr)
+        self.assertIn("only 105 tests were recorded; expected at least 106", partial.stderr)
 
     def test_profile_verifier_runtime_evidence_is_api_specific_and_positive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

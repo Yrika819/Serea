@@ -914,6 +914,8 @@ internal fun ChatScreen(
                 monthlyRequestsText = limits.monthlyRequests.toString()
                 monthlyTokensText = limits.monthlyTokens.toString()
             }
+        } else {
+            freeAllowanceConfirmed = false
         }
     }
     LaunchedEffect(state.conversation.messages.size, state.isLoading, state.showingHistory, settingsVisible) {
@@ -1228,6 +1230,7 @@ internal fun ChatScreen(
                             settingsMessage = "Cloud probeが失敗しました。Usage状態を確認してから明示操作してください。自動再送はありません。"
                         } finally {
                             cloudProbeRunning = false
+                            freeAllowanceConfirmed = false
                         }
                     }
                 }, enabled = freeAllowanceConfirmed && credentialReady && !cloudProbeRunning && credentials?.let { runCatching { it.isHardwareBacked() }.getOrDefault(false) } == true && usage != null) {

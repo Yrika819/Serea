@@ -155,8 +155,10 @@ data class ModelSelectionResult(
 /** Deterministic, device-local rules. This component never performs egress or fallback. */
 class AdaptiveModelRouter(
     private val catalog: ModelCatalog,
-    private val providerOutputLimit: ((String) -> Int?)? = null,
+    private val providerOutputLimit: ((String) -> Int?)?,
 ) {
+    constructor(catalog: ModelCatalog) : this(catalog, null)
+
     fun classify(request: RoutingRequest): ModelTask = when {
         request.requiresTools -> ModelTask.TOOL_REQUIRED
         request.requiresStructuredOutput -> ModelTask.STRUCTURED

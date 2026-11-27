@@ -10,12 +10,15 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
+import okio.Buffer
+import okio.ByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 class OllamaCloudAdapterTest {
@@ -65,6 +68,16 @@ class OllamaCloudAdapterTest {
         val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
         assertEquals("answer", result.text)
         assertNull(result.usage)
+    }
+
+    @Test fun invalidProviderUsageRemainsUnknownAndValidBoundaryCountsArePreserved() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"unknown"},"done":true,"prompt_eval_count":-1,"eval_count":2147483648}"""))
+        val invalid = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertNull(invalid.usage)
+
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"boundary"},"done":true,"prompt_eval_count":0,"eval_count":2147483647}"""))
+        val boundary = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertEquals(ProviderUsage(0, Int.MAX_VALUE), boundary.usage)
     }
 
     @Test fun approvedMultiTurnConversationIsSentAsOneMockHttpRequest() = runBlocking {
@@ -215,6 +228,32 @@ class OllamaCloudAdapterTest {
         assertEquals("🌱", result.text)
     }
 
+    @Test fun malformedUtf8ResponseIsRejected() = runBlocking {
+        val body = ByteString.of(*byteArrayOf(
+            *"""{"message":{"content":""".toByteArray(),
+            0xff.toByte(),
+            *""""},"done":true}""".toByteArray(),
+        ))
+        server.enqueue(MockResponse().setBody(Buffer().write(body)))
+        assertEquals(ProviderFailureKind.INVALID_RESPONSE,
+            capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
+    }
+
+    @Test fun streamingCallbackExceptionsAreSanitizedAndDoNotBreakLaterCalls() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"first"},"done":true}"""))
+        val failure = capture {
+            adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = {
+                throw IllegalStateException("private callback diagnostic")
+            })
+        }
+        assertEquals(ProviderFailureKind.INVALID_RESPONSE, failure.kind)
+        assertFalse(failure.message.orEmpty().contains("private callback diagnostic"))
+
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"second"},"done":true}"""))
+        assertEquals("second", adapter().send(EgressApprovedPayload.fixedPublicContractProbe()).text)
+        assertEquals(2, server.requestCount)
+    }
+
     @Test fun missingCredentialDoesNotCreateHttpRequest() = runBlocking {
         var reads = 0
         val error = capture { adapter(reader = object : CredentialReader { override fun readForRequest(): String { reads++; throw IllegalStateException() } })
@@ -310,8 +349,31 @@ class OllamaCloudAdapterTest {
         assertNull(server.takeRequest().getHeader("X-Unexpected"))
     }
 
+    @Test fun defaultInjectedClientCannotFollowRedirectOrReplayPost() = runBlocking {
+        val defaultClient = OkHttpClient()
+        val safeAdapter = OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key },
+            CloudSettings(true, "gemma4:31b"), server.url("/api/chat"), defaultClient, fixtureCatalog())
+
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/steal")))
+        assertEquals(ProviderFailureKind.INVALID_RESPONSE,
+            capture { safeAdapter.send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
+        assertEquals(1, server.requestCount)
+        server.takeRequest()
+
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"must not retry"},"done":true}"""))
+        assertEquals(ProviderFailureKind.NETWORK,
+            capture { safeAdapter.send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
+        assertEquals(2, server.requestCount)
+    }
+
     @Test fun malformedAndOversizedStreamsFailClosed() = runBlocking {
         server.enqueue(MockResponse().setBody("not-json\n"))
+        assertEquals(ProviderFailureKind.INVALID_RESPONSE, capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"lenient"},"done":true,}"""))
+        assertEquals(ProviderFailureKind.INVALID_RESPONSE, capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"answer"},"done":true}
+{"done":true}"""))
         assertEquals(ProviderFailureKind.INVALID_RESPONSE, capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
         server.enqueue(MockResponse().setBody("x".repeat(70_000) + "\n"))
         assertEquals(ProviderFailureKind.LIMIT_EXCEEDED, capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) }.kind)
@@ -343,6 +405,20 @@ class OllamaCloudAdapterTest {
                 OkHttpClient.Builder().followRedirects(false).build()).send(EgressApprovedPayload.fixedPublicContractProbe())
         }
         assertEquals(ProviderFailureKind.NETWORK, failure.kind)
+        assertFalse(failure.mayHaveDispatched)
+    }
+
+    @Test fun timeoutAfterRequestBodyStartIsOutcomeUnknown() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val endpoint = server.url("/api/chat")
+        val failingAdapter = OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key },
+            CloudSettings(true, "gemma4:31b"), endpoint,
+            OkHttpClient.Builder().callTimeout(200, TimeUnit.MILLISECONDS).build(), fixtureCatalog())
+        val failure = capture { failingAdapter.send(EgressApprovedPayload.fixedPublicContractProbe()) }
+        assertEquals(ProviderFailureKind.TIMEOUT, failure.kind)
+        assertTrue(failure.mayHaveDispatched)
+        assertTrue(failure.message.orEmpty().contains("remote outcome is unknown"))
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun untrustedTlsCertificateIsRejectedBeforeHttpRequest() = runBlocking {

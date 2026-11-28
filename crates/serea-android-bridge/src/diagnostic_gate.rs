@@ -1,6 +1,6 @@
 //! Feature-gated native synchronization point for synthetic diagnostics only.
 use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::BridgeError;
 
@@ -60,23 +60,17 @@ pub(crate) fn checkpoint() -> Result<(), BridgeError> {
     }
     *phase = Phase::Entered;
     GATE.1.notify_all();
-    let deadline = Instant::now() + LIMIT;
-    while *phase == Phase::Entered {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            *phase = Phase::Idle;
-            return Err(BridgeError::Internal);
-        }
-        let (next, _) = GATE
-            .1
-            .wait_timeout(phase, remaining)
-            .map_err(|_| BridgeError::Internal)?;
-        phase = next;
-    }
-    if *phase != Phase::Released {
+    let (mut phase, timeout) = GATE
+        .1
+        .wait_timeout_while(phase, LIMIT, |current| *current == Phase::Entered)
+        .map_err(|_| BridgeError::Internal)?;
+    if *phase == Phase::Released {
         *phase = Phase::Idle;
-        return Err(BridgeError::Internal);
+        return Ok(());
     }
-    *phase = Phase::Idle;
-    Ok(())
+    if timeout.timed_out() && *phase == Phase::Entered {
+        *phase = Phase::Idle;
+        GATE.1.notify_all();
+    }
+    Err(BridgeError::Internal)
 }

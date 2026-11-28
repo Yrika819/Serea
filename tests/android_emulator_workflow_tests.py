@@ -742,7 +742,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('sentinel_seed_result" -eq 0 && -z "$(adb shell pm path "$isolated_package"', campaign)
         self.assertIn('[[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]', campaign)
         self.assertIn('"$data_isolation_result" == PASS', campaign)
-        self.assertIn('--minimum 105', campaign)
+        self.assertIn('--minimum 106', campaign)
         self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
 
     def test_api_instrumentation_evidence_has_distinct_artifact_names(self) -> None:
@@ -1752,7 +1752,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         verification = next(step for step in aggregate["steps"] if step.get("id") == "instrumentation")["run"]
         self.assertIn("verify_android_formal_aggregate.py", verification)
         module = (ROOT / "tools/verify_android_formal_aggregate.py").read_text(encoding="utf-8")
-        for required in ("api26_result", "api35_result", "105", "skipped", "process-death-status.txt", "data-isolation-status.txt", "source_sha", "run_id"):
+        for required in ("api26_result", "api35_result", "106", "skipped", "process-death-status.txt", "data-isolation-status.txt", "source_sha", "run_id"):
             self.assertIn(required, module)
         self.assertIn("result=PASS", module)
         self.assertIn("result=FAIL", module)
@@ -2135,12 +2135,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn("last_test_started=a.Second#blocked", contents)
             self.assertIn("last_test_finished=a.First#done", contents)
             self.assertIn("unfinished_test=a.Second#blocked", contents)
-            self.assertIn("expected_test_cases=105", contents)
+            self.assertIn("expected_test_cases=106", contents)
             self.assertIn("original_required_test_cases=103", contents)
-            self.assertIn("additional_test_cases=2", contents)
+            self.assertIn("additional_test_cases=3", contents)
             self.assertIn("original_required_started=0/103", contents)
-            self.assertIn("additional_started=0/2", contents)
-            self.assertIn("tests_not_started=103", contents)
+            self.assertIn("additional_started=0/3", contents)
+            self.assertIn("tests_not_started=104", contents)
             self.assertIn("tests_started_without_finish=1", contents)
             self.assertIn("runner_test_count=2", contents)
             self.assertIn("runner_failure_count=0", contents)

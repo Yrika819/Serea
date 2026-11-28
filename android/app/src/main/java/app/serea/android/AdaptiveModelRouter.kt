@@ -1,6 +1,7 @@
 package app.serea.android
 
 import java.time.Instant
+import kotlinx.coroutines.withContext
 
 /** Values are UNKNOWN unless supported by a source captured when the catalog entry was verified. */
 sealed interface Knowledge<out T> {
@@ -94,6 +95,61 @@ class LocalModelCatalog(
     private fun validate(entries: List<ModelDescriptor>) { require(entries.map { it.id }.distinct().size == entries.size) }
 }
 
+/** Ollama facts reviewed from official sources on 2026-11-27; account entitlement stays owner-confirmed. */
+internal object OllamaGemma4CloudCatalog {
+    const val MODEL_ID = "gemma4"
+    const val PROVIDER_ID = "ollama"
+    const val DESTINATION = "https://ollama.com/api/chat"
+    const val REVIEWED_AT = "2026-11-27T00:00:00Z"
+    const val PRICE_EXPIRES_AT = "2026-12-04T00:00:00Z"
+    const val PRICE_SOURCE = "https://ollama.com/pricing"
+    const val MODEL_SOURCE = "https://ollama.com/library/gemma4:cloud"
+
+    fun create(clock: () -> Instant = Instant::now) = LocalModelCatalog(
+        entries = listOf(
+            ModelDescriptor(
+                id = MODEL_ID,
+                providerId = PROVIDER_ID,
+                displayName = "Gemma 4 Cloud",
+                contextWindow = Knowledge.Known(256_000),
+                // This is Serea's approved per-request ceiling, not a provider-published maximum.
+                maxOutput = Knowledge.Known(OllamaCloudRequestLimits.OUTPUT_TOKENS),
+                capabilities = ModelCapabilities(input = setOf("text/plain")),
+                pricing = ModelPricing(
+                    inputPerMillion = Knowledge.Known(0.14),
+                    outputPerMillion = Knowledge.Known(0.40),
+                    currencyCode = Knowledge.Known("USD"),
+                ),
+                availability = ModelAvailability.AVAILABLE,
+                authorized = true,
+                lastVerifiedAt = REVIEWED_AT,
+                source = "$MODEL_SOURCE; API model ID and context window checked $REVIEWED_AT",
+                contractLimits = Knowledge.Known(
+                    ModelContractLimits(monthlyRequests = OllamaCloudRequestLimits.MONTHLY_REQUESTS),
+                ),
+                verificationStatus = ModelVerificationStatus.VERIFIED,
+                expiresAt = PRICE_EXPIRES_AT,
+            ),
+        ),
+        clock = clock,
+    )
+
+    fun prices(): VerifiedModelPriceCatalog = VerifiedModelPriceCatalog { modelId ->
+        if (modelId != MODEL_ID) null else VerifiedModelPriceSnapshot(
+            modelId = MODEL_ID,
+            price = VerifiedPriceSnapshot(
+                inputPricePerMillion = "0.14",
+                outputPricePerMillion = "0.40",
+                currency = "USD",
+                source = PRICE_SOURCE,
+                verifiedAt = REVIEWED_AT,
+                revision = "ollama-pricing-2026-11-27",
+            ),
+            expiresAt = PRICE_EXPIRES_AT,
+        )
+    }
+}
+
 /** Explicitly fictional catalog for local tests. It cannot be mistaken for verified production data. */
 internal class FakeModelCatalog(
     entries: List<ModelDescriptor> = emptyList(),
@@ -152,7 +208,12 @@ data class ModelSelectionResult(
 }
 
 /** Deterministic, device-local rules. This component never performs egress or fallback. */
-class AdaptiveModelRouter(private val catalog: ModelCatalog) {
+class AdaptiveModelRouter(
+    private val catalog: ModelCatalog,
+    private val providerOutputLimit: ((String) -> Int?)?,
+) {
+    constructor(catalog: ModelCatalog) : this(catalog, null)
+
     fun classify(request: RoutingRequest): ModelTask = when {
         request.requiresTools -> ModelTask.TOOL_REQUIRED
         request.requiresStructuredOutput -> ModelTask.STRUCTURED
@@ -199,10 +260,10 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
                 viable.any { it.pricing.currencyCode.knownString() == null }) {
                 if (policy.autoPolicy != AutoRoutingPolicy.QUALITY_PRIORITY) constraints += "価格通貨を比較できないためID順"
                 viable.minByOrNull { it.id }
-            } else viable.minWithOrNull(compareBy<ModelDescriptor>({ scoreCost(it, request) }, { it.id }))
+            } else viable.minWithOrNull(compareBy<ModelDescriptor>({ scoreCost(it, request, policy) }, { it.id }))
         }
         val unknowns = selected?.let(::unknowns).orEmpty()
-        val estimatedCost = selected?.let { estimateCost(it, request) }
+        val estimatedCost = selected?.let { estimateCost(it, request, policy) }
         val reason = if (selected == null) {
             if (policy.mode == ModelSelectionMode.MANUAL) "指定モデルは利用できません。別モデルへ自動切替はしません。"
             else "条件を満たす登録済みモデルがありません。利用可能なモデルを確認してください。"
@@ -220,11 +281,15 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (m.availability != ModelAvailability.AVAILABLE) return "利用可否が${if (m.availability == ModelAvailability.UNKNOWN) "未確認" else "利用不可"}"
         if (!m.authorized) return "利用権限が未確認"
         if (r.requiredInputFormat !in m.capabilities.input) return "必要な入力形式が未確認または非対応"
-        val inputTokens = Math.multiplyExact(r.contextCharacters.toLong() + r.text.length, 4L)
         val context = m.contextWindow.knownInt() ?: return "Context上限が未確認"
+        val bodyTokens = Math.multiplyExact(r.text.length.toLong(), 4L)
+        if (bodyTokens + r.requestedOutputTokens > context.toLong() || p.maxInputTokens?.let { bodyTokens > it } == true) return "Context上限不足"
+        val inputTokens = estimatedInputTokens(m, r, p)
         if (p.maxInputTokens?.let { inputTokens > it } == true || inputTokens + r.requestedOutputTokens > context.toLong()) return "Context上限不足"
         val output = m.maxOutput.knownInt() ?: return "最大出力が未確認"
         if (r.requestedOutputTokens > output) return "最大出力不足"
+        val providerOutput = providerOutputLimit?.invoke(m.providerId)
+        if (providerOutput != null && r.requestedOutputTokens > providerOutput) return "Provider最大出力不足"
         if (r.requiresTools && m.capabilities.toolCalling != Knowledge.Known(true)) return "Tool Calling能力が未確認または非対応"
         if (r.requiresStructuredOutput && m.capabilities.structuredOutput != Knowledge.Known(true)) return "Structured Output能力が未確認または非対応"
         if (task == ModelTask.COMPLEX && m.capabilities.reasoning != Knowledge.Known(true)) return "複雑な分析に必要なReasoning能力が未確認または非対応"
@@ -235,27 +300,35 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (p.autoPolicy == AutoRoutingPolicy.COST_PRIORITY && !priceKnown) return "料金が未確認のため安価と判断できない"
         if (p.maxEstimatedCost != null) {
             if (!priceKnown || currency != p.budgetCurrencyCode) return "料金または通貨が未確認のため予算適合を確認できない"
-            val estimate = (r.contextCharacters.toDouble() + r.text.length.toDouble()) * 4.0 * checkNotNull(inputPrice) / 1_000_000 + r.requestedOutputTokens * checkNotNull(outputPrice) / 1_000_000
+            val estimate = estimatedInputTokens(m, r, p).toDouble() * checkNotNull(inputPrice) / 1_000_000 + r.requestedOutputTokens * checkNotNull(outputPrice) / 1_000_000
             if (estimate > p.maxEstimatedCost) return "推定費用上限超過"
         }
         return null
     }
-    private fun scoreCost(m: ModelDescriptor, r: RoutingRequest): Double {
+    private fun scoreCost(m: ModelDescriptor, r: RoutingRequest, p: ModelRoutingPolicy): Double {
         val price = m.pricing.inputPerMillion.knownNumber() ?: Double.POSITIVE_INFINITY
         val output = m.pricing.outputPerMillion.knownNumber() ?: Double.POSITIVE_INFINITY
         return when {
-            m.pricing.inputPerMillion.knownNumber() != null && m.pricing.outputPerMillion.knownNumber() != null && m.pricing.currencyCode.knownString() != null -> ((r.contextCharacters.toDouble() + r.text.length.toDouble()) * 4.0 * price + r.requestedOutputTokens * output) / 1_000_000
+            m.pricing.inputPerMillion.knownNumber() != null && m.pricing.outputPerMillion.knownNumber() != null && m.pricing.currencyCode.knownString() != null -> (estimatedInputTokens(m, r, p) * price + r.requestedOutputTokens * output) / 1_000_000
             else -> Double.POSITIVE_INFINITY
         }
     }
-    private fun estimateCost(m: ModelDescriptor, r: RoutingRequest): EstimatedModelCost? {
+    private fun estimateCost(m: ModelDescriptor, r: RoutingRequest, p: ModelRoutingPolicy): EstimatedModelCost? {
         val input = m.pricing.inputPerMillion.knownNumber() ?: return null
         val output = m.pricing.outputPerMillion.knownNumber() ?: return null
         val currency = m.pricing.currencyCode.knownString() ?: return null
-        val inputTokens = Math.multiplyExact(r.contextCharacters.toLong() + r.text.length, 4L)
+        val inputTokens = estimatedInputTokens(m, r, p)
         val amount = inputTokens * input / 1_000_000 + r.requestedOutputTokens * output / 1_000_000
         if (!amount.isFinite()) return null
         return EstimatedModelCost(amount, currency, inputTokens, r.requestedOutputTokens)
+    }
+
+    private fun estimatedInputTokens(m: ModelDescriptor, r: RoutingRequest, policy: ModelRoutingPolicy): Long {
+        val historyCharacterLimit = ChatContextBuilder.historyCharacterBudget(
+            m.contextWindow.knownInt(), r.text, r.requestedOutputTokens, policy.maxInputTokens?.toLong(),
+        )
+        val includedHistory = minOf(r.contextCharacters, historyCharacterLimit)
+        return Math.multiplyExact(r.text.length.toLong() + includedHistory, 4L)
     }
     private fun unknowns(m: ModelDescriptor) = buildList {
         if (m.contextWindow == Knowledge.UNKNOWN) add("Context Window")
@@ -283,20 +356,38 @@ internal class RoutedModelChatPort(
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         if (request.selectedModelId != null) throw ModelChatFailure("Model ID is assigned only by the router.")
         val current = policy()
+        val relevantContextCharacters = request.context.asSequence()
+            .filter { it.status == "COMPLETED" }
+            .filter { it.conversationId == request.conversationId }
+            .fold(0L) { total, item -> Math.addExact(total, item.text.length.toLong()) }
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val selected = router.select(
             RoutingRequest(
                 text = request.message,
-                contextCharacters = request.context.sumOf { it.text.length },
+                contextCharacters = relevantContextCharacters,
                 requestedOutputTokens = current.requestedOutputTokens,
             ),
             current,
         )
         val model = selected.model ?: throw ModelChatFailure(selected.reason)
-        val routedRequest = request.copy(selectedModelId = model.id)
+        val fittedContext = ChatContextBuilder.fitForModel(
+            context = request.context,
+            currentInput = request.message,
+            expectedConversationId = request.conversationId,
+            modelContextWindowTokens = model.contextWindow.knownInt(),
+            requestedOutputTokens = current.requestedOutputTokens,
+            maxInputTokens = current.maxInputTokens?.toLong(),
+        )
+        if (request.egressContract != null && fittedContext != request.context) {
+            throw PreDispatchModelChatFailure("The existing Egress approval does not cover the fitted conversation context.")
+        }
+        val routedRequest = request.copy(context = fittedContext, selectedModelId = model.id)
         val preparedRequest = if (request.egressContract == null && contractFactory != null) {
-            routedRequest.copy(egressContract = contractFactory.invoke(request, model))
+            routedRequest.copy(egressContract = contractFactory.invoke(routedRequest, model))
         } else routedRequest
-        return delegate.send(preparedRequest)
+        return withContext(CloudProviderRequestContext(current.requestedOutputTokens)) {
+            delegate.send(preparedRequest)
+        }
     }
 }
 

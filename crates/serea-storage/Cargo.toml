@@ -18,6 +18,11 @@ p7-experimental = []
 # Gate C contract/ledger development surface. Explicit opt-in only and rejected
 # in optimized builds; this is not an ordinary runtime or production API.
 p7-gate-c = ["dep:fs2"]
+# Narrow synthetic connection surface for future Embedded Core integration
+# work. It composes only the existing synthetic extraction and Gate C fixtures.
+# Dependency features and crate-level compile guards keep it unavailable in
+# optimized builds; it is never enabled by default.
+p7-integration-dev = ["p7-experimental", "p7-gate-c"]
 
 [dependencies]
 serea-protocol.workspace = true

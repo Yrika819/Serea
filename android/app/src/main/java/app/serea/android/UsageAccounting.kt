@@ -15,14 +15,15 @@ import java.time.format.DateTimeFormatter
 import java.util.Currency
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 
 /** Local soft limits only. Provider billing and account-side limits remain authoritative. */
 data class UsageLimits(
     val dailyRequests: Long = 20,
-    val dailyTokens: Long = 10_000,
-    val monthlyRequests: Long = 100,
-    val monthlyTokens: Long = 50_000,
+    val dailyTokens: Long = OllamaCloudRequestLimits.DAILY_TOKEN_BUDGET,
+    val monthlyRequests: Long = OllamaCloudRequestLimits.MONTHLY_REQUESTS,
+    val monthlyTokens: Long = OllamaCloudRequestLimits.MONTHLY_TOKEN_BUDGET,
 ) {
     init {
         require(dailyRequests > 0 && dailyTokens > 0 && monthlyRequests > 0 && monthlyTokens > 0)
@@ -177,9 +178,9 @@ data class UsageReservationRow(
 data class UsageSettingsRow(
     val id: Int = 1,
     val dailyRequests: Long = 20,
-    val dailyTokens: Long = 10_000,
-    val monthlyRequests: Long = 100,
-    val monthlyTokens: Long = 50_000,
+    val dailyTokens: Long = OllamaCloudRequestLimits.DAILY_TOKEN_BUDGET,
+    val monthlyRequests: Long = OllamaCloudRequestLimits.MONTHLY_REQUESTS,
+    val monthlyTokens: Long = OllamaCloudRequestLimits.MONTHLY_TOKEN_BUDGET,
     val lastObservedAt: Long = 0,
 )
 
@@ -260,9 +261,11 @@ interface UsageDao {
     suspend fun totals(key: String): UsageWindowTotals
 
     @Transaction
-    suspend fun reserve(requestId: String, requestedAt: Long, input: Long, outputCap: Long, attribution: ModelUsageAttribution = ModelUsageAttribution()): UsageReservation {
+    suspend fun reserve(requestId: String, requestedAt: Long, input: Long, outputCap: Long,
+        attribution: ModelUsageAttribution = ModelUsageAttribution(), maxConcurrentRequests: Int? = null): UsageReservation {
         validateRequestId(requestId)
         require(input >= 0 && outputCap >= 0)
+        require(maxConcurrentRequests == null || maxConcurrentRequests > 0)
         val old = reservation(requestId)
         if (old != null) {
             val oldLedger = ledger(requestId)
@@ -272,12 +275,18 @@ interface UsageDao {
             throw DuplicateUsageRequestException("A send ID can be reserved only once.")
         }
 
+        if (maxConcurrentRequests != null && allLedgerRows().count {
+                it.reservationState in setOf(UsageLedgerState.IN_FLIGHT.name, UsageLedgerState.OUTCOME_UNKNOWN.name)
+            } >= maxConcurrentRequests) {
+            throw UsageLimitExceededException()
+        }
+
         val saved = settings() ?: UsageSettingsRow().also { putSettings(it) }
         // Wall-clock rollback cannot reopen a previously observed daily/monthly window.
         val effectiveAt = maxOf(requestedAt, saved.lastObservedAt)
         val day = dayKey(effectiveAt)
         val month = monthKey(effectiveAt)
-        val limits = saved.toLimits()
+        val limits = saved.toLimits().withinOllamaCloudCaps()
         val dayUsage = window("D:$day") ?: UsageWindowRow("D:$day", 0, 0, 0)
         val monthUsage = window("M:$month") ?: UsageWindowRow("M:$month", 0, 0, 0)
         val dayRequests = safeAdd(dayUsage.requests, 1)
@@ -320,15 +329,24 @@ interface UsageDao {
         val item = reservation(requestId) ?: return
         val savedLedger = ledger(requestId) ?: throw IllegalStateException("Usage reservation is missing its atomic ledger row.")
         if (item.state != "IN_FLIGHT" || savedLedger.usageStatus != UsageLedgerState.IN_FLIGHT.name) return
-        if (inputTokens == null || outputTokens == null) {
+        val usageUnknownReason = when {
+            inputTokens == null || outputTokens == null -> "Provider usage was absent or incomplete."
+            inputTokens < 0 || outputTokens < 0 -> "Provider usage contained an invalid negative token count."
+            // Input reservation is an estimate used to authorize the dispatch. A provider's
+            // reported input may legitimately be larger; record that actual value and let the
+            // checked window arithmetic and subsequent reservation limits account for it.
+            // Output is a request contract, so reporting more than requested remains unknown.
+            outputTokens > item.outputTokens -> "Provider output usage exceeded the requested output limit."
+            else -> null
+        }
+        if (usageUnknownReason != null) {
             putReservation(item.copy(state = UsageLedgerState.USAGE_UNKNOWN.name))
             putLedger(savedLedger.copy(usageStatus = UsageLedgerState.USAGE_UNKNOWN.name, reservationState = UsageLedgerState.USAGE_UNKNOWN.name,
-                costStatus = CostEstimationStatus.UNKNOWN.name, estimatedCost = null, uncertainOutcomeReason = "Provider usage was absent or incomplete."))
-            return // Keep the full reservation; missing usage is not zero.
+                costStatus = CostEstimationStatus.UNKNOWN.name, estimatedCost = null, uncertainOutcomeReason = usageUnknownReason))
+            return // Keep the full reservation; missing, invalid, or over-bound usage is not a definite amount.
         }
-        require(inputTokens >= 0 && outputTokens >= 0) { "Provider token usage must be non-negative." }
-        val actualInput = inputTokens
-        val actualOutput = outputTokens
+        val actualInput = checkNotNull(inputTokens)
+        val actualOutput = checkNotNull(outputTokens)
         listOf(item.dayKey, item.monthKey).forEach { key ->
             val current = window(key) ?: return@forEach
             putWindow(current.copy(
@@ -368,8 +386,9 @@ interface UsageDao {
     @Transaction
     suspend fun updateLimits(limits: UsageLimits) {
         val previous = settings() ?: UsageSettingsRow()
-        putSettings(previous.copy(dailyRequests = limits.dailyRequests, dailyTokens = limits.dailyTokens,
-            monthlyRequests = limits.monthlyRequests, monthlyTokens = limits.monthlyTokens))
+        val bounded = limits.withinOllamaCloudCaps()
+        putSettings(previous.copy(dailyRequests = bounded.dailyRequests, dailyTokens = bounded.dailyTokens,
+            monthlyRequests = bounded.monthlyRequests, monthlyTokens = bounded.monthlyTokens))
     }
 
     @Transaction
@@ -434,16 +453,23 @@ interface UsageDao {
         }.sortedWith(compareBy<ModelUsageSummary> { it.providerId.orEmpty() }.thenBy { it.modelId.orEmpty() })
     }
 
-    private fun UsageSettingsRow.toLimits() = UsageLimits(dailyRequests, dailyTokens, monthlyRequests, monthlyTokens)
+    private fun UsageSettingsRow.toLimits() = UsageLimits(dailyRequests, dailyTokens, monthlyRequests, monthlyTokens).withinOllamaCloudCaps()
+    private fun UsageLimits.withinOllamaCloudCaps() = copy(
+        dailyRequests = minOf(dailyRequests, OllamaCloudRequestLimits.DAILY_REQUESTS),
+        dailyTokens = minOf(dailyTokens, OllamaCloudRequestLimits.DAILY_TOKEN_BUDGET),
+        monthlyRequests = minOf(monthlyRequests, OllamaCloudRequestLimits.MONTHLY_REQUESTS),
+        monthlyTokens = minOf(monthlyTokens, OllamaCloudRequestLimits.MONTHLY_TOKEN_BUDGET),
+    )
     private fun dayKey(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE)
     private fun monthKey(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyy-MM"))
 }
 internal class UsageRepository(private val dao: UsageDao, private val clock: () -> Long = System::currentTimeMillis) {
     /** Conservative request budgeting, not tokenizer output. */
-    suspend fun reserve(requestId: String, promptChars: Int, maxOutputTokens: Int = 512, attribution: ModelUsageAttribution = ModelUsageAttribution()): UsageReservation {
+    suspend fun reserve(requestId: String, promptChars: Int, maxOutputTokens: Int = 512,
+        attribution: ModelUsageAttribution = ModelUsageAttribution(), maxConcurrentRequests: Int? = null): UsageReservation {
         require(promptChars >= 0 && maxOutputTokens > 0)
         val estimate = try { Math.multiplyExact(promptChars.toLong(), 4L) } catch (_: ArithmeticException) { throw UsageAccountingOverflowException() }
-        return dao.reserve(requestId, clock(), estimate, maxOutputTokens.toLong(), attribution)
+        return dao.reserve(requestId, clock(), estimate, maxOutputTokens.toLong(), attribution, maxConcurrentRequests)
     }
     suspend fun releaseBeforeDispatch(requestId: String) = dao.releaseBeforeDispatch(requestId)
     suspend fun complete(requestId: String, providerUsage: ProviderUsage?) = dao.settle(
@@ -479,12 +505,14 @@ internal class UsageControlledModelChatPort(
     private val usage: UsageRepository,
     private val outputReservationTokens: Int = 512,
     private val attributionResolver: UsageAttributionResolver = RequestModelAttribution,
+    private val maxConcurrentRequests: Int? = null,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         val promptChars = try { Math.addExact(request.message.length.toLong(), request.context.fold(0L) { total, item -> Math.addExact(total, item.text.length.toLong()) }).also { require(it <= Int.MAX_VALUE) }.toInt() }
             catch (_: ArithmeticException) { throw UsageAccountingOverflowException() }
         val attribution = attributionResolver.resolve(request)
-        usage.reserve(request.sendId, promptChars, outputReservationTokens, attribution)
+        val outputLimit = currentCoroutineContext()[CloudProviderRequestContext]?.outputTokenLimit ?: outputReservationTokens
+        usage.reserve(request.sendId, promptChars, outputLimit, attribution, maxConcurrentRequests)
         try {
             val response = delegate.send(request)
             withContext(NonCancellable) { usage.complete(request.sendId, response.usage) }
@@ -502,7 +530,15 @@ internal class UsageControlledModelChatPort(
             }
             throw cancelled
         } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request was cancelled after reservation; remote outcome may be unknown.") }
+            val requestContext = currentCoroutineContext()[CloudProviderRequestContext]
+            withContext(NonCancellable) {
+                if (requestContext?.isDefinitelyUndispatched() == true) {
+                    val released = usage.releaseBeforeDispatch(request.sendId)
+                    if (!released) usage.outcomeUnknown(request.sendId, "A pre-dispatch cancellation could not safely release its reservation.")
+                } else {
+                    usage.outcomeUnknown(request.sendId, "Request was cancelled after dispatch may have started; remote outcome is unknown.")
+                }
+            }
             throw cancelled
         } catch (failure: Exception) {
             withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request failed after reservation; remote outcome may be unknown.") }

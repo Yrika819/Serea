@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <!-- Keep the isolated test package component-minimal; the signed-review runner
+             independently admits one exact test method per synthetic campaign. -->
+        <activity tools:node="removeAll" />
+        <activity
+        android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity"
+        android:exported="true"
+        android:theme="@style/WhiteBackgroundTheme"
+        tools:node="replace" />
+        <provider tools:node="removeAll" />
+        <receiver tools:node="removeAll" />
+        <service tools:node="removeAll" />
+    </application>
+</manifest>

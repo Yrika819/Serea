@@ -14,6 +14,27 @@ use std::{
 
 uniffi::setup_scaffolding!();
 
+#[cfg(feature = "s1b-diagnostic")]
+mod diagnostic_gate;
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_arm() -> Result<(), BridgeError> {
+    diagnostic_gate::arm()
+}
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_wait_entered() -> Result<(), BridgeError> {
+    diagnostic_gate::wait_entered()
+}
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_release() -> Result<(), BridgeError> {
+    diagnostic_gate::release()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum BridgeError {
     AlreadyInitialized,
@@ -152,6 +173,8 @@ pub fn initialize(path: String) -> Result<u64, BridgeError> {
 pub fn get_status(handle: u64) -> Result<bool, BridgeError> {
     let state = STATE.lock().map_err(|_| BridgeError::Internal)?;
     if state.current.as_ref().is_some_and(|(h, _, _)| *h == handle) {
+        #[cfg(feature = "s1b-diagnostic")]
+        diagnostic_gate::checkpoint()?;
         Ok(true)
     } else {
         Err(BridgeError::InvalidHandle)

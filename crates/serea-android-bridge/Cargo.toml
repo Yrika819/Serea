@@ -9,6 +9,10 @@ publish = false
 [lib]
 crate-type = ["lib", "cdylib"]
 
+[features]
+default = []
+s1b-diagnostic = []
+
 [dependencies]
 serea-core.workspace = true
 serea-event-bus.workspace = true

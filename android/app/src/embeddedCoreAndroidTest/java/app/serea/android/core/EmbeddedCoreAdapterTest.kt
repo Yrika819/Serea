@@ -24,7 +24,7 @@ import java.util.concurrent.CompletableFuture
 
 @RunWith(AndroidJUnit4::class)
 class EmbeddedCoreAdapterTest {
-    @Test fun processOwnerSurvivesAdapterReplacement() {
+    @Test fun processOwnerSurvivesAdapterReplacement(): Unit = synchronized(EmbeddedCoreTestLock.monitor) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val first = EmbeddedCoreAdapter(context)
         val second = EmbeddedCoreAdapter(context)
@@ -40,7 +40,7 @@ class EmbeddedCoreAdapterTest {
         first.close().get(10, TimeUnit.SECONDS)
     }
 
-    @Test fun syntheticLifecycle() {
+    @Test fun syntheticLifecycle(): Unit = synchronized(EmbeddedCoreTestLock.monitor) {
         val adapter = EmbeddedCoreAdapter(ApplicationProvider.getApplicationContext<Context>())
         val heartbeat = CountDownLatch(1)
         lateinit var initial: CompletableFuture<ULong>

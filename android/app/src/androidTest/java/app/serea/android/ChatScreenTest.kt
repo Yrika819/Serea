@@ -512,7 +512,7 @@ class ChatScreenTest {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
         compose.onNodeWithTag("open_settings").performClick()
-        compose.onNodeWithText("合成probeを1回送信").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("Cloud probe（Owner承認待ち）").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)

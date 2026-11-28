@@ -1233,7 +1233,7 @@ internal fun ChatScreen(
                         secretText = ""
                         scope.launch {
                             runCatching { credentials?.store(secret.toCharArray()) }
-                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "APIキーを暗号化保存しました。Cloud送信には無料利用条件の確認が別途必要です。" }
+                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "APIキーを暗号化保存しました。実Cloud送信はOwnerの別途承認まで無効です。" }
                                 .onFailure { error -> settingsMessage = if (error is HardwareBackedKeyRequiredException)
                                     "Cloud APIキーにはHardware-backed Android Keystoreが必要です。この端末ではキーを保存しません。"
                                 else "APIキーを安全に保存できませんでした。" }
@@ -1247,12 +1247,15 @@ internal fun ChatScreen(
                         }
                     }, enabled = credentialReady && credentials != null) { Text("削除") }
                 }
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Checkbox(checked = freeAllowanceConfirmed, onCheckedChange = { freeAllowanceConfirmed = it })
-                    Text("Ollamaアカウントでgemma4無料利用可・残枠あり、購入クレジット/有料プラン/自動課金なしを確認しました")
+                if (CloudLiveDispatchPolicy.EXTERNAL_DISPATCH_ENABLED) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(checked = freeAllowanceConfirmed, onCheckedChange = { freeAllowanceConfirmed = it })
+                        Text("Ollamaアカウントでgemma4無料利用可・残枠あり、購入クレジット/有料プラン/自動課金なしを確認しました")
+                    }
+                } else {
+                    Text("実Cloud送信はOwnerの別途承認まで無効です。APIキー取得・Usage予約・ネットワーク送信は行いません。",
+                        style = MaterialTheme.typography.bodySmall)
                 }
-                Text("確認は端末内だけの一時状態です。APIキーと実会話は送らず、固定の合成probeだけを1回送信します。",
-                    style = MaterialTheme.typography.bodySmall)
                 Button(onClick = {
                     scope.launch {
                         val credentialRepo = credentials
@@ -1287,8 +1290,8 @@ internal fun ChatScreen(
                             freeAllowanceConfirmed = false
                         }
                     }
-                }, enabled = freeAllowanceConfirmed && credentialReady && !cloudProbeRunning && credentials?.let { runCatching { it.isHardwareBacked() }.getOrDefault(false) } == true && usage != null) {
-                    Text(if (cloudProbeRunning) "合成probe送信中…" else "合成probeを1回送信")
+                }, enabled = CloudLiveDispatchPolicy.EXTERNAL_DISPATCH_ENABLED && freeAllowanceConfirmed && credentialReady && !cloudProbeRunning && credentials?.let { runCatching { it.isHardwareBacked() }.getOrDefault(false) } == true && usage != null) {
+                    Text(if (cloudProbeRunning) "Cloud送信中…" else "Cloud probe（Owner承認待ち）")
                 }
                 TextButton(onClick = { previewVisible = !previewVisible }) { Text(if (previewVisible) "送信予定プレビューを閉じる" else "送信予定内容をプレビュー") }
                 if (previewVisible) {

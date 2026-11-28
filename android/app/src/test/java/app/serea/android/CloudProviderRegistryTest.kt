@@ -173,6 +173,28 @@ class CloudProviderRegistryTest {
         }
     }
 
+    @Test fun liveOllamaCandidateIsDisabledBeforeUsageCredentialAndNetwork() = runBlocking {
+        val dao = MemoryUsageDao()
+        var credentialReads = 0
+        val candidate = CloudCandidatePort.create(
+            credentials = object : CredentialReader {
+                override fun readForRequest(): String {
+                    credentialReads++
+                    throw IllegalStateException("synthetic credential barrier; no real key")
+                }
+            },
+            usage = UsageRepository(dao) { now },
+            clock = { now },
+        )
+
+        val failure = runCatching { candidate.runFixedPublicContractProbe() }.exceptionOrNull()
+
+        assertTrue("The product Cloud route must stay disabled without Owner authorization", failure is ModelChatFailure)
+        assertEquals("A disabled live route must not reserve Usage", 0, dao.reservationAttempts)
+        assertEquals("A disabled live route must not read credentials", 0, credentialReads)
+        assertEquals(0, dao.reservationCount)
+    }
+
     @Test fun ollamaUsageCapsClampHigherSavedSettingsAndLimitInFlightDispatchesToOne() = runBlocking {
         val dao = MemoryUsageDao()
         dao.putSettings(UsageSettingsRow(dailyRequests = 500, dailyTokens = 9_000_000,
@@ -417,6 +439,7 @@ class CloudProviderRegistryTest {
         maxInputBytes: Int = 1024,
         maxOutputTokens: Int = 64,
     ) : CloudChatProvider {
+        override val networkScope = CloudProviderNetworkScope.SYNTHETIC
         override val capabilities = CloudProviderCapabilities(supportsStreaming, roles, maxInputBytes, maxOutputTokens)
         override val allowsTestFixtureModels = true
         var sendCount = 0
@@ -449,12 +472,17 @@ class CloudProviderRegistryTest {
         private val reservations = mutableMapOf<String, UsageReservationRow>()
         private val ledgers = mutableMapOf<String, ModelUsageLedgerRow>()
         private var savedSettings: UsageSettingsRow? = null
+        var reservationAttempts = 0
+            private set
         val reservationCount: Int get() = reservations.size
 
         override suspend fun window(key: String) = windows[key]
         override suspend fun putWindow(row: UsageWindowRow) { windows[row.windowKey] = row }
         override suspend fun reservation(id: String) = reservations[id]
-        override suspend fun insertReservation(row: UsageReservationRow) { reservations[row.requestId] = row }
+        override suspend fun insertReservation(row: UsageReservationRow) {
+            reservationAttempts++
+            reservations[row.requestId] = row
+        }
         override suspend fun putReservation(row: UsageReservationRow) { reservations[row.requestId] = row }
         override suspend fun deleteInFlightReservation(id: String): Int {
             if (reservations[id]?.state != UsageLedgerState.IN_FLIGHT.name) return 0

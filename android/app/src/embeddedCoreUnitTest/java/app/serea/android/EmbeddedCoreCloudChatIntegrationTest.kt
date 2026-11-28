@@ -23,7 +23,7 @@ class EmbeddedCoreCloudChatIntegrationTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 events += "http-dispatch"
                 return MockResponse().setHeader("Content-Type", "application/json")
-                    .setBody("""{"model":"gemma4:31b","message":{"role":"assistant","content":"synthetic loopback reply"},"done":true,"prompt_eval_count":5,"eval_count":3}""")
+                    .setBody("""{"model":"gemma4","message":{"role":"assistant","content":"synthetic loopback reply"},"done":true,"prompt_eval_count":5,"eval_count":3}""")
             }
         }
         start()
@@ -31,12 +31,16 @@ class EmbeddedCoreCloudChatIntegrationTest {
 
     @After fun closeServer() { server.shutdown() }
 
-    private class RecordingCore(private val events: MutableList<String>) : SyntheticCoreNative {
+    private class RecordingCore(
+        private val events: MutableList<String>,
+        private val failInitialize: Boolean = false,
+    ) : SyntheticCoreNative {
         private var handle: ULong? = null
         override fun initialize(path: String): ULong {
             events += "core-initialize"
             check(path == "synthetic-cloud-core")
             check(handle == null)
+            check(!failInitialize) { "synthetic Core initialization failure" }
             return 71uL.also { handle = it }
         }
         override fun status(handle: ULong): Boolean {
@@ -60,12 +64,16 @@ class EmbeddedCoreCloudChatIntegrationTest {
         private val reservations = mutableMapOf<String, UsageReservationRow>()
         private val ledgers = mutableMapOf<String, ModelUsageLedgerRow>()
         private var settings: UsageSettingsRow? = null
+        var reservationAttempts = 0
+            private set
+        val reservationCount: Int get() = reservations.size
 
         override suspend fun window(key: String) = windows[key]
         override suspend fun putWindow(row: UsageWindowRow) { windows[row.windowKey] = row }
         override suspend fun reservation(id: String) = reservations[id]
         override suspend fun insertReservation(row: UsageReservationRow) {
             events += "usage-reserve"
+            reservationAttempts++
             check(row.requestId !in reservations)
             reservations[row.requestId] = row
         }
@@ -99,21 +107,6 @@ class EmbeddedCoreCloudChatIntegrationTest {
         }.toLong()
     }
 
-    private fun catalog(now: Instant) = FakeModelCatalog(listOf(ModelDescriptor(
-        id = MODEL_ID,
-        providerId = "ollama",
-        displayName = "Synthetic loopback model",
-        contextWindow = Knowledge.Known(8192),
-        maxOutput = Knowledge.Known(512),
-        capabilities = ModelCapabilities(setOf("text/plain")),
-        pricing = ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN),
-        availability = ModelAvailability.AVAILABLE,
-        authorized = true,
-        lastVerifiedAt = now.minusSeconds(10).toString(),
-        source = "synthetic loopback integration fixture",
-        verificationStatus = ModelVerificationStatus.TEST_FIXTURE,
-    )), clock = { now })
-
     private fun request(now: Long, classification: DataClassification = DataClassification.PUBLIC): ModelChatRequest {
         val body = "synthetic: verify Embedded Core to Cloud composition"
         val contract = EgressContract(
@@ -143,6 +136,7 @@ class EmbeddedCoreCloudChatIntegrationTest {
 
     private fun cloudPort(usageDao: UsageDao, now: Long): GatedCloudModelChatPort {
         val nowInstant = Instant.ofEpochMilli(now)
+        val catalog = OllamaGemma4CloudCatalog.create { nowInstant }
         return DirectProviderChatComposition.create(
             credentials = object : CredentialReader {
                 override fun readForRequest(): String {
@@ -152,8 +146,22 @@ class EmbeddedCoreCloudChatIntegrationTest {
             },
             usage = UsageRepository(usageDao) { now },
             settings = CloudSettings(enabled = true, modelId = MODEL_ID),
-            catalog = catalog(nowInstant),
-            routingPolicy = { ModelRoutingPolicy(allowedProviderIds = setOf("ollama")) },
+            catalog = catalog,
+            routingPolicy = {
+                ModelRoutingPolicy(
+                    mode = ModelSelectionMode.MANUAL,
+                    manualModelId = MODEL_ID,
+                    maxInputTokens = OllamaCloudRequestLimits.INPUT_TOKENS,
+                    requestedOutputTokens = OllamaCloudRequestLimits.OUTPUT_TOKENS,
+                    allowedProviderIds = setOf(OllamaGemma4CloudCatalog.PROVIDER_ID),
+                )
+            },
+            usageAttributionResolver = CatalogUsageAttributionResolver(
+                catalog,
+                OllamaGemma4CloudCatalog.prices(),
+                clock = { nowInstant },
+            ),
+            maxConcurrentRequests = OllamaCloudRequestLimits.CONCURRENT_REQUESTS,
             testEndpoint = server.url("/api/chat"),
             testClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build(),
         )
@@ -174,6 +182,17 @@ class EmbeddedCoreCloudChatIntegrationTest {
             val sentBody = sent.body.readUtf8()
             assertTrue(sentBody.contains("synthetic: verify Embedded Core to Cloud composition"))
             assertTrue(!sentBody.contains("synthetic-loopback-test-key"))
+            assertTrue(sentBody.contains("\"model\":\"gemma4\""))
+            val ledger = usageDao.allLedgerRows().single()
+            assertEquals("gemma4", ledger.modelId)
+            assertEquals("ollama", ledger.providerId)
+            assertEquals(OllamaCloudRequestLimits.OUTPUT_TOKENS.toLong(), ledger.reservedOutputTokens)
+            assertEquals(5L, ledger.providerInputTokens)
+            assertEquals(3L, ledger.providerOutputTokens)
+            assertEquals(UsageLedgerState.SETTLED.name, ledger.usageStatus)
+            assertTrue("verified catalog must settle a cost", ledger.estimatedCost != null)
+            assertEquals(UsageLedgerState.SETTLED.name, usageDao.reservation("synthetic-cloud-core-send-public")?.state)
+            assertEquals(1, usageDao.reservationCount)
             assertOrdered(events, "core-initialize", "core-status", "core-schema", "usage-reserve", "credential-read", "http-dispatch")
         } finally {
             port.close()
@@ -192,6 +211,7 @@ class EmbeddedCoreCloudChatIntegrationTest {
             assertTrue("Personal data must fail closed before provider use", failure is ModelChatFailure)
             assertEquals(0, server.requestCount)
             assertTrue("Usage must not reserve a denied request", events.none { it == "usage-reserve" })
+            assertEquals(0, usageDao.reservationAttempts)
             assertTrue("Credentials must not be read for a denied request", events.none { it == "credential-read" })
             assertTrue("No HTTP dispatch is permitted", events.none { it == "http-dispatch" })
             assertTrue(events.containsAll(listOf("core-initialize", "core-status", "core-schema")))
@@ -210,5 +230,29 @@ class EmbeddedCoreCloudChatIntegrationTest {
         }
     }
 
-    private companion object { const val MODEL_ID = "gemma4:31b" }
+    @Test fun coreInitializationFailureStopsBeforeCloudUsageCredentialAndDispatch() = runBlocking {
+        val now = System.currentTimeMillis()
+        val usageDao = RecordingUsageDao(events)
+        val core = EmbeddedCoreAdapter(
+            { "synthetic-cloud-core" },
+            RecordingCore(events, failInitialize = true),
+        )
+        val port = EmbeddedCoreCloudChatComposition.create(core, cloudPort(usageDao, now))
+
+        try {
+            val failure = runCatching { port.send(request(now)) }.exceptionOrNull()
+
+            assertTrue("Core initialization failure must fail closed", failure is ModelChatFailure)
+            assertEquals(0, server.requestCount)
+            assertEquals(0, usageDao.reservationAttempts)
+            assertTrue(events.none { it == "usage-reserve" })
+            assertTrue(events.none { it == "credential-read" })
+            assertTrue(events.none { it == "http-dispatch" })
+            assertEquals(listOf("core-initialize"), events.toList())
+        } finally {
+            port.close()
+        }
+    }
+
+    private companion object { const val MODEL_ID = "gemma4" }
 }

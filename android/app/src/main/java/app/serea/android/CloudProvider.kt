@@ -93,6 +93,9 @@ class OllamaCloudAdapter private constructor(
     internal val allowedProviderIds: Set<String>,
 ) : CloudChatProvider {
     override val providerId: String = "ollama"
+    override val networkScope: CloudProviderNetworkScope =
+        if (endpoint.host == "127.0.0.1" || endpoint.host == "localhost") CloudProviderNetworkScope.LOOPBACK_TEST
+        else CloudProviderNetworkScope.EXTERNAL
     override val destination: String = "https://ollama.com/api/chat"
     override val capabilities = CloudProviderCapabilities(
         supportsStreaming = true,
@@ -100,7 +103,7 @@ class OllamaCloudAdapter private constructor(
         maxInputBytes = MAX_INPUT_BYTES,
         maxOutputTokens = MAX_OUTPUT_TOKENS,
     )
-    override val allowsTestFixtureModels: Boolean get() = endpoint.host == "127.0.0.1" || endpoint.host == "localhost"
+    override val allowsTestFixtureModels: Boolean get() = networkScope == CloudProviderNetworkScope.LOOPBACK_TEST
     // Injected clients must not silently replay this POST or forward credentials on redirects.
     private val client = suppliedClient.newBuilder()
         .retryOnConnectionFailure(false)
@@ -169,6 +172,7 @@ class OllamaCloudAdapter private constructor(
         if (outputTokenLimit !in 1..capabilities.maxOutputTokens) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
+        if (!CloudLiveDispatchPolicy.allows(networkScope)) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val request = withContext(Dispatchers.IO) {
             val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
             catch (_: HistoryUnavailableException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
@@ -473,6 +477,16 @@ internal class CloudProviderModelChatPort(
     }
 }
 
+/** Default-deny barrier around every live-provider composition, before routing, Egress and Usage. */
+internal class CloudLiveDispatchGate(private val routed: ModelChatPort) : ModelChatPort {
+    override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+        if (!CloudLiveDispatchPolicy.EXTERNAL_DISPATCH_ENABLED) {
+            throw PreDispatchModelChatFailure("External Cloud dispatch requires separate Owner authorization.")
+        }
+        return routed.send(request)
+    }
+}
+
 /** Marker for a Chat port assembled through Cloud routing, egress and usage gates. */
 internal class GatedCloudModelChatPort internal constructor(private val routed: ModelChatPort) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse = routed.send(request)
@@ -513,12 +527,13 @@ internal object DirectProviderChatComposition {
             ),
             expectedTarget = EgressTarget.CLOUD,
         )
+        val routed = RoutedModelChatPort(
+            gated,
+            AdaptiveModelRouter(catalog, registry::outputLimitFor),
+            policy = routingPolicy,
+        )
         return GatedCloudModelChatPort(
-            RoutedModelChatPort(
-                gated,
-                AdaptiveModelRouter(catalog, registry::outputLimitFor),
-                policy = routingPolicy,
-            ),
+            if (registry.requiresLiveAuthorization) CloudLiveDispatchGate(routed) else routed,
         )
     }
 }

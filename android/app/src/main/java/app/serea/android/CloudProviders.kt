@@ -49,9 +49,20 @@ data class CloudProviderCapabilities(
     }
 }
 
+/** Constrains dispatch by transport environment; external provider calls require explicit Owner authorization. */
+enum class CloudProviderNetworkScope { SYNTHETIC, LOOPBACK_TEST, EXTERNAL }
+
+/** Live external dispatch remains fail-closed until separately authorized by the Owner. */
+internal object CloudLiveDispatchPolicy {
+    const val EXTERNAL_DISPATCH_ENABLED = false
+    fun allows(scope: CloudProviderNetworkScope): Boolean =
+        scope != CloudProviderNetworkScope.EXTERNAL || EXTERNAL_DISPATCH_ENABLED
+}
+
 /** Provider-specific wire protocol behind the existing approved Chat payload contract. */
 internal interface CloudChatProvider {
     val providerId: String
+    val networkScope: CloudProviderNetworkScope
     /** Canonical Egress destination, independent of a loopback test endpoint. */
     val destination: String
     val capabilities: CloudProviderCapabilities
@@ -74,6 +85,7 @@ internal class CloudProviderRegistry(
     private val allowedProviderIds: Set<String>,
 ) {
     private val providersById: Map<String, CloudChatProvider>
+    internal val requiresLiveAuthorization: Boolean
 
     internal fun outputLimitFor(providerId: String): Int =
         if (providerId !in allowedProviderIds) 0 else providersById[providerId]?.capabilities?.maxOutputTokens ?: 0
@@ -88,6 +100,7 @@ internal class CloudProviderRegistry(
                 url.encodedQuery == null && url.encodedFragment == null) { "Provider destination must be a fixed HTTPS URL." }
         }
         providersById = providers.associateBy { it.providerId }
+        requiresLiveAuthorization = providers.any { it.networkScope == CloudProviderNetworkScope.EXTERNAL }
     }
 
     internal fun resolve(
@@ -139,6 +152,9 @@ internal class CloudProviderRegistry(
         onDelta: (String) -> Unit = {},
     ): CloudReply {
         val route = resolve(payload, selectedModelId, catalog, outputTokenLimit)
+        if (!CloudLiveDispatchPolicy.allows(route.provider.networkScope)) {
+            throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
+        }
         // Exactly one selected transport invocation; retry policy belongs to that transport.
         return route.provider.send(payload, onDelta, selectedModelId, route.outputTokenLimit)
     }

@@ -27,6 +27,9 @@ internal object EmbeddedCoreChatComposition {
 internal object EmbeddedCoreCloudChatComposition {
     fun create(core: EmbeddedCoreAdapter, cloudPort: GatedCloudModelChatPort): EmbeddedCoreModelChatPort =
         EmbeddedCoreModelChatPort(core, cloudPort)
+
+    fun create(existingSession: EmbeddedCoreModelChatPort, cloudPort: GatedCloudModelChatPort): ModelChatPort =
+        existingSession.withProviderPort(cloudPort)
 }
 
 internal class EmbeddedCoreModelChatPort(
@@ -39,6 +42,14 @@ internal class EmbeddedCoreModelChatPort(
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         ensureCoreReady()
         return providerPort.send(request)
+    }
+
+    /** Shares this Chat session's native Core ownership while substituting one explicitly gated port. */
+    fun withProviderPort(port: ModelChatPort): ModelChatPort = object : ModelChatPort {
+        override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+            ensureCoreReady()
+            return port.send(request)
+        }
     }
 
     /** Explicit owner cleanup; failure retains the lease so a caller may retry. */

@@ -170,6 +170,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val S1B_ALLOWED_TEST_METHODS = setOf(
             "app.serea.android.core.EmbeddedCoreAdapterTest#processOwnerSurvivesAdapterReplacement",
             "app.serea.android.EmbeddedCoreDiagnosticChatUiTest#diagnosticChatUsesCoreMockAcrossRecreationAndCleansUp",
+            "app.serea.android.EmbeddedCoreCloudChatIntegrationTest#fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage",
         )
         const val CAMPAIGN_TOKEN_ARGUMENT = "sereaCampaignToken"
         const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"

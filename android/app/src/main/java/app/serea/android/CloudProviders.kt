@@ -54,9 +54,69 @@ enum class CloudProviderNetworkScope { SYNTHETIC, LOOPBACK_TEST, EXTERNAL }
 
 /** Live external dispatch remains fail-closed until separately authorized by the Owner. */
 internal object CloudLiveDispatchPolicy {
-    const val EXTERNAL_DISPATCH_ENABLED = false
-    fun allows(scope: CloudProviderNetworkScope): Boolean =
-        scope != CloudProviderNetworkScope.EXTERNAL || EXTERNAL_DISPATCH_ENABLED
+    const val GENERAL_EXTERNAL_DISPATCH_ENABLED = false
+    const val FIXED_SYNTHETIC_PROBE_ENABLED = true
+    const val FIXED_PROBE_PROMPT = "Reply with exactly: Serea cloud contract probe passed."
+    private const val CONVERSATION_PREFIX = "ollama-contract-probe-"
+    private const val SEND_PREFIX = "ollama-contract-probe-send-"
+
+    fun isFixedSyntheticProbeContract(contract: EgressContract): Boolean {
+        val suffix = contract.conversationId.removePrefix(CONVERSATION_PREFIX)
+        return FIXED_SYNTHETIC_PROBE_ENABLED &&
+            contract.target == EgressTarget.CLOUD &&
+            contract.destination == OllamaGemma4CloudCatalog.DESTINATION &&
+            suffix.matches(Regex("[0-9a-fA-F-]{36}")) &&
+            contract.currentMessageId == "$SEND_PREFIX$suffix" &&
+            contract.selectedModelId in setOf(null, OllamaGemma4CloudCatalog.MODEL_ID) &&
+            contract.origin == DataOrigin.USER_AUTHORED &&
+            contract.classification == DataClassification.PUBLIC &&
+            contract.plannedBody == FIXED_PROBE_PROMPT &&
+            contract.context.isEmpty() &&
+            contract.preparation == PayloadPreparation.RAW &&
+            contract.plannedBodySourceLineage == setOf(DataOrigin.USER_AUTHORED) &&
+            contract.localDemoGoogleHandoffAuthorization == null &&
+            contract.localModelConsent == null
+    }
+
+    fun isFixedSyntheticProbeRequest(request: ModelChatRequest): Boolean {
+        val contract = request.egressContract ?: return false
+        return isFixedSyntheticProbeContract(contract) &&
+            request.conversationId == contract.conversationId &&
+            request.sendId == contract.currentMessageId &&
+            request.selectedModelId in setOf(null, OllamaGemma4CloudCatalog.MODEL_ID) &&
+            request.message == FIXED_PROBE_PROMPT &&
+            request.context.isEmpty() &&
+            request.classification == DataClassification.PUBLIC &&
+            request.bodySourceLineage == setOf(DataOrigin.USER_AUTHORED) &&
+            request.preparedPersonal == null &&
+            request.localDemoGoogleHandoffAuthorization == null
+    }
+
+    fun isFixedSyntheticProbePayload(payload: EgressApprovedPayload, modelId: String?): Boolean {
+        val conversationId = payload.conversationId ?: return false
+        val sendId = payload.sendId ?: return false
+        val suffix = conversationId.removePrefix(CONVERSATION_PREFIX)
+        return FIXED_SYNTHETIC_PROBE_ENABLED &&
+            suffix.matches(Regex("[0-9a-fA-F-]{36}")) &&
+            sendId == "$SEND_PREFIX$suffix" &&
+            payload.selectedModelId == OllamaGemma4CloudCatalog.MODEL_ID &&
+            modelId == OllamaGemma4CloudCatalog.MODEL_ID &&
+            payload.destination == OllamaGemma4CloudCatalog.DESTINATION &&
+            payload.target == EgressTarget.CLOUD &&
+            payload.origin == DataOrigin.USER_AUTHORED &&
+            payload.classification == DataClassification.PUBLIC &&
+            payload.dispatchPurpose == CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE &&
+            payload.bodySourceLineage == setOf(DataOrigin.USER_AUTHORED) &&
+            payload.messages == listOf("user" to FIXED_PROBE_PROMPT)
+    }
+
+    fun allows(scope: CloudProviderNetworkScope, request: ModelChatRequest): Boolean =
+        scope != CloudProviderNetworkScope.EXTERNAL || GENERAL_EXTERNAL_DISPATCH_ENABLED ||
+            isFixedSyntheticProbeRequest(request)
+
+    fun allows(scope: CloudProviderNetworkScope, payload: EgressApprovedPayload, modelId: String?): Boolean =
+        scope != CloudProviderNetworkScope.EXTERNAL || GENERAL_EXTERNAL_DISPATCH_ENABLED ||
+            isFixedSyntheticProbePayload(payload, modelId)
 }
 
 /** Provider-specific wire protocol behind the existing approved Chat payload contract. */
@@ -152,7 +212,7 @@ internal class CloudProviderRegistry(
         onDelta: (String) -> Unit = {},
     ): CloudReply {
         val route = resolve(payload, selectedModelId, catalog, outputTokenLimit)
-        if (!CloudLiveDispatchPolicy.allows(route.provider.networkScope)) {
+        if (!CloudLiveDispatchPolicy.allows(route.provider.networkScope, payload, selectedModelId)) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         }
         // Exactly one selected transport invocation; retry policy belongs to that transport.

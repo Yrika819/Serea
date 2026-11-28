@@ -766,6 +766,7 @@ S1B_OWNER_METHODS = {
     "ownership-recovery-r2": "app.serea.android.core.EmbeddedCoreAdapterTest#processOwnerSurvivesAdapterReplacement",
     "chat-core": "app.serea.android.EmbeddedCoreDiagnosticChatUiTest#diagnosticChatUsesCoreMockAcrossRecreationAndCleansUp",
     "chat-core-recovery": "app.serea.android.EmbeddedCoreDiagnosticChatUiTest#diagnosticChatUsesCoreMockAcrossRecreationAndCleansUp",
+    "cloud-core": "app.serea.android.EmbeddedCoreCloudChatIntegrationTest#fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage",
 }
 
 
@@ -1024,7 +1025,7 @@ def mark_runtime_attempt(*, ledger_directory: str | Path, verified: VerifiedCamp
                          expected_method: str) -> str:
     """Record the one-shot runtime attempt immediately before dispatching instrumentation."""
     if expected_method not in S1B_OWNER_METHODS.values():
-        raise SafetyError("Runtime method is outside the two Owner-approved S1B/S1-02 methods")
+        raise SafetyError("Runtime method is outside the exact Owner-approved S1B/S1-02 allowlist")
     directory=Path(ledger_directory)
     with reservation_lock(directory,blocking=False) as directory_fd:
         cid=_require_campaign(verified.campaign_id)

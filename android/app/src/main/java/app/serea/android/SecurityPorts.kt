@@ -22,6 +22,8 @@ abstract class LocalDemoGoogleHandoffAuthorization internal constructor() {
     abstract suspend fun consume(request: ModelChatRequest): Boolean
 }
 
+enum class CloudDispatchPurpose { NORMAL_CHAT, FIXED_SYNTHETIC_PROBE }
+
 /** Exact provider payload preview and its lineage. A user-authored string is not PUBLIC by default. */
 data class EgressContract(
     val conversationId: String,
@@ -38,6 +40,8 @@ data class EgressContract(
     val selectedModelId: String? = null,
     /** Defaults to the existing external-cloud contract; local demo must be explicit. */
     val target: EgressTarget = EgressTarget.CLOUD,
+    /** Fixed-probe intent is validated against exact content and provenance at every dispatch boundary. */
+    val cloudDispatchPurpose: CloudDispatchPurpose = CloudDispatchPurpose.NORMAL_CHAT,
     /** Inherited provenance for plannedBody. Empty or untrusted ancestry denies Cloud egress. */
     val plannedBodySourceLineage: Set<DataOrigin> = emptySet(),
     /** Local real-model use requires a fresh, content-bound local consent proof. */
@@ -159,6 +163,10 @@ object ChatEgressGate {
                 EgressApprovedPayload.fromApprovedContract(contract, messages))
         }
         if (contract.destination != "https://ollama.com/api/chat") return denied(EgressContractDecision.DESTINATION_DENIED)
+        if (contract.cloudDispatchPurpose == CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE &&
+            !CloudLiveDispatchPolicy.isFixedSyntheticProbeContract(contract)) {
+            return denied(EgressContractDecision.CONTENT_MISMATCH)
+        }
         val intent = contract.explicitSendIntentAtMillis ?: return denied(EgressContractDecision.MISSING_INTENT)
         val expiry = contract.expiresAtMillis ?: return denied(EgressContractDecision.MISSING_INTENT)
         if (intent > nowMillis || nowMillis > expiry || expiry < intent || expiry - intent > 60_000) return denied(EgressContractDecision.EXPIRED_INTENT)

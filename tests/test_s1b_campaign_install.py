@@ -168,6 +168,21 @@ class CampaignInstallRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(safety.SafetyError,'signer differs'):
             installer.checked_campaign_review(assessment,verified,'api35-4k')
 
+    def test_cloud_core_campaign_is_bound_to_one_exact_runtime_method(self):
+        method='app.serea.android.EmbeddedCoreCloudChatIntegrationTest#fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage'
+        self.assertEqual(method,installer.S1B_METHOD_KEYS['cloud-core'])
+        plan=dict(guard.S1B_REQUIRED_RUNTIME_PLAN)
+        self.assertEqual(method,plan['cloud_core_method'])
+        assessment={'runtime_plan':plan,'target_apk_sha256':'a'*64,
+                    'test_apk_sha256':'b'*64,'certificate_sha256':'c'*64}
+        verified=SimpleNamespace(campaign_id='s1b0123456789',
+            target=SimpleNamespace(sha256='a'*64),test=SimpleNamespace(sha256='b'*64),
+            certificate_sha256='c'*64)
+        installer.checked_campaign_review(assessment,verified,'api35-4k','cloud-core')
+        plan['cloud_core_method']='app.serea.android.EmbeddedCoreCloudChatIntegrationTest#otherMethod'
+        with self.assertRaisesRegex(safety.SafetyError,'outside the signed Owner-approved campaign scope'):
+            installer.checked_campaign_review({**assessment,'runtime_plan':plan},verified,'api35-4k','cloud-core')
+
     def test_installed_package_path_accepts_only_package_manager_base_apk(self):
         remote='/data/app/~~abc123==/app.serea.android.isolated.s1b0123456789-xyz==/base.apk'
         result=SimpleNamespace(returncode=0,stdout='package:'+remote+'\n',stderr='')

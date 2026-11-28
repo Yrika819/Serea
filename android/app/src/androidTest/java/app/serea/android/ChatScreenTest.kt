@@ -508,11 +508,13 @@ class ChatScreenTest {
         }
     }
 
-    @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
+    @Test fun fixedCloudProbePlanIsSeparateFromUnclassifiedChatPreview() {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
         compose.onNodeWithTag("open_settings").performClick()
-        compose.onNodeWithText("Cloud probe（Owner承認待ち）").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("固定probe予定本文: Reply with exactly: Serea cloud contract probe passed. · Chat入力/履歴/Google由来データは含めません。")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("固定Cloud probeを確認").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)

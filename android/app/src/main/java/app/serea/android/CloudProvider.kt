@@ -69,17 +69,18 @@ class EgressApprovedPayload private constructor(
     internal val classification: DataClassification,
     internal val target: EgressTarget,
     internal val bodySourceLineage: Set<DataOrigin>,
+    internal val dispatchPurpose: CloudDispatchPurpose,
 ) {
     internal val text: String get() = messages.lastOrNull()?.second.orEmpty()
     companion object {
         internal fun fixedPublicContractProbe(): EgressApprovedPayload =
             EgressApprovedPayload(listOf("user" to "Reply with exactly: Serea cloud contract probe passed."), null, null,
                 null, "https://ollama.com/api/chat", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC, EgressTarget.CLOUD,
-                setOf(DataOrigin.USER_AUTHORED))
+                setOf(DataOrigin.USER_AUTHORED), CloudDispatchPurpose.NORMAL_CHAT)
         internal fun fromApprovedContract(contract: EgressContract, messages: List<Pair<String, String>>) =
             EgressApprovedPayload(messages.toList(), contract.conversationId, contract.currentMessageId,
                 contract.selectedModelId, contract.destination, contract.origin, contract.classification, contract.target,
-                contract.plannedBodySourceLineage.toSet())
+                contract.plannedBodySourceLineage.toSet(), contract.cloudDispatchPurpose)
     }
 }
 
@@ -172,7 +173,7 @@ class OllamaCloudAdapter private constructor(
         if (outputTokenLimit !in 1..capabilities.maxOutputTokens) {
             throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
-        if (!CloudLiveDispatchPolicy.allows(networkScope)) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
+        if (!CloudLiveDispatchPolicy.allows(networkScope, payload, modelId)) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val request = withContext(Dispatchers.IO) {
             val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
             catch (_: HistoryUnavailableException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
@@ -346,21 +347,46 @@ class OllamaCloudAdapter private constructor(
     }
 }
 
-/** A one-shot, synthetic request path for proving the approved Cloud contract. */
-internal class CloudCandidatePort(private val chat: ModelChatPort, private val nowMillis: () -> Long = System::currentTimeMillis) {
-    suspend fun runFixedPublicContractProbe(): ModelChatResponse {
+internal data class CloudProbeCatalogStatus(
+    val modelId: String,
+    val modelFresh: Boolean,
+    val priceFresh: Boolean,
+    val modelVerifiedAt: String?,
+    val priceExpiresAt: String?,
+    val inputPricePerMillion: String?,
+    val outputPricePerMillion: String?,
+    val currency: String?,
+) {
+    val ready: Boolean get() = modelFresh && priceFresh
+}
+
+internal data class CloudProbeReceipt(
+    val sendId: String,
+    val response: ModelChatResponse,
+    val usage: ModelUsageLedgerRow?,
+)
+
+/** One fixed, synthetic request path for proving the approved Cloud contract. */
+internal class CloudCandidatePort(
+    private val chat: ModelChatPort,
+    private val usage: UsageRepository,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) {
+    suspend fun runFixedPublicContractProbe(onPrepared: (String) -> Unit = {}): CloudProbeReceipt {
         val id = java.util.UUID.randomUUID().toString()
         val now = nowMillis()
-        val prompt = "Reply with exactly: Serea cloud contract probe passed."
+        val prompt = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT
+        val conversationId = "ollama-contract-probe-$id"
+        val sendId = "ollama-contract-probe-send-$id"
         val request = ModelChatRequest(
-            conversationId = "ollama-contract-probe-$id",
+            conversationId = conversationId,
             message = prompt,
-            sendId = "ollama-contract-probe-send-$id",
+            sendId = sendId,
             timeoutMillis = 60_000,
             classification = DataClassification.PUBLIC,
             egressContract = EgressContract(
-                conversationId = "ollama-contract-probe-$id",
-                currentMessageId = "ollama-contract-probe-send-$id",
+                conversationId = conversationId,
+                currentMessageId = sendId,
                 origin = DataOrigin.USER_AUTHORED,
                 classification = DataClassification.PUBLIC,
                 destination = OllamaGemma4CloudCatalog.DESTINATION,
@@ -372,25 +398,57 @@ internal class CloudCandidatePort(private val chat: ModelChatPort, private val n
                 selectedModelId = null,
                 target = EgressTarget.CLOUD,
                 plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+                cloudDispatchPurpose = CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE,
             ),
             selectedModelId = null,
             bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
         )
-        return kotlinx.coroutines.withContext(CloudProviderRequestContext(OllamaCloudRequestLimits.OUTPUT_TOKENS)) {
+        onPrepared(sendId)
+        val response = kotlinx.coroutines.withContext(CloudProviderRequestContext(OllamaCloudRequestLimits.OUTPUT_TOKENS)) {
             chat.send(request)
         }
+        return CloudProbeReceipt(sendId, response, usage.ledgerRow(sendId))
     }
 
     companion object {
+        fun catalogStatus(nowMillis: Long = System.currentTimeMillis()): CloudProbeCatalogStatus {
+            val now = java.time.Instant.ofEpochMilli(nowMillis)
+            val clock = { now }
+            val catalog = OllamaGemma4CloudCatalog.create(clock)
+            val model = catalog.all().singleOrNull { it.id == OllamaGemma4CloudCatalog.MODEL_ID }
+            val priceEvidence = OllamaGemma4CloudCatalog.prices().find(OllamaGemma4CloudCatalog.MODEL_ID)
+            val attribution = if (model == null) null else runCatching {
+                CatalogUsageAttributionResolver(catalog, OllamaGemma4CloudCatalog.prices(), clock = { now })
+                    .resolve(ModelChatRequest(
+                        conversationId = "probe-freshness-check",
+                        message = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT,
+                        selectedModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                    ))
+            }.getOrNull()
+            val price = attribution?.price
+            return CloudProbeCatalogStatus(
+                modelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                modelFresh = model != null && catalog.isFresh(model),
+                priceFresh = price != null,
+                modelVerifiedAt = model?.lastVerifiedAt,
+                priceExpiresAt = priceEvidence?.expiresAt,
+                inputPricePerMillion = price?.inputPricePerMillion,
+                outputPricePerMillion = price?.outputPricePerMillion,
+                currency = price?.currency,
+            )
+        }
+
         fun create(
             credentials: CredentialReader,
             usage: UsageRepository,
             testEndpoint: HttpUrl? = null,
             testClient: OkHttpClient? = null,
             clock: () -> Long = System::currentTimeMillis,
+            chatWrapper: ((GatedCloudModelChatPort) -> ModelChatPort)? = null,
         ): CloudCandidatePort {
-            val catalog = OllamaGemma4CloudCatalog.create()
-            val chat = DirectProviderChatComposition.create(
+            val instantClock = { java.time.Instant.ofEpochMilli(clock()) }
+            val catalog = OllamaGemma4CloudCatalog.create(instantClock)
+            val routedCloud = DirectProviderChatComposition.create(
                 credentials = credentials,
                 usage = usage,
                 settings = CloudSettings(enabled = true, modelId = OllamaGemma4CloudCatalog.MODEL_ID),
@@ -407,12 +465,12 @@ internal class CloudCandidatePort(private val chat: ModelChatPort, private val n
                 testEndpoint = testEndpoint,
                 testClient = testClient,
                 usageAttributionResolver = CatalogUsageAttributionResolver(
-                    catalog, OllamaGemma4CloudCatalog.prices(),
-                    clock = { java.time.Instant.ofEpochMilli(clock()) },
+                    catalog, OllamaGemma4CloudCatalog.prices(), clock = instantClock,
                 ),
                 maxConcurrentRequests = OllamaCloudRequestLimits.CONCURRENT_REQUESTS,
             )
-            return CloudCandidatePort(chat, clock)
+            val chat = chatWrapper?.invoke(routedCloud) ?: routedCloud
+            return CloudCandidatePort(chat, usage, clock)
         }
     }
 }
@@ -480,8 +538,8 @@ internal class CloudProviderModelChatPort(
 /** Default-deny barrier around every live-provider composition, before routing, Egress and Usage. */
 internal class CloudLiveDispatchGate(private val routed: ModelChatPort) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-        if (!CloudLiveDispatchPolicy.EXTERNAL_DISPATCH_ENABLED) {
-            throw PreDispatchModelChatFailure("External Cloud dispatch requires separate Owner authorization.")
+        if (!CloudLiveDispatchPolicy.allows(CloudProviderNetworkScope.EXTERNAL, request)) {
+            throw PreDispatchModelChatFailure("Only the fixed, confirmed synthetic Cloud probe is available.")
         }
         return routed.send(request)
     }

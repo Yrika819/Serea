@@ -123,11 +123,29 @@ internal class InMemoryDiagnosticConversationHistory(
     )
 }
 
-internal class EmbeddedCoreDiagnosticChatSessionProvider : EmbeddedCoreDiagnosticChatSessionFactory {
+internal class EmbeddedCoreDiagnosticChatSessionProvider :
+    EmbeddedCoreDiagnosticChatSessionFactory,
+    EmbeddedCoreCloudChatPortFactory {
     override fun create(
         owner: ViewModelStoreOwner,
         applicationContext: Context,
     ): ChatSessionComposition {
+        val session = session(owner, applicationContext)
+        return ChatSessionComposition(
+            modelChatPort = session.modelChatPort,
+            historyRepository = session.historyRepository,
+            usageRepository = null,
+            embeddedCoreDiagnostic = true,
+        )
+    }
+
+    override fun wrap(
+        owner: ViewModelStoreOwner,
+        applicationContext: Context,
+        cloudPort: GatedCloudModelChatPort,
+    ): ModelChatPort = EmbeddedCoreCloudChatComposition.create(session(owner, applicationContext).modelChatPort, cloudPort)
+
+    private fun session(owner: ViewModelStoreOwner, applicationContext: Context): EmbeddedCoreDiagnosticChatSessionViewModel {
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -135,13 +153,6 @@ internal class EmbeddedCoreDiagnosticChatSessionProvider : EmbeddedCoreDiagnosti
                 return EmbeddedCoreDiagnosticChatSessionViewModel(applicationContext) as T
             }
         }
-        val session = ViewModelProvider(owner, factory)
-            .get(EmbeddedCoreDiagnosticChatSessionViewModel::class.java)
-        return ChatSessionComposition(
-            modelChatPort = session.modelChatPort,
-            historyRepository = session.historyRepository,
-            usageRepository = null,
-            embeddedCoreDiagnostic = true,
-        )
+        return ViewModelProvider(owner, factory).get(EmbeddedCoreDiagnosticChatSessionViewModel::class.java)
     }
 }

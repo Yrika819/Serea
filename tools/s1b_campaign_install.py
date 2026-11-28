@@ -26,7 +26,7 @@ LOCAL_GUARD_ROOT = Path.home() / '.local/share/serea-storage-monitor-v1'
 APPROVED_TRUST_ANCHOR = Path.home() / '.local/share/serea-s1b-diagnostic-trust/s1b-diagnostic-trust-anchor.json'
 S1B_SIGNING_GENERATION = 'S1B_DIAGNOSTIC_2026_11'
 S1B_APPROVED_REVIEW = 'OWNER_APPROVED_S1B_DIAGNOSTIC_2026_11'
-S1B_GRADLE_SHA256 = '672516dea970cf93b3dfa3bc78559ea6ef85c3e36a1b6dd941d48d5bb33f30ec'
+S1B_GRADLE_SHA256 = 'b518697af6e383689152722d739df831eaa6f2107356301c67848b4d670ae9b6'
 EMULATOR_SERIAL = re.compile(r'emulator-[0-9]+\Z')
 
 
@@ -83,6 +83,7 @@ S1B_METHOD_KEYS = {
     'ownership-recovery-r2': 'app.serea.android.core.EmbeddedCoreAdapterTest#processOwnerSurvivesAdapterReplacement',
     'chat-core': 'app.serea.android.EmbeddedCoreDiagnosticChatUiTest#diagnosticChatUsesCoreMockAcrossRecreationAndCleansUp',
     'chat-core-recovery': 'app.serea.android.EmbeddedCoreDiagnosticChatUiTest#diagnosticChatUsesCoreMockAcrossRecreationAndCleansUp',
+    'cloud-core': 'app.serea.android.EmbeddedCoreCloudChatIntegrationTest#fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage',
 }
 
 
@@ -167,7 +168,8 @@ def checked_campaign_review(assessment: object, verified: safety.VerifiedCampaig
     if method_key is not None:
         expected_method=S1B_METHOD_KEYS.get(method_key)
         plan_key=('recovery_method' if method_key in ('ownership-recovery','ownership-recovery-r2')
-                  else ('first_method' if method_key=='ownership' else 'second_method'))
+                  else ('first_method' if method_key=='ownership' else
+                        ('cloud_core_method' if method_key=='cloud-core' else 'second_method')))
         if expected_method is None or plan.get(plan_key)!=expected_method:
             raise safety.SafetyError('Selected runtime method is outside the signed Owner-approved campaign scope')
     if (not re.fullmatch(r's1b[a-f0-9]{10}',verified.campaign_id)
@@ -650,7 +652,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Install one verified S1B campaign pair and run one exact Owner-approved instrumentation method.')
     parser.add_argument('--campaign-id', required=True)
     parser.add_argument('--profile', required=True, choices=('api26', 'api35-4k', 'api35-16k'))
-    parser.add_argument('--method', required=True, choices=('ownership','ownership-recovery','ownership-recovery-r2','chat-core','chat-core-recovery'))
+    parser.add_argument('--method', required=True, choices=('ownership','ownership-recovery','ownership-recovery-r2','chat-core','chat-core-recovery','cloud-core'))
     parser.add_argument('--target-apk', required=True, type=Path)
     parser.add_argument('--test-apk', required=True, type=Path)
     parser.add_argument('--staging-root', required=True, type=Path)

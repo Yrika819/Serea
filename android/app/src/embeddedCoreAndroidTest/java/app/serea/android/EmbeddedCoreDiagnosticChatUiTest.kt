@@ -33,6 +33,7 @@ class EmbeddedCoreDiagnosticChatUiTest {
         compose.onNode(hasText("合成プロンプトのみ使用してください", substring = true)).assertIsDisplayed()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         compose.onAllNodesWithTag("open_settings").assertCountEquals(0)
+        compose.onNodeWithTag("open_cloud_probe").assertIsDisplayed()
         compose.onAllNodesWithTag("open_tasks").assertCountEquals(0)
     }
 

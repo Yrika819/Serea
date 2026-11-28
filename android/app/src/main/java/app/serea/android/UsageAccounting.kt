@@ -479,6 +479,7 @@ internal class UsageRepository(private val dao: UsageDao, private val clock: () 
     suspend fun recoverAfterProcessRestart() = dao.markInterruptedRequestsUnknown()
     suspend fun updateLimits(limits: UsageLimits) = dao.updateLimits(limits)
     suspend fun snapshot() = dao.snapshot(clock())
+    suspend fun ledgerRow(requestId: String): ModelUsageLedgerRow? = dao.allLedgerRows().singleOrNull { it.requestId == requestId }
     suspend fun summaries(
         timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME,
         providerId: String? = null,

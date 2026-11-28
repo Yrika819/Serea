@@ -16,6 +16,22 @@ internal interface EmbeddedCoreDiagnosticChatSessionFactory {
     fun create(owner: ViewModelStoreOwner, applicationContext: Context): ChatSessionComposition
 }
 
+internal interface EmbeddedCoreCloudChatPortFactory {
+    fun wrap(owner: ViewModelStoreOwner, applicationContext: Context, cloudPort: GatedCloudModelChatPort): ModelChatPort
+}
+
+internal object EmbeddedCoreCloudChatPortFactoryLoader {
+    private const val PROVIDER_CLASS = "app.serea.android.EmbeddedCoreDiagnosticChatSessionProvider"
+
+    fun loadOrNull(): EmbeddedCoreCloudChatPortFactory? = try {
+        Class.forName(PROVIDER_CLASS).getDeclaredConstructor().newInstance() as EmbeddedCoreCloudChatPortFactory
+    } catch (_: ReflectiveOperationException) {
+        null
+    } catch (_: LinkageError) {
+        null
+    }
+}
+
 internal object EmbeddedCoreDiagnosticChatSessionFactoryLoader {
     private const val PROVIDER_CLASS = "app.serea.android.EmbeddedCoreDiagnosticChatSessionProvider"
 

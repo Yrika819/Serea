@@ -150,18 +150,22 @@ class CloudProviderRegistryTest {
                 testClient = OkHttpClient(),
             )
 
-            val reply = port.runFixedPublicContractProbe()
+            var preparedSendId: String? = null
+            val receipt = port.runFixedPublicContractProbe { preparedSendId = it }
             val sent = server.takeRequest()
             val body = sent.body.readUtf8()
 
-            assertEquals("synthetic probe reply", reply.text)
+            assertEquals("synthetic probe reply", receipt.response.text)
+            assertEquals(receipt.sendId, preparedSendId)
+            assertEquals("SETTLED", receipt.usage?.usageStatus)
             assertEquals("Bearer test-key-only", sent.getHeader("Authorization"))
             assertTrue(body.contains("\"model\":\"gemma4\""))
             assertTrue(body.contains("\"num_predict\":1024"))
-            assertTrue(body.contains("Serea cloud contract probe"))
+            assertTrue(body.contains("\"messages\":[{\"role\":\"user\",\"content\":\"${CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT}\"}]"))
             assertFalse(body.contains("test-key-only"))
             assertEquals(1, server.requestCount)
             assertEquals(1, dao.reservationCount)
+            assertEquals(receipt.sendId, dao.allLedgerRows().single().requestId)
             assertEquals("gemma4", dao.allLedgerRows().single().modelId)
             assertEquals("ollama", dao.allLedgerRows().single().providerId)
             assertEquals(1_024L, dao.allLedgerRows().single().reservedOutputTokens)
@@ -173,7 +177,99 @@ class CloudProviderRegistryTest {
         }
     }
 
-    @Test fun liveOllamaCandidateIsDisabledBeforeUsageCredentialAndNetwork() = runBlocking {
+    @Test fun fixedProbePurposeCannotAuthorizeChangedPromptBeforeUsageOrCredentialRead() = runBlocking {
+        val dao = MemoryUsageDao()
+        var credentialReads = 0
+        val cloudChat = DirectProviderChatComposition.create(
+            credentials = object : CredentialReader {
+                override fun readForRequest(): String {
+                    credentialReads++
+                    throw IllegalStateException("synthetic credential barrier; no real key")
+                }
+            },
+            usage = UsageRepository(dao) { now },
+            settings = CloudSettings(enabled = true, modelId = OllamaGemma4CloudCatalog.MODEL_ID),
+            catalog = OllamaGemma4CloudCatalog.create { Instant.ofEpochMilli(now) },
+            routingPolicy = {
+                ModelRoutingPolicy(
+                    mode = ModelSelectionMode.MANUAL,
+                    manualModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                    maxInputTokens = OllamaCloudRequestLimits.INPUT_TOKENS,
+                    requestedOutputTokens = OllamaCloudRequestLimits.OUTPUT_TOKENS,
+                    allowedProviderIds = setOf(OllamaGemma4CloudCatalog.PROVIDER_ID),
+                )
+            },
+        )
+        val id = java.util.UUID.randomUUID().toString()
+        val conversationId = "ollama-contract-probe-$id"
+        val sendId = "ollama-contract-probe-send-$id"
+        val alteredPrompt = "private conversation text must never reach this fixed probe"
+        val alteredContract = contract(OllamaGemma4CloudCatalog.MODEL_ID, sendId).copy(
+            conversationId = conversationId,
+            currentMessageId = sendId,
+            plannedBody = alteredPrompt,
+            selectedModelId = null,
+            cloudDispatchPurpose = CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE,
+        )
+        val alteredRequest = ModelChatRequest(
+            conversationId = conversationId,
+            message = alteredPrompt,
+            sendId = sendId,
+            classification = DataClassification.PUBLIC,
+            egressContract = alteredContract,
+            selectedModelId = null,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+
+        val failure = runCatching { cloudChat.send(alteredRequest) }.exceptionOrNull()
+        val privateContext = ContextMessage(
+            role = MessageRole.USER,
+            text = "private history must not be appended to the probe",
+            classification = DataClassification.UNKNOWN,
+            sourceMessageId = "private-history-row",
+            origin = DataOrigin.USER_AUTHORED,
+        )
+        val contextContract = contract(OllamaGemma4CloudCatalog.MODEL_ID, sendId).copy(
+            conversationId = conversationId,
+            currentMessageId = sendId,
+            plannedBody = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT,
+            context = listOf(privateContext),
+            selectedModelId = null,
+            cloudDispatchPurpose = CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE,
+        )
+        val contextRequest = ModelChatRequest(
+            conversationId = conversationId,
+            message = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT,
+            context = listOf(privateContext),
+            sendId = sendId,
+            classification = DataClassification.PUBLIC,
+            egressContract = contextContract,
+            selectedModelId = null,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        val contextFailure = runCatching { cloudChat.send(contextRequest) }.exceptionOrNull()
+
+        assertTrue(failure is ModelChatFailure)
+        assertTrue("A fixed-probe purpose must not authorize appended chat history", contextFailure is ModelChatFailure)
+        assertEquals(0, dao.reservationAttempts)
+        assertEquals(0, credentialReads)
+        assertEquals(0, dao.reservationCount)
+    }
+
+    @Test fun fixedProbeModelAndPriceFreshnessUseInjectedTimeAndFailAtExpiry() {
+        fun millis(value: String) = Instant.parse(value).toEpochMilli()
+
+        val fresh = CloudCandidatePort.catalogStatus(millis("2026-11-28T12:00:00Z"))
+        val beforeExpiry = CloudCandidatePort.catalogStatus(millis("2026-12-03T23:59:59Z"))
+        val expired = CloudCandidatePort.catalogStatus(millis("2026-12-04T00:00:00Z"))
+
+        assertTrue(fresh.ready)
+        assertTrue(beforeExpiry.ready)
+        assertFalse(expired.ready)
+        assertEquals("2026-12-04T00:00:00Z", expired.priceExpiresAt)
+    }
+
+    @Test fun fixedExternalProbeStopsAtSyntheticCredentialBarrierWithoutOpeningNetwork() = runBlocking {
         val dao = MemoryUsageDao()
         var credentialReads = 0
         val candidate = CloudCandidatePort.create(
@@ -189,9 +285,42 @@ class CloudProviderRegistryTest {
 
         val failure = runCatching { candidate.runFixedPublicContractProbe() }.exceptionOrNull()
 
-        assertTrue("The product Cloud route must stay disabled without Owner authorization", failure is ModelChatFailure)
-        assertEquals("A disabled live route must not reserve Usage", 0, dao.reservationAttempts)
-        assertEquals("A disabled live route must not read credentials", 0, credentialReads)
+        assertTrue("The fixed probe must stop at the synthetic credential barrier", failure is ModelChatFailure)
+        assertEquals("Only the exact probe may cross the dispatch gate", 1, dao.reservationAttempts)
+        assertEquals("The fake credential barrier must be reached", 1, credentialReads)
+        assertEquals("A proved pre-dispatch failure must release Usage", 0, dao.reservationCount)
+        assertTrue("The fake key failure must happen before any provider request", dao.allLedgerRows().isEmpty())
+    }
+
+    @Test fun ordinaryExternalCloudChatRemainsDeniedBeforeUsageCredentialAndDispatch() = runBlocking {
+        val dao = MemoryUsageDao()
+        var credentialReads = 0
+        val cloudChat = DirectProviderChatComposition.create(
+            credentials = object : CredentialReader {
+                override fun readForRequest(): String {
+                    credentialReads++
+                    throw IllegalStateException("synthetic credential barrier; no real key")
+                }
+            },
+            usage = UsageRepository(dao) { now },
+            settings = CloudSettings(enabled = true, modelId = OllamaGemma4CloudCatalog.MODEL_ID),
+            catalog = OllamaGemma4CloudCatalog.create { Instant.ofEpochMilli(now) },
+            routingPolicy = {
+                ModelRoutingPolicy(
+                    mode = ModelSelectionMode.MANUAL,
+                    manualModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                    maxInputTokens = OllamaCloudRequestLimits.INPUT_TOKENS,
+                    requestedOutputTokens = OllamaCloudRequestLimits.OUTPUT_TOKENS,
+                    allowedProviderIds = setOf(OllamaGemma4CloudCatalog.PROVIDER_ID),
+                )
+            },
+        )
+
+        val failure = runCatching { cloudChat.send(request(OllamaGemma4CloudCatalog.MODEL_ID, "send-normal-cloud-chat")) }.exceptionOrNull()
+
+        assertTrue("Ordinary external Chat must remain unavailable", failure is ModelChatFailure)
+        assertEquals(0, dao.reservationAttempts)
+        assertEquals(0, credentialReads)
         assertEquals(0, dao.reservationCount)
     }
 

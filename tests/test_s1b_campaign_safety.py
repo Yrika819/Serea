@@ -792,6 +792,45 @@ class CampaignApkFixture(unittest.TestCase):
             safety.mark_runtime_attempt(ledger_directory=self.ledger,verified=verified,
                                         expected_method=safety.S1B_OWNER_METHODS['ownership'])
 
+    def test_cloud_core_loopback_method_is_exactly_allowlisted_and_settles_runtime_ledger(self):
+        method = (
+            "app.serea.android.EmbeddedCoreCloudChatIntegrationTest#"
+            "fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage"
+        )
+        self.assertEqual(method, safety.S1B_OWNER_METHODS["cloud-core"])
+        source = (Path(__file__).parents[1] / "android/app/src/embeddedCoreAndroidTest/java/app/serea/android/EmbeddedCoreCloudChatIntegrationTest.kt").read_text()
+        self.assertIn("fun fixedCloudProbeCrossesRealCoreBeforeLoopbackRequestAndSettlesUsage", source)
+        target, test = self.valid_pair()
+        verified = self.verify(target, test)
+        record_path = self.write_campaign_record()
+        record = json.loads(record_path.read_text())
+        record["owner_approved_scope"] = safety.S1B_OWNER_SCOPE
+        record["method"] = "cloud-core"
+        record_path.write_text(json.dumps(record))
+        record_path.chmod(0o600)
+
+        with safety.claim_install_attempt(
+            ledger_directory=self.ledger, verified=verified,
+            installed_packages=self.no_campaign_packages, aapt=AAPT, apksigner=APKSIGNER,
+            expected_method=method,
+        ) as permit:
+            self.assertEqual("cloud-core", permit.method)
+            self.assertNotIn("campaign_token", permit.to_public_dict())
+        self.assertEqual("cloud-core", safety.read_install_attempt(
+            ledger_directory=self.ledger, verified=verified, expected_method=method,
+        )["method"])
+        self.assertEqual(record["campaign_token"], safety.mark_runtime_attempt(
+            ledger_directory=self.ledger, verified=verified, expected_method=method,
+        ))
+        safety.mark_runtime_pass(
+            ledger_directory=self.ledger, verified=verified, expected_method=method,
+            result_sha256="b" * 64,
+        )
+        settled = json.loads(record_path.read_text())
+        self.assertEqual("RUNTIME_PASS", settled["state"])
+        self.assertEqual(method, settled["runtime_method"])
+        self.assertEqual("CLEANUP_PASS", settled["runtime_cleanup_status"])
+
     def test_preinstrumentation_install_failure_is_recorded_as_not_executed(self):
         target,test=self.valid_pair()
         verified=self.verify(target,test)

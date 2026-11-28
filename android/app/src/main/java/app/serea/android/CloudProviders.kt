@@ -73,6 +73,7 @@ internal object CloudLiveDispatchPolicy {
             contract.plannedBody == FIXED_PROBE_PROMPT &&
             contract.context.isEmpty() &&
             contract.preparation == PayloadPreparation.RAW &&
+            contract.cloudDispatchPurpose == CloudDispatchPurpose.FIXED_SYNTHETIC_PROBE &&
             contract.plannedBodySourceLineage == setOf(DataOrigin.USER_AUTHORED) &&
             contract.localDemoGoogleHandoffAuthorization == null &&
             contract.localModelConsent == null

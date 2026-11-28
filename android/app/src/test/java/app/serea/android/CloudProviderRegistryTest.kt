@@ -292,6 +292,58 @@ class CloudProviderRegistryTest {
         assertTrue("The fake key failure must happen before any provider request", dao.allLedgerRows().isEmpty())
     }
 
+    @Test fun probeShapedNormalPurposeIsDeniedBeforeUsageCredentialAndDispatch() = runBlocking {
+        val dao = MemoryUsageDao()
+        var credentialReads = 0
+        val cloudChat = DirectProviderChatComposition.create(
+            credentials = object : CredentialReader {
+                override fun readForRequest(): String {
+                    credentialReads++
+                    throw IllegalStateException("synthetic credential barrier; no real key")
+                }
+            },
+            usage = UsageRepository(dao) { now },
+            settings = CloudSettings(enabled = true, modelId = OllamaGemma4CloudCatalog.MODEL_ID),
+            catalog = OllamaGemma4CloudCatalog.create { Instant.ofEpochMilli(now) },
+            routingPolicy = {
+                ModelRoutingPolicy(
+                    mode = ModelSelectionMode.MANUAL,
+                    manualModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+                    maxInputTokens = OllamaCloudRequestLimits.INPUT_TOKENS,
+                    requestedOutputTokens = OllamaCloudRequestLimits.OUTPUT_TOKENS,
+                    allowedProviderIds = setOf(OllamaGemma4CloudCatalog.PROVIDER_ID),
+                )
+            },
+        )
+        val id = java.util.UUID.randomUUID().toString()
+        val conversationId = "ollama-contract-probe-$id"
+        val sendId = "ollama-contract-probe-send-$id"
+        val probeShapedContract = contract(OllamaGemma4CloudCatalog.MODEL_ID, sendId).copy(
+            conversationId = conversationId,
+            currentMessageId = sendId,
+            plannedBody = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT,
+            selectedModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+            cloudDispatchPurpose = CloudDispatchPurpose.NORMAL_CHAT,
+        )
+        val probeShapedRequest = ModelChatRequest(
+            conversationId = conversationId,
+            message = CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT,
+            sendId = sendId,
+            classification = DataClassification.PUBLIC,
+            egressContract = probeShapedContract,
+            selectedModelId = OllamaGemma4CloudCatalog.MODEL_ID,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+
+        assertFalse(CloudLiveDispatchPolicy.isFixedSyntheticProbeRequest(probeShapedRequest))
+        val failure = runCatching { cloudChat.send(probeShapedRequest) }.exceptionOrNull()
+
+        assertTrue("A probe-shaped normal Chat request must be denied", failure is ModelChatFailure)
+        assertEquals(0, dao.reservationAttempts)
+        assertEquals(0, credentialReads)
+        assertEquals(0, dao.reservationCount)
+    }
+
     @Test fun ordinaryExternalCloudChatRemainsDeniedBeforeUsageCredentialAndDispatch() = runBlocking {
         val dao = MemoryUsageDao()
         var credentialReads = 0

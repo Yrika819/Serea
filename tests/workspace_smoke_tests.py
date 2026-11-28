@@ -544,20 +544,12 @@ class P2GroupOInvariantTests(unittest.TestCase):
         forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
         ambient_host_clock = self.root / "crates/serea-host/src/host_clock.rs"
         android_bridge_clock = self.root / "crates/serea-android-bridge/src/lib.rs"
-        android_diagnostic_gate = self.root / "crates/serea-android-bridge/src/diagnostic_gate.rs"
         synthetic_host_model = self.root / "crates/serea-host/src/synthetic_model.rs"
         wall_clock_matches = []
         host_monotonic_matches = []
         for member in smoke.EXPECTED_MEMBERS:
             for path in (self.root / member / "src").rglob("*.rs"):
                 if path.name == "p7_japanese_fts_eval_tests.rs":
-                    continue
-                if path == android_diagnostic_gate:
-                    bridge_lib = android_bridge_clock.read_text()
-                    bridge_manifest = (self.root / "crates/serea-android-bridge/Cargo.toml").read_text()
-                    self.assertRegex(bridge_lib, r'#\[cfg\(feature = "s1b-diagnostic"\)\]\s*mod diagnostic_gate;')
-                    self.assertRegex(bridge_manifest, r'(?m)^default = \[\]\s*$')
-                    self.assertRegex(bridge_manifest, r'(?m)^s1b-diagnostic = \[\]\s*$')
                     continue
                 source = self.without_rust_comments(path.read_text())
                 for match in forbidden.finditer(source):

@@ -111,8 +111,34 @@ class MainActivity : ComponentActivity() {
     internal val shellUsage: UsageRepository get() = usage
     private val providerComposition by viewModels<AppProviderCompositionViewModel>()
     internal val shellProviders: AppProviderComposition get() = providerComposition.providers
+    private val chatSession by lazy {
+        val demo = {
+            val demoUsage = usage
+            ChatSessionComposition(DemoChatComposition.create(demoUsage), history, demoUsage, embeddedCoreDiagnostic = false)
+        }
+        if (BuildConfig.BUILD_TYPE != "isolated") {
+            demo()
+        } else {
+            try {
+                val provider = EmbeddedCoreDiagnosticChatSessionFactoryLoader.load()
+                ChatSessionCompositionFactory.create(
+                    embeddedCoreDiagnosticEnabled = true,
+                    demo = demo,
+                    embeddedCoreDiagnostic = { provider.create(this, applicationContext) },
+                )
+            } catch (_: ClassNotFoundException) {
+                // The isolated variant without -PsereaEmbeddedCore remains on the ordinary Demo path.
+                demo()
+            } catch (failure: Exception) {
+                ChatSessionCompositionFactory.create(true, demo) { throw failure }
+            } catch (failure: LinkageError) {
+                ChatSessionCompositionFactory.create(true, demo) { throw failure }
+            }
+        }
+    }
     internal val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(DemoChatComposition.create(usage), history, usage)
+        val session = chatSession
+        ChatViewModel.factory(session.modelChatPort, session.historyRepository, session.usageRepository)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -120,15 +146,20 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
             chatViewModel.beginActivitySelectionRestore(this)
         }
+        val session = chatSession
         setContent {
             SereaTheme {
-                SereaAppShell(
-                    chatViewModel,
-                    credentials,
-                    usage,
-                    shellTaskViewModel,
-                    providers = shellProviders,
-                )
+                if (session.embeddedCoreDiagnostic) {
+                    ChatScreen(chatViewModel = chatViewModel, diagnosticOnly = true)
+                } else {
+                    SereaAppShell(
+                        chatViewModel,
+                        credentials,
+                        usage,
+                        shellTaskViewModel,
+                        providers = shellProviders,
+                    )
+                }
             }
         }
     }
@@ -145,6 +176,12 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onDestroy() {
+        if (chatSession.embeddedCoreDiagnostic && isFinishing && !isChangingConfigurations) {
+            chatViewModel.cancelCurrent()
+        }
+        super.onDestroy()
+    }
 }
 
 data class ChatMessage(
@@ -259,6 +296,12 @@ internal class ChatViewModel(
     }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
+
+    override fun onCleared() {
+        activeJob?.cancel()
+        activeJob = null
+        super.onCleared()
+    }
 
     /**
      * Generation used to bind a provider handoff to the selected Chat destination.
@@ -863,6 +906,7 @@ internal fun ChatScreen(
     privateGoogleAuthorizationViewModel: app.serea.android.googleauth.PrivateGoogleAuthorizationViewModel? = null,
     onOpenGoogleCalendarDemo: ((app.serea.android.calendar.CalendarProviderSession) -> Unit)? = null,
     focusClearRequest: Int = 0,
+    diagnosticOnly: Boolean = false,
 ) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
@@ -889,7 +933,7 @@ internal fun ChatScreen(
     var usageSnapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
     val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
     val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
-    var modelPolicy by remember { mutableStateOf(modelSettings.load()) }
+    var modelPolicy by remember { mutableStateOf(if (diagnosticOnly) ModelRoutingPolicy() else modelSettings.load()) }
     var budgetAmountText by remember { mutableStateOf(modelPolicy.maxEstimatedCost?.toString().orEmpty()) }
     var budgetCurrencyText by remember { mutableStateOf(modelPolicy.budgetCurrencyCode.orEmpty()) }
     val modelCatalog by remember { mutableStateOf(LocalModelCatalog().all()) }
@@ -980,13 +1024,21 @@ internal fun ChatScreen(
         Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
             Text("Serea", style = if (compactChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
-            if (!settingsDestination && (!compactChat || onOpenTasks == null)) {
+            if (!diagnosticOnly && !settingsDestination && (!compactChat || onOpenTasks == null)) {
                 Button(onClick = {
                     if (onOpenTasks != null) onOpenTasks()
                     else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
                 }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
             }
-            if (compactChat) {
+            if (diagnosticOnly) {
+                Text(
+                    "EMBEDDED CORE DIAGNOSTIC · synthetic Core + Mock AI · Chatはメモリ内のみ · 外部通信なし",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = if (compactChat) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
+                )
+                Text("合成プロンプトのみ使用してください。Core障害時はMock AIへフォールバックしません。",
+                    style = MaterialTheme.typography.bodySmall)
+            } else if (compactChat) {
                 Text("DEMO · Cloud送信: 無効", color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.labelSmall, maxLines = 1)
             } else {
@@ -1122,10 +1174,12 @@ internal fun ChatScreen(
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        if (onOpenSettings != null) onOpenSettings()
-                        else { settingsVisible = !settingsVisible; secretText = "" }
-                    }, enabled = !state.isRestoring, modifier = Modifier.weight(1f).testTag("open_settings")) { Text("設定") }
+                    if (!diagnosticOnly) {
+                        Button(onClick = {
+                            if (onOpenSettings != null) onOpenSettings()
+                            else { settingsVisible = !settingsVisible; secretText = "" }
+                        }, enabled = !state.isRestoring, modifier = Modifier.weight(1f).testTag("open_settings")) { Text("設定") }
+                    }
                     Box(modifier = Modifier.weight(1f)) {
                         TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
@@ -1236,7 +1290,7 @@ internal fun ChatScreen(
                 if (!compactChat) Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
-                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else
+                    Text(if (state.isRestoring) "会話を復元しています…" else if (diagnosticOnly) "合成会話 · このセッションのメモリ内だけに保持されます。" else
                         if (compactChat) "端末内のデモ会話 · Cloud送信なし" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
                         style = if (compactChat) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
                 }
@@ -1246,7 +1300,7 @@ internal fun ChatScreen(
                         Surface(color = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             shape = MaterialTheme.shapes.medium) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Text(if (message.role == MessageRole.USER) "あなた · ${message.status}" else "デモ応答",
+                                Text(if (message.role == MessageRole.USER) "あなた · ${message.status}" else if (diagnosticOnly) "Mock AI応答" else "デモ応答",
                                     style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                 Text(message.text, style = MaterialTheme.typography.bodyLarge)
                             }
@@ -1255,7 +1309,7 @@ internal fun ChatScreen(
                     if (state.isLoading) item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
                         CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                        Text(if (state.isFinalizing) "応答を保存しています…" else "Demo応答を準備しています…",
+                        Text(if (state.isFinalizing) "応答を保存しています…" else if (diagnosticOnly) "Mock AI応答を準備しています…" else "Demo応答を準備しています…",
                             modifier = Modifier.padding(top = 8.dp))
                     } }
                 }
@@ -1291,7 +1345,7 @@ internal fun ChatScreen(
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                            supportingText = if (compactChat) null else ({ Text(if (diagnosticOnly) "合成入力専用。Mock AIのみで外部へ送信されず、履歴はディスク保存されません。" else "デモ専用。Cloudへは送信されません。") }))
                     }
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },

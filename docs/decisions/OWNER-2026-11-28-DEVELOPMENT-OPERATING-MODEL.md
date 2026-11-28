@@ -53,4 +53,3 @@ This decision authorizes development work on assigned branches and Draft PRs; it
 
 - S1-02 bounded runtime: COMPLETE (synthetic Chat/Core UI test 1/1 PASS; exact evidence is recorded in the S1-02 Owner decision and campaign ledger).
 - S1-01B overall: not yet complete; residual issues are being classified against actual Cloud/Core integration dependencies.
-- Current implementation/validation plan: [`docs/plans/2026-11-28-cloud-embedded-core-integration-execution-plan.md`](../plans/2026-11-28-cloud-embedded-core-integration-execution-plan.md).

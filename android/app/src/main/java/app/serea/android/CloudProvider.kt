@@ -159,9 +159,9 @@ class OllamaCloudAdapter private constructor(
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
-                override fun onFailure(call: Call, error: IOException) {
+                override fun onFailure(call: Call, e: IOException) {
                     if (!continuation.isActive) return
-                    val failure = if (error is InterruptedIOException) {
+                    val failure = if (e is InterruptedIOException) {
                         ProviderFailure(ProviderFailureKind.TIMEOUT)
                     } else ProviderFailure(ProviderFailureKind.NETWORK)
                     continuation.resumeWith(Result.failure(failure))
@@ -299,6 +299,11 @@ internal class OllamaModelChatPort(
     }
 }
 
+/** Marker for a Chat port assembled through Cloud routing, egress and usage gates. */
+internal class GatedCloudModelChatPort internal constructor(private val routed: ModelChatPort) : ModelChatPort {
+    override suspend fun send(request: ModelChatRequest): ModelChatResponse = routed.send(request)
+}
+
 /** Direct Android composition root: gate -> durable usage reservation -> typed adapter. */
 internal object DirectProviderChatComposition {
     fun create(
@@ -310,7 +315,7 @@ internal object DirectProviderChatComposition {
         testEndpoint: HttpUrl? = null,
         testClient: OkHttpClient? = null,
         usageAttributionResolver: UsageAttributionResolver? = null,
-    ): ModelChatPort {
+    ): GatedCloudModelChatPort {
         require((testEndpoint == null) == (testClient == null)) { "A loopback test endpoint and client must be supplied together." }
         val adapter = if (testEndpoint != null && testClient != null)
             OllamaCloudAdapter(credentials, settings, testEndpoint, testClient, catalog, setOf("ollama"))
@@ -322,6 +327,6 @@ internal object DirectProviderChatComposition {
             ),
             expectedTarget = EgressTarget.CLOUD,
         )
-        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), policy = routingPolicy)
+        return GatedCloudModelChatPort(RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), policy = routingPolicy))
     }
 }

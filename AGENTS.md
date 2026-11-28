@@ -1,14 +1,15 @@
 # Serea — Repository Agent Guide
 
-This file is the repository entry point for coding assistants and review agents. It is a **navigation and safety guide**, not an authorization to execute a phase or change a protected branch.
+This file is the repository entry point for coding assistants and review agents. It is a **navigation and safety guide**. The current authorization and development operating model are in [Owner Decision: Serea Development Operating Model (2026-11-28)](docs/decisions/OWNER-2026-11-28-DEVELOPMENT-OPERATING-MODEL.md); follow that decision over conflicting historical guidance.
 
 ## Read first
 
-1. **[Current Personal Beta Roadmap (2026-11-12)](docs/roadmaps/2026-11-12-personal-beta-roadmap.md)** — current phase map, delivery gates, Owner decision register and deadlines.
-2. [Existing G10–G15 Execution Plan](docs/g9/g10-execution-plan.md) — original phase boundaries and release-critical path.
-3. [Personal Beta Scope](docs/g9/beta-scope.md) — P0 / P1 / P2 and Demo Beta distinction.
-4. [Owner Decision Ledger](docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md) — historical approval categories; **confirm more recent explicit Owner decisions before acting**.
-5. Relevant `SECURITY.md`, `docs/decisions/` ADRs and touched subsystem tests.
+1. **[Owner Decision: Serea Development Operating Model (2026-11-28)](docs/decisions/OWNER-2026-11-28-DEVELOPMENT-OPERATING-MODEL.md)** — effective development authorization, rationalized stops, campaign policy, completion policy and retained boundaries.
+2. [Current Personal Beta Roadmap (2026-11-12)](docs/roadmaps/2026-11-12-personal-beta-roadmap.md) — historical phase map and delivery context; check current Owner decisions before applying old deadlines or stop conditions.
+3. [Existing G10–G15 Execution Plan](docs/g9/g10-execution-plan.md) — original phase boundaries and release-critical path.
+4. [Personal Beta Scope](docs/g9/beta-scope.md) — P0 / P1 / P2 and Demo Beta distinction.
+5. [Owner Decision Ledger](docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md) — historical approval categories; newer explicit decisions take precedence.
+6. Relevant `SECURITY.md`, `docs/decisions/` ADRs and touched subsystem tests.
 
 At session start, **fetch main and target PR status from GitHub**. SHA values and dated check results in documents are snapshots, not evergreen facts.
 
@@ -23,7 +24,8 @@ At session start, **fetch main and target PR status from GitHub**. SHA values an
 
 ## Hard boundaries
 
-- **Never** infer approval from a roadmap milestone, issue, previous PR, or passing CI. Require a fresh, explicit Owner instruction for Draft→Ready, Merge, real OAuth/Google Cloud changes, real AI activation, Google or external-network data access, production signing, APK distribution or Pixel/device operations. This file itself grants no such approval.
+- Within the effective Owner decision, do not add a second design/implementation approval gate for reversible assigned-branch development. That decision does not authorize Draft→Ready, main merge, real OAuth/Google Cloud access, real AI activation, personal-data/credential transmission, unapproved billing, production signing/distribution, physical-device operations or irreversible deletion.
+- **Never** infer approval for those retained boundaries from a roadmap milestone, issue, previous PR, or passing CI. Require a fresh, explicit Owner instruction. This file itself grants no such approval.
 - Do not bypass GitHub branch protection, disable Required checks, force-push or overwrite the Owner's working tree. Favor isolated branches and **Draft PRs**.
 - **Public remains safe and Fake-first**. Google OAuth is allowed only in the Owner-controlled Private build after approval. Private Preview currently uses Fake Calendar even with a real-OAuth build flag. Do not treat a compiled code path as activated.
 - Primary Calendar real reads (once separately authorized) must use `calendarId=primary`, events-read-only scope only, and reject nonprimary/CalendarList access **before** authorization, token acquisition and HTTP. Keep normal Demo multi-calendar fixtures working.

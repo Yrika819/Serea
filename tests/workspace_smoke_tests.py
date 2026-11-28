@@ -44,7 +44,7 @@ class VirtualManifestTests(unittest.TestCase):
     def setUp(self):
         self.root = Path("/virtual/serea")
         self.root_path = self.root / "Cargo.toml"
-        names = [smoke.PROTOCOL, smoke.STORAGE, smoke.EVENT_BUS, smoke.CAPABILITY, ENGINE]
+        names = ["serea-android-bridge", smoke.PROTOCOL, smoke.STORAGE, smoke.EVENT_BUS, smoke.CAPABILITY, ENGINE]
         scheduler = getattr(smoke, "SCHEDULER", None)
         if scheduler is not None:
             names.append(scheduler)
@@ -103,6 +103,14 @@ class VirtualManifestTests(unittest.TestCase):
 
     def test_exact_workspace_succeeds(self):
         self.assert_main(0, "OK:")
+
+    def test_android_bridge_cannot_be_a_dependency_of_runtime_crates(self):
+        self.add(smoke.CORE, '\nserea-android-bridge = { path = "../serea-android-bridge" }\n')
+        self.assert_main(1, "must not depend on the Android bridge")
+
+    def test_android_bridge_internal_dependencies_are_bounded(self):
+        self.add("serea-android-bridge", '\n[dependencies]\nserea-storage = { path = "../serea-storage" }\n')
+        self.assert_main(1, "Android bridge internal dependency")
 
     def test_commented_and_indented_dependency_headers_refuse_testkit(self):
         for header in ('[dependencies] # ordinary Cargo comment', '  [dependencies]',
@@ -535,6 +543,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
     def test_o3_wall_clock_constructors_are_absent_and_linted(self):
         forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
         ambient_host_clock = self.root / "crates/serea-host/src/host_clock.rs"
+        android_bridge_clock = self.root / "crates/serea-android-bridge/src/lib.rs"
         synthetic_host_model = self.root / "crates/serea-host/src/synthetic_model.rs"
         wall_clock_matches = []
         host_monotonic_matches = []
@@ -550,7 +559,13 @@ class P2GroupOInvariantTests(unittest.TestCase):
                         host_monotonic_matches.append(match.group())
                     else:
                         self.fail(f"ambient monotonic clock in production source: {path}")
-        self.assertEqual(wall_clock_matches, [ambient_host_clock])
+        # The Android diagnostic is a second explicit process composition root;
+        # production domain crates remain forbidden from reading ambient time.
+        self.assertEqual(sorted(wall_clock_matches), sorted([ambient_host_clock, android_bridge_clock]))
+        bridge_source = android_bridge_clock.read_text()
+        self.assertIn("impl Clock for WallClock", bridge_source)
+        self.assertIn('#[allow(clippy::disallowed_methods)]\n        let now = SystemTime::now();', bridge_source)
+        self.assertEqual(bridge_source.count("SystemTime::now("), 1)
         self.assertEqual(
             host_monotonic_matches,
             ["Instant::now(", "Instant::now(", "Instant::now(", "Instant::now("],
@@ -614,7 +629,13 @@ class P2GroupOInvariantTests(unittest.TestCase):
             manifest = smoke.load_manifest(path)
             dependencies = list(smoke.dependency_tables(manifest, shared, path))
             extras = [name for name, _, _ in dependencies if name not in named]
-            if path == self.root / "crates/serea-host/Cargo.toml":
+            if path == self.root / "crates/serea-android-bridge/Cargo.toml":
+                # UniFFI is confined to the diagnostic bridge and pinned exactly.
+                self.assertEqual(extras, ["uniffi"])
+                self.assertEqual(manifest["dependencies"]["uniffi"], {
+                    "version": "=0.32.2", "default-features": False,
+                })
+            elif path == self.root / "crates/serea-host/Cargo.toml":
                 # The only external dependency outside the frozen shared set
                 # is the native API used by Windows-only integration tests.
                 # Keep it a single target-specific dev dependency so no

@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Embedded-Core campaign target does not need networking or the Test IME. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <application>
+        <!-- Keep only the non-exported MainActivity needed by the exact chat UI candidate;
+             remove all other app components and inherited test/diagnostic entry points. -->
+        <activity tools:node="removeAll" />
+        <activity
+            android:name="app.serea.android.MainActivity"
+            android:exported="false"
+            tools:node="replace" />
+        <provider tools:node="removeAll" />
+        <receiver tools:node="removeAll" />
+        <service tools:node="removeAll" />
+        <meta-data
+            android:name="app.serea.android.S1B_CAMPAIGN_PACKAGE"
+            android:value="${sereaS1bCampaignPackage}" />
+    </application>
+</manifest>

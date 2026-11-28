@@ -7,12 +7,19 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Synthetic-only Core adapter for the isolated P7 development fixture. This
+# remains opt-in and inherits the storage crate's debug-build-only boundary.
+p7-memory-integration-dev = ["serea-storage/p7-integration-dev", "dep:sha2"]
+
 [dependencies]
 serea-protocol = { workspace = true }
 serea-storage = { workspace = true }
 serea-event-bus = { workspace = true }
 serea-task-engine = { workspace = true }
 serea-scheduler = { workspace = true }
+sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 serea-testkit = { workspace = true }

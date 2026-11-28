@@ -118,6 +118,23 @@ class UsageLedgerDatabaseTest {
         assertEquals(1, usage.summaries().single().requestCount.toInt())
     }
 
+    @Test fun providerInputAboveReservationEstimateSettlesAndPricesReportedUsage() = runBlocking {
+        val db = open()
+        val usage = UsageRepository(db.usageDao()) { Instant.parse("2026-10-20T12:00:00Z").toEpochMilli() }
+        usage.reserve("input-over-estimate", 1, 4, ModelUsageAttribution("model/input", "provider-input", fixturePrice()))
+        assertEquals(4L, db.usageDao().reservation("input-over-estimate")?.inputTokens)
+
+        usage.complete("input-over-estimate", ProviderUsage(8, 2))
+
+        val row = checkNotNull(db.usageDao().ledger("input-over-estimate"))
+        assertEquals(UsageLedgerState.SETTLED.name, row.usageStatus)
+        assertEquals(8L, row.providerInputTokens)
+        assertEquals(2L, row.providerOutputTokens)
+        assertEquals(CostEstimationStatus.USAGE_REPORTED_COST_ESTIMATED.name, row.costStatus)
+        assertEquals("0.000028", row.estimatedCost)
+        assertEquals(8L, usage.snapshot().dailyProviderInputTokens)
+    }
+
     @Test fun unknownAttributionMissingUsageTimeoutAndRecoveryKeepReservation() = runBlocking {
         val db = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, dbName).build().also { database = it }
         var now = Instant.parse("2026-10-20T12:00:00Z").toEpochMilli()

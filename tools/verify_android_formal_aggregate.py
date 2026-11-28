@@ -42,7 +42,7 @@ def verify_junit(root: Path) -> None:
                 skipped += sum(x.tag.rsplit("}", 1)[-1] == "skipped" for x in case)
                 failures += sum(x.tag.rsplit("}", 1)[-1] == "failure" for x in case)
                 errors += sum(x.tag.rsplit("}", 1)[-1] == "error" for x in case)
-    require(count == 105, f"JUnit count {count}, expected 105")
+    require(count == 106, f"JUnit count {count}, expected 106")
     require(skipped == failures == errors == 0, f"JUnit skipped={skipped}, failures={failures}, errors={errors}")
 
 
@@ -82,11 +82,11 @@ def verify_api(api: int, root: Path, job_result: str, args: argparse.Namespace) 
             f"API {api} Process Death log missing")
     verify_junit(evidence / "junit")
     command = [sys.executable, str(args.junit_verifier), str(evidence / "junit"),
-               "--source-root", str(args.source_root), "--minimum", "105", "--exact-count", "105",
+               "--source-root", str(args.source_root), "--minimum", "106", "--exact-count", "106",
                "--required-test-manifest", str(args.required_manifest),
                "--additional-test-manifest", str(args.additional_manifest),
                "--non-required-test-manifest", str(args.non_required_manifest),
-               "--required-count", "103", "--additional-count", "2", "--api-level", str(api),
+               "--required-count", "103", "--additional-count", "3", "--api-level", str(api),
                "--profile-verifier-log", str(evidence / "logcat-live.txt")]
     for test_class, count in (("app.serea.android.EncryptedHistoryTest", 17),
                               ("app.serea.android.ChatScreenTest", 16),

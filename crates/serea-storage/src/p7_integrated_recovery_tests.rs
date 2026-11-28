@@ -1,8 +1,13 @@
 //! File-backed end-to-end synthetic Gate C coordinator tests. The persistent
 //! checkpoint is stored in a separate temporary fixture directory, with a
 //! synthetic key. It is neither production custody nor rollback-independent.
+use crate::experimental_memory::p7_conversation_extraction::{
+    CompletedConversation, ConversationState, ConversationTurn, DataClass, DataOrigin,
+    ExtractionError, ExtractionRequestId, MockMemoryExtractor, SourceLineage, TurnRole, TurnState,
+};
 use crate::experimental_memory::{
-    MemoryClass, MemoryDraft, MemoryKind, MemoryProvenance, P7ExperimentalMemory,
+    MemoryClass, MemoryDraft, MemoryKind, MemoryProvenance, MemoryRetrievalPage,
+    P7ExperimentalMemory, p7_conversation_extraction,
 };
 use crate::p7_gate_c::{
     AuthEvidence, AuthPurpose, EvidenceReplayGuard, FrameKind, LedgerError, LedgerFileGuard,
@@ -25,6 +30,167 @@ use std::sync::{Arc, Barrier};
 const OWNER: &str = "own_00000000000000000000000000000071";
 const OWNER_EPOCH: u64 = 71;
 static NEXT: AtomicU64 = AtomicU64::new(1);
+
+/// Synthetic turn class accepted by the development connection. PRIVATE,
+/// SECRET, CREDENTIAL, and unknown classes cannot be represented here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum P7DevTurnClass {
+    Public,
+    Personal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum P7DevTurnRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct P7DevTurn {
+    pub turn_id: String,
+    pub role: P7DevTurnRole,
+    pub class: P7DevTurnClass,
+    pub text: String,
+}
+
+/// Completed, synthetic conversation input. The Owner is fixed by this
+/// fixture and cannot be supplied by request/model input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct P7DevCompletedConversation {
+    pub conversation_id: String,
+    pub turns: Vec<P7DevTurn>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum P7DevForgetStatus {
+    Pending,
+    Completed,
+    AlreadyCompleted,
+}
+
+/// Future Embedded Core connection contract for synthetic development only.
+/// It owns the existing file-backed fixture/coordinator and never calls a
+/// model. Paths must name fresh temporary fixture files on `open`; reopening
+/// always uses the existing ledger/checkpoint authority and recovery barrier.
+pub struct P7DevConnection {
+    coordinator: SyntheticCoordinator,
+}
+
+impl P7DevConnection {
+    pub fn open(db: &Path, ledger: &Path, checkpoint: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            coordinator: SyntheticCoordinator::open(db, ledger, checkpoint)?,
+        })
+    }
+
+    pub fn reopen(db: &Path, ledger: &Path, checkpoint: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            coordinator: SyntheticCoordinator::reopen(db, ledger, checkpoint)?,
+        })
+    }
+
+    /// Accept one completed synthetic conversation, run the fixed mock
+    /// extractor, and persist through the existing admission/lease path.
+    pub fn extract_and_save_completed(
+        &self,
+        input: &P7DevCompletedConversation,
+        request_id: &str,
+        clock: &dyn Clock,
+    ) -> Result<usize, ExtractionError> {
+        let input = CompletedConversation {
+            owner_id: OWNER.to_owned(),
+            conversation_id: Some(input.conversation_id.clone()),
+            state: ConversationState::Complete,
+            turns: input
+                .turns
+                .iter()
+                .map(|turn| ConversationTurn {
+                    turn_id: turn.turn_id.clone(),
+                    conversation_id: Some(input.conversation_id.clone()),
+                    role: match turn.role {
+                        P7DevTurnRole::User => TurnRole::User,
+                        P7DevTurnRole::Assistant => TurnRole::Assistant,
+                    },
+                    state: TurnState::Complete,
+                    text: turn.text.clone(),
+                    classification: match turn.class {
+                        P7DevTurnClass::Public => DataClass::Public,
+                        P7DevTurnClass::Personal => DataClass::Personal,
+                    },
+                    origin: match turn.role {
+                        P7DevTurnRole::User => DataOrigin::UserAuthored,
+                        P7DevTurnRole::Assistant => DataOrigin::ModelOutput,
+                    },
+                    source_lineage: vec![SourceLineage {
+                        source_id: format!("synthetic-source-{}", turn.turn_id),
+                        origin: DataOrigin::Other,
+                        classification: match turn.class {
+                            P7DevTurnClass::Public => DataClass::Public,
+                            P7DevTurnClass::Personal => DataClass::Personal,
+                        },
+                    }],
+                })
+                .collect(),
+        };
+        let request_id = ExtractionRequestId::new(request_id)?;
+        p7_conversation_extraction::extract_and_save(
+            &self.coordinator.memory,
+            &self.coordinator.store,
+            &input,
+            &request_id,
+            &MockMemoryExtractor,
+            clock,
+        )
+        .map(|summary| summary.inserted)
+    }
+
+    /// Retrieve owner-local lexical results, including stored provenance.
+    pub fn retrieve(
+        &self,
+        class: P7DevTurnClass,
+        query: &str,
+        now: EpochMillis,
+        context_budget_bytes: usize,
+    ) -> Result<MemoryRetrievalPage, StoreError> {
+        self.coordinator.memory.retrieve_context(
+            &self.coordinator.store,
+            match class {
+                P7DevTurnClass::Public => MemoryClass::Public,
+                P7DevTurnClass::Personal => MemoryClass::Personal,
+            },
+            query,
+            now,
+            100,
+            20,
+            context_budget_bytes,
+        )
+    }
+
+    /// Exercise the existing synthetic authenticated Forget state machine.
+    pub fn forget(
+        &self,
+        operation_id: &str,
+        memory_id: &str,
+    ) -> Result<P7DevForgetStatus, LedgerError> {
+        let nonce = NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes();
+        let mut evidence_nonce = [0_u8; 32];
+        evidence_nonce[..nonce.len()].copy_from_slice(&nonce);
+        let evidence = AuthEvidence::from_verified_adapter(
+            AuthPurpose::Forget,
+            10_000,
+            11_000,
+            evidence_nonce,
+            "synthetic-embedded-core-v1".into(),
+        )?;
+        self.coordinator
+            .forget(&evidence, operation_id, &[memory_id])
+            .map(|status| match status {
+                ForgetStatus::Completed => P7DevForgetStatus::Completed,
+                ForgetStatus::AlreadyCompleted => P7DevForgetStatus::AlreadyCompleted,
+                ForgetStatus::Pending => P7DevForgetStatus::Pending,
+            })
+    }
+}
 
 fn crash_at(point: &str) {
     if std::env::var("SEREA_P7_CRASH_AT").is_ok_and(|requested| requested == point) {
@@ -209,7 +375,7 @@ impl SyntheticCoordinator {
         if db.exists() || ledger.exists() || checkpoint_path.exists() {
             return Err(StoreError::Open);
         }
-        let store = Store::open(db, &TestClock)?;
+        let store = Store::open_p7_integration_fixture(db, &TestClock)?;
         let owner = OwnerId::parse(OWNER).unwrap();
         let keys = SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap();
         let mut replay = EvidenceReplayGuard::default();
@@ -262,7 +428,7 @@ impl SyntheticCoordinator {
         let checkpoint = PersistentCheckpointStore::open_existing(checkpoint_path, &keys)
             .map_err(|_| StoreError::Open)?;
         let coordinator = Self {
-            store: Store::open(db, &TestClock)?,
+            store: Store::open_p7_integration_fixture(db, &TestClock)?,
             memory: P7ExperimentalMemory::fake(OWNER.into(), OWNER_EPOCH),
             ledger_path: ledger.to_path_buf(),
             owner: OwnerId::parse(OWNER).unwrap(),
@@ -1195,6 +1361,98 @@ fn auth_for(purpose: AuthPurpose, nonce: u8) -> AuthEvidence {
     .unwrap()
 }
 
+#[cfg(test)]
+#[test]
+fn p7_dev_connection_composes_completion_extraction_reopen_retrieval_and_forget_fence() {
+    let scratch = Scratch::new();
+    let conversation = P7DevCompletedConversation {
+        conversation_id: "synthetic-c08-conversation".into(),
+        turns: vec![P7DevTurn {
+            turn_id: "synthetic-c08-turn".into(),
+            role: P7DevTurnRole::User,
+            class: P7DevTurnClass::Public,
+            text: "C08 synthetic retrieval marker in Tokyo".into(),
+        }],
+    };
+    let connection =
+        P7DevConnection::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint()).unwrap();
+    assert_eq!(
+        connection
+            .extract_and_save_completed(&conversation, "c08-request-1", &TestClock)
+            .unwrap(),
+        1
+    );
+    let first = connection
+        .retrieve(
+            P7DevTurnClass::Public,
+            "Tokyo",
+            EpochMillis::new(10_001).unwrap(),
+            4096,
+        )
+        .unwrap();
+    assert_eq!(first.entries.len(), 1);
+    let memory_id = first.entries[0].record.memory_id.clone();
+    assert!(
+        first.entries[0]
+            .provenance
+            .source_id
+            .contains("synthetic-c08-turn")
+    );
+    drop(connection);
+
+    let reopened =
+        P7DevConnection::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint()).unwrap();
+    assert_eq!(
+        reopened
+            .retrieve(
+                P7DevTurnClass::Public,
+                "Tokyo",
+                EpochMillis::new(10_001).unwrap(),
+                4096,
+            )
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened.forget("c08-forget-1", &memory_id).unwrap(),
+        P7DevForgetStatus::Completed
+    );
+    assert!(
+        P7DevConnection::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap()
+            .retrieve(
+                P7DevTurnClass::Public,
+                "Tokyo",
+                EpochMillis::new(10_001).unwrap(),
+                4096,
+            )
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    let after_forget =
+        P7DevConnection::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint()).unwrap();
+    assert!(
+        after_forget
+            .extract_and_save_completed(&conversation, "c08-request-after-forget", &TestClock)
+            .is_err()
+    );
+    assert!(
+        after_forget
+            .retrieve(
+                P7DevTurnClass::Public,
+                "Tokyo",
+                EpochMillis::new(10_001).unwrap(),
+                4096,
+            )
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+}
+
 struct SyntheticTaskActor {
     owner: OwnerId,
     epoch: u64,
@@ -1948,7 +2206,7 @@ fn p7_ir03_crash_during_memory_blob_gc_replays_cleanup_after_reopen() {
         drop(gate);
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -1956,7 +2214,8 @@ fn p7_ir03_crash_during_memory_blob_gc_replays_cleanup_after_reopen() {
             .env("SEREA_P7_CRASH_ROOT", "gc-crash-memory")
             .env("SEREA_P7_CRASH_OP", "gc-crash-op")
             .env("SEREA_P7_CRASH_AT", point)
-            .status().unwrap();
+            .status()
+            .unwrap();
         assert_eq!(status.code(), Some(73), "child did not crash at {point}");
         let reopened =
             SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2052,7 +2311,7 @@ fn ir04_last_chunk_before_pending_recovers_after_red_reproduction() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2060,7 +2319,8 @@ fn ir04_last_chunk_before_pending_recovers_after_red_reproduction() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-root")
         .env("SEREA_P7_CRASH_OP", "ir04-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(
         status.code(),
         Some(73),
@@ -2138,7 +2398,7 @@ fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
         drop(gate);
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2184,7 +2444,7 @@ fn ir04_pending_adoption_sqlite_crash_has_atomic_outcomes() {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
                 .arg("--exact")
-                .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+                .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
                 .arg("--nocapture")
                 .env("SEREA_P7_CRASH_DB", scratch.db())
                 .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2237,7 +2497,7 @@ fn ir04_multichunk_closure_recovers_after_last_chunk_before_pending() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2245,7 +2505,8 @@ fn ir04_multichunk_closure_recovers_after_last_chunk_before_pending() {
         .env("SEREA_P7_CRASH_ROOTS", ids.join(","))
         .env("SEREA_P7_CRASH_OP", "ir04-multichunk-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2287,14 +2548,15 @@ fn crash_before_intent_leaves_ready_generation_and_memory_unchanged() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
         .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
         .env("SEREA_P7_CRASH_ROOT", "pre-intent-root")
         .env("SEREA_P7_CRASH_AT", "before-intent")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2318,8 +2580,9 @@ fn recovery_itself_is_idempotent_across_process_termination() {
     drop(gate);
     let run_child = |point: &str| {
         let mut command = Command::new(std::env::current_exe().unwrap());
-        command.arg("--exact")
-            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        command
+            .arg("--exact")
+            .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
             .arg("--nocapture")
             .env("SEREA_P7_CRASH_DB", scratch.db())
             .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2369,7 +2632,7 @@ fn ir04_recovered_forget_runs_blob_gc_after_last_chunk_crash() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2377,7 +2640,8 @@ fn ir04_recovered_forget_runs_blob_gc_after_last_chunk_crash() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-gc-root")
         .env("SEREA_P7_CRASH_OP", "ir04-gc-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2441,7 +2705,7 @@ fn ir04_near_capacity_last_chunk_crash_uses_reserved_recovery_space() {
     assert_eq!(before_frames, 1015);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2449,7 +2713,8 @@ fn ir04_near_capacity_last_chunk_crash_uses_reserved_recovery_space() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-capacity-crash")
         .env("SEREA_P7_CRASH_OP", "ir04-capacity-crash-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(
         status.code(),
         Some(73),
@@ -2479,7 +2744,7 @@ fn ir04_concurrent_startup_recovery_adopts_once_and_both_handles_are_safe() {
     drop(gate);
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("experimental_memory::p7_integrated_recovery::integrated_forget_crash_child_entry")
         .arg("--nocapture")
         .env("SEREA_P7_CRASH_DB", scratch.db())
         .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
@@ -2487,7 +2752,8 @@ fn ir04_concurrent_startup_recovery_adopts_once_and_both_handles_are_safe() {
         .env("SEREA_P7_CRASH_ROOT", "ir04-concurrent-root")
         .env("SEREA_P7_CRASH_OP", "ir04-concurrent-op")
         .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(73));
     let paths = (scratch.db(), scratch.ledger(), scratch.checkpoint());
     let start = Arc::new(Barrier::new(3));

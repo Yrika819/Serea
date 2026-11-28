@@ -1081,8 +1081,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=105 (Original Required Set 103 plus Additional Tests 2; both identity manifests verified against source and JUnit XML)'
-            echo 'api35_expected_junit_cases=105 (Original Required Set 103 plus Additional Tests 2; both identity manifests verified against source and JUnit XML)'
+            echo 'api26_expected_junit_cases=106 (Original Required Set 103 plus Additional Tests 3; both identity manifests verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=106 (Original Required Set 103 plus Additional Tests 3; both identity manifests verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'
@@ -1246,7 +1246,7 @@ jobs:
             echo 'FAIL: changed documentation validation did not pass.'
             exit 1
           fi
-          echo 'PASS: API 26 and API 35 each passed Original Required Set 103/103 and Additional Tests 2/2 with zero failures, errors, or skips; Process Death and demo sentinel data isolation passed on both disposable emulators.'
+          echo 'PASS: API 26 and API 35 each passed Original Required Set 103/103 and Additional Tests 3/3 with zero failures, errors, or skips; Process Death and demo sentinel data isolation passed on both disposable emulators.'
       - name: Verify final PR merge-result freshness
         if: ${{ always() && github.event_name == 'pull_request' }}
         env:

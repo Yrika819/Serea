@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -111,8 +112,34 @@ class MainActivity : ComponentActivity() {
     internal val shellUsage: UsageRepository get() = usage
     private val providerComposition by viewModels<AppProviderCompositionViewModel>()
     internal val shellProviders: AppProviderComposition get() = providerComposition.providers
+    private val chatSession by lazy {
+        val demo = {
+            val demoUsage = usage
+            ChatSessionComposition(DemoChatComposition.create(demoUsage), history, demoUsage, embeddedCoreDiagnostic = false)
+        }
+        if (BuildConfig.BUILD_TYPE != "isolated") {
+            demo()
+        } else {
+            try {
+                val provider = EmbeddedCoreDiagnosticChatSessionFactoryLoader.load()
+                ChatSessionCompositionFactory.create(
+                    embeddedCoreDiagnosticEnabled = true,
+                    demo = demo,
+                    embeddedCoreDiagnostic = { provider.create(this, applicationContext) },
+                )
+            } catch (_: ClassNotFoundException) {
+                // The isolated variant without -PsereaEmbeddedCore remains on the ordinary Demo path.
+                demo()
+            } catch (failure: Exception) {
+                ChatSessionCompositionFactory.create(true, demo) { throw failure }
+            } catch (failure: LinkageError) {
+                ChatSessionCompositionFactory.create(true, demo) { throw failure }
+            }
+        }
+    }
     internal val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(DemoChatComposition.create(usage), history, usage)
+        val session = chatSession
+        ChatViewModel.factory(session.modelChatPort, session.historyRepository, session.usageRepository)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -120,15 +147,30 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
             chatViewModel.beginActivitySelectionRestore(this)
         }
+        val session = chatSession
+        val embeddedCoreCloudFactory = if (session.embeddedCoreDiagnostic) EmbeddedCoreCloudChatPortFactoryLoader.loadOrNull() else null
+        val coreCloudWrapper: ((GatedCloudModelChatPort) -> ModelChatPort)? = embeddedCoreCloudFactory?.let { factory ->
+            { cloudPort -> factory.wrap(this, applicationContext, cloudPort) }
+        }
         setContent {
             SereaTheme {
-                SereaAppShell(
-                    chatViewModel,
-                    credentials,
-                    usage,
-                    shellTaskViewModel,
-                    providers = shellProviders,
-                )
+                if (session.embeddedCoreDiagnostic) {
+                    ChatScreen(
+                        chatViewModel = chatViewModel,
+                        credentials = credentials,
+                        usage = usage,
+                        diagnosticOnly = true,
+                        cloudProbeChatWrapper = coreCloudWrapper,
+                    )
+                } else {
+                    SereaAppShell(
+                        chatViewModel,
+                        credentials,
+                        usage,
+                        shellTaskViewModel,
+                        providers = shellProviders,
+                    )
+                }
             }
         }
     }
@@ -145,6 +187,12 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onDestroy() {
+        if (chatSession.embeddedCoreDiagnostic && isFinishing && !isChangingConfigurations) {
+            chatViewModel.cancelCurrent()
+        }
+        super.onDestroy()
+    }
 }
 
 data class ChatMessage(
@@ -217,6 +265,7 @@ interface ModelChatPort {
 }
 
 open class ModelChatFailure(message: String) : Exception(message)
+internal class ProviderModelChatFailure(val kind: ProviderFailureKind, message: String) : ModelChatFailure(message)
 
 /** A local validation failed before the provider adapter could dispatch a request. */
 internal class PreDispatchModelChatFailure(message: String) : ModelChatFailure(message)
@@ -259,6 +308,12 @@ internal class ChatViewModel(
     }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
+
+    override fun onCleared() {
+        activeJob?.cancel()
+        activeJob = null
+        super.onCleared()
+    }
 
     /**
      * Generation used to bind a provider handoff to the selected Chat destination.
@@ -863,6 +918,8 @@ internal fun ChatScreen(
     privateGoogleAuthorizationViewModel: app.serea.android.googleauth.PrivateGoogleAuthorizationViewModel? = null,
     onOpenGoogleCalendarDemo: ((app.serea.android.calendar.CalendarProviderSession) -> Unit)? = null,
     focusClearRequest: Int = 0,
+    diagnosticOnly: Boolean = false,
+    cloudProbeChatWrapper: ((GatedCloudModelChatPort) -> ModelChatPort)? = null,
 ) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
@@ -882,14 +939,19 @@ internal fun ChatScreen(
     var overflowExpanded by remember { mutableStateOf(false) }
     var credentialReady by remember { mutableStateOf(credentials?.isConfigured() == true) }
     var dailyRequestsText by remember { mutableStateOf("20") }
-    var dailyTokensText by remember { mutableStateOf("10000") }
-    var monthlyRequestsText by remember { mutableStateOf("100") }
-    var monthlyTokensText by remember { mutableStateOf("50000") }
+    var dailyTokensText by remember { mutableStateOf(OllamaCloudRequestLimits.DAILY_TOKEN_BUDGET.toString()) }
+    var monthlyRequestsText by remember { mutableStateOf(OllamaCloudRequestLimits.MONTHLY_REQUESTS.toString()) }
+    var monthlyTokensText by remember { mutableStateOf(OllamaCloudRequestLimits.MONTHLY_TOKEN_BUDGET.toString()) }
+    var freeAllowanceConfirmed by remember { mutableStateOf(false) }
+    var cloudProbeRunning by remember { mutableStateOf(false) }
+    var cloudProbeConfirmationVisible by remember { mutableStateOf(false) }
+    var cloudProbeReceipt by remember { mutableStateOf<CloudProbeReceipt?>(null) }
+    val cloudProbeCatalogStatus = CloudCandidatePort.catalogStatus(System.currentTimeMillis())
 
     var usageSnapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
     val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
     val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
-    var modelPolicy by remember { mutableStateOf(modelSettings.load()) }
+    var modelPolicy by remember { mutableStateOf(if (diagnosticOnly) ModelRoutingPolicy() else modelSettings.load()) }
     var budgetAmountText by remember { mutableStateOf(modelPolicy.maxEstimatedCost?.toString().orEmpty()) }
     var budgetCurrencyText by remember { mutableStateOf(modelPolicy.budgetCurrencyCode.orEmpty()) }
     val modelCatalog by remember { mutableStateOf(LocalModelCatalog().all()) }
@@ -910,6 +972,9 @@ internal fun ChatScreen(
                 monthlyRequestsText = limits.monthlyRequests.toString()
                 monthlyTokensText = limits.monthlyTokens.toString()
             }
+        } else {
+            freeAllowanceConfirmed = false
+            cloudProbeConfirmationVisible = false
         }
     }
     LaunchedEffect(state.conversation.messages.size, state.isLoading, state.showingHistory, settingsVisible) {
@@ -980,13 +1045,21 @@ internal fun ChatScreen(
         Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
             Text("Serea", style = if (compactChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
-            if (!settingsDestination && (!compactChat || onOpenTasks == null)) {
+            if (!diagnosticOnly && !settingsDestination && (!compactChat || onOpenTasks == null)) {
                 Button(onClick = {
                     if (onOpenTasks != null) onOpenTasks()
                     else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
                 }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
             }
-            if (compactChat) {
+            if (diagnosticOnly) {
+                Text(
+                    "EMBEDDED CORE DIAGNOSTIC · synthetic Core + Mock AI · Chatはメモリ内のみ · 外部通信なし",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = if (compactChat) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
+                )
+                Text("合成プロンプトのみ使用してください。Core障害時はMock AIへフォールバックしません。",
+                    style = MaterialTheme.typography.bodySmall)
+            } else if (compactChat) {
                 Text("DEMO · Cloud送信: 無効", color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.labelSmall, maxLines = 1)
             } else {
@@ -1072,6 +1145,8 @@ internal fun ChatScreen(
                 }
                 Text("トークン数は入力長からの概算予約とProvider実測を区別します。Timeout/Cancel/使用量欠落では予約を戻しません。端末時計に基づくソフト上限で、Provider請求上限やクレジット制御ではありません。",
                     style = MaterialTheme.typography.bodySmall)
+                Text("Cloudの設定可能な上限は日20 requests・月200 requests・日102400/月1024000 estimated tokensです。既存のより低い上限は維持します。",
+                    style = MaterialTheme.typography.bodySmall)
                 Text("UsageControlled経路の要求数と予約を記録します。ローカルDemoも予約・完了記録に含みますが、Provider実測や請求は発生しません。日次/月次はUTC境界です。",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1092,13 +1167,15 @@ internal fun ChatScreen(
                             val limits = validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText)
                             usage?.updateLimits(limits) ?: error("Usage settings unavailable")
                             limits
-                        }.onSuccess { limits ->
+                        }.onSuccess {
                             usageSnapshot = usage?.snapshot()
                             settingsMessage = "Soft Limit設定を保存しました。Provider請求上限ではありません。"
-                            dailyRequestsText = limits.dailyRequests.toString()
-                            dailyTokensText = limits.dailyTokens.toString()
-                            monthlyRequestsText = limits.monthlyRequests.toString()
-                            monthlyTokensText = limits.monthlyTokens.toString()
+                            usageSnapshot?.limits?.let { effectiveLimits ->
+                                dailyRequestsText = effectiveLimits.dailyRequests.toString()
+                                dailyTokensText = effectiveLimits.dailyTokens.toString()
+                                monthlyRequestsText = effectiveLimits.monthlyRequests.toString()
+                                monthlyTokensText = effectiveLimits.monthlyTokens.toString()
+                            }
                         }.onFailure {
                             settingsMessage = "Soft Limit設定を保存できません。日次/月次上限と正の数値を確認してください。"
                         }
@@ -1122,10 +1199,15 @@ internal fun ChatScreen(
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        if (onOpenSettings != null) onOpenSettings()
-                        else { settingsVisible = !settingsVisible; secretText = "" }
-                    }, enabled = !state.isRestoring, modifier = Modifier.weight(1f).testTag("open_settings")) { Text("設定") }
+                    if (!diagnosticOnly) {
+                        Button(onClick = {
+                            if (onOpenSettings != null) onOpenSettings()
+                            else { settingsVisible = !settingsVisible; secretText = "" }
+                        }, enabled = !state.isRestoring, modifier = Modifier.weight(1f).testTag("open_settings")) { Text("設定") }
+                    } else if (cloudProbeChatWrapper != null) {
+                        Button(onClick = { settingsVisible = true }, enabled = !state.isRestoring,
+                            modifier = Modifier.weight(1f).testTag("open_cloud_probe")) { Text("固定Cloud probe") }
+                    }
                     Box(modifier = Modifier.weight(1f)) {
                         TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
@@ -1148,11 +1230,14 @@ internal fun ChatScreen(
             state.statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             if (settingsVisible) {
-                Text("Provider候補: Ollama Cloud", style = MaterialTheme.typography.titleMedium)
-                Text("利用条件: 公式利用規約は18歳以上を要求します。利用資格を確認していないため、このアプリからのCloud通信を無効にしています。",
+                Text("Provider: Ollama Cloud · モデル: gemma4", style = MaterialTheme.typography.titleMedium)
+                Text("API: https://ollama.com/api/chat · CLI tag gemma4:cloudとは別のAPI model IDです。", style = MaterialTheme.typography.bodySmall)
+                Text("料金情報（2026-11-27確認）: 入力 \$0.14 / 1M tokens、出力 \$0.40 / 1M tokens。公式価格は従量課金表示です。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                Text("Cloud送信: 無効 · 既存Provider候補のモデルIDと価格情報は正式な推奨・既定値として扱いません。",
-                    style = MaterialTheme.typography.bodyMedium)
+                Text("アカウントでgemma4が無料枠内と確認できない場合は送信しません。自動切替・有料利用はありません。アプリ内制限は0円を保証しません。",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text("Cloud probe: 合成の公開文1件のみ · 入力推定上限 4096 tokens · 出力 1024 tokens · 日20件/月200件 · 同時1件。通常会話はDemoのままです。",
+                    style = MaterialTheme.typography.bodySmall)
                 Text("APIキー: ${if (credentialReady) "設定済み" else "未設定"}", style = MaterialTheme.typography.bodyMedium)
                 Text("保存先: Android Keystoreで暗号化 · $keystoreProfile",
                     style = MaterialTheme.typography.bodySmall)
@@ -1166,7 +1251,7 @@ internal fun ChatScreen(
                         secretText = ""
                         scope.launch {
                             runCatching { credentials?.store(secret.toCharArray()) }
-                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "APIキーを暗号化保存しました。Cloud送信は無効のままです。" }
+                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "APIキーを暗号化保存しました。固定probeは価格・無料利用条件・最終確認が必要です。通常会話のCloud送信は無効のままです。" }
                                 .onFailure { error -> settingsMessage = if (error is HardwareBackedKeyRequiredException)
                                     "Cloud APIキーにはHardware-backed Android Keystoreが必要です。この端末ではキーを保存しません。"
                                 else "APIキーを安全に保存できませんでした。" }
@@ -1180,9 +1265,106 @@ internal fun ChatScreen(
                         }
                     }, enabled = credentialReady && credentials != null) { Text("削除") }
                 }
-                Text("Provider利用不可: 利用条件・データ処理条件・Ownerの有効化判断が未確認です。送信対象も未許可のためCloud接続は無効です。資格情報があってもMock HTTP以外へ接続しません。",
+                Text("固定probe予定本文: ${CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT} · Chat入力/履歴/Google由来データは含めません。",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("モデル・価格の確認: ${if (cloudProbeCatalogStatus.modelFresh) "モデル情報有効" else "モデル情報期限切れ"} · モデル確認 ${cloudProbeCatalogStatus.modelVerifiedAt ?: "未確認"} · ${if (cloudProbeCatalogStatus.priceFresh) "価格情報有効" else "価格情報期限切れ"} · 価格期限 ${cloudProbeCatalogStatus.priceExpiresAt ?: "不明"}",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("確認済み価格: 入力 ${cloudProbeCatalogStatus.inputPricePerMillion ?: "不明"} / 1M tokens · 出力 ${cloudProbeCatalogStatus.outputPricePerMillion ?: "不明"} / 1M tokens · ${cloudProbeCatalogStatus.currency ?: "通貨不明"}。期限切れ・未確認時は送信できません。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                Button(onClick = {}, enabled = false) { Text("Cloud接続テスト（未承認）") }
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Checkbox(checked = freeAllowanceConfirmed, onCheckedChange = { freeAllowanceConfirmed = it }, enabled = !cloudProbeRunning)
+                    Text("Ollamaアカウントでgemma4無料利用可・残枠あり、購入クレジット/有料プラン/自動課金なしを確認しました")
+                }
+                Text("この確認後も、送信は別の確認画面で内容を見て確定するまで行いません。通常の会話はDemoのままです。",
+                    style = MaterialTheme.typography.bodySmall)
+                Button(onClick = {
+                    val credentialRepo = credentials
+                    val currentStatus = CloudCandidatePort.catalogStatus(System.currentTimeMillis())
+                    when {
+                        !currentStatus.ready -> settingsMessage = "モデルまたは価格の検証情報が期限切れです。送信しません。"
+                        cloudProbeChatWrapper == null -> settingsMessage = "Embedded Coreセッションが利用できません。送信しません。"
+                        !freeAllowanceConfirmed -> settingsMessage = "Ollamaアカウントの無料利用条件を確認してください。"
+                        credentialRepo == null || usage == null || !credentialReady -> settingsMessage = "Hardware-backed Keystoreの資格情報とUsage状態が必要です。"
+                        !runCatching { credentialRepo.isHardwareBacked() }.getOrDefault(false) -> settingsMessage = "Hardware-backed Android Keystoreが確認できません。送信しません。"
+                        else -> cloudProbeConfirmationVisible = true
+                    }
+                }, enabled = CloudLiveDispatchPolicy.FIXED_SYNTHETIC_PROBE_ENABLED && cloudProbeCatalogStatus.ready &&
+                    cloudProbeChatWrapper != null && freeAllowanceConfirmed && credentialReady && !cloudProbeRunning &&
+                    credentials?.let { runCatching { it.isHardwareBacked() }.getOrDefault(false) } == true && usage != null) {
+                    Text(if (cloudProbeRunning) "Cloud送信中…" else "固定Cloud probeを確認")
+                }
+                if (cloudProbeChatWrapper == null) {
+                    Text("Embedded Coreセッションが利用できないためCloud probeは無効です。通常会話はDemoのままです。",
+                        color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                if (!cloudProbeCatalogStatus.ready) {
+                    Text("モデルまたは価格が期限切れ、または未確認です。Ollama公式情報の再検証なしに送信できません。",
+                        color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                cloudProbeReceipt?.let { receipt ->
+                    Text("固定probe結果 · ${receipt.sendId}", style = MaterialTheme.typography.titleSmall)
+                    Text("応答: ${receipt.response.text.take(500)}", style = MaterialTheme.typography.bodySmall)
+                    val usageRow = receipt.usage
+                    Text(if (usageRow == null) "Usage台帳行を取得できません。再送せずUsage画面で確認してください。" else
+                        "Usage: ${usageRow.usageStatus} · ${usageRow.providerInputTokens ?: "不明"}/${usageRow.providerOutputTokens ?: "不明"} provider tokens · " +
+                            "Serea推定費用（Provider請求額ではない） ${usageRow.estimatedCost ?: "不明"} ${usageRow.currency ?: ""} (${usageRow.costStatus})",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (cloudProbeConfirmationVisible) {
+                    AlertDialog(
+                        onDismissRequest = { cloudProbeConfirmationVisible = false },
+                        title = { Text("固定Cloud probeの最終確認") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("送信先: ${OllamaGemma4CloudCatalog.DESTINATION}")
+                                Text("モデル: ${OllamaGemma4CloudCatalog.MODEL_ID} · 上限: 入力 ${OllamaCloudRequestLimits.INPUT_TOKENS} / 出力 ${OllamaCloudRequestLimits.OUTPUT_TOKENS} tokens")
+                                Text("本文（固定の合成公開文）: ${CloudLiveDispatchPolicy.FIXED_PROBE_PROMPT}")
+                                Text("会話履歴・入力中の文章・Google由来データは含めません。保存済みAPIキーをAuthorization: Bearerヘッダーに使用し、1回だけネットワーク送信します。")
+                                Text("価格: 入力 ${cloudProbeCatalogStatus.inputPricePerMillion ?: "不明"} / 1M · 出力 ${cloudProbeCatalogStatus.outputPricePerMillion ?: "不明"} / 1M ${cloudProbeCatalogStatus.currency ?: ""} · 有効期限 ${cloudProbeCatalogStatus.priceExpiresAt ?: "不明"}")
+                            }
+                        },
+                        confirmButton = {
+                            Button(onClick = {
+                                cloudProbeConfirmationVisible = false
+                                val credentialRepo = credentials
+                                val currentStatus = CloudCandidatePort.catalogStatus(System.currentTimeMillis())
+                                val wrapCloudWithCore = cloudProbeChatWrapper
+                                if (!currentStatus.ready || !freeAllowanceConfirmed || credentialRepo == null || usage == null ||
+                                    wrapCloudWithCore == null || !credentialReady || !runCatching { credentialRepo.isHardwareBacked() }.getOrDefault(false)) {
+                                    settingsMessage = "最終確認時に必要条件が変わりました。送信しません。"
+                                    return@Button
+                                }
+                                scope.launch {
+                                    cloudProbeRunning = true
+                                    cloudProbeReceipt = null
+                                    settingsMessage = "確認済みの固定合成probeを1回送信中です…"
+                                    try {
+                                        val receipt = CloudCandidatePort.create(credentialRepo, usage, chatWrapper = wrapCloudWithCore).runFixedPublicContractProbe()
+                                        cloudProbeReceipt = receipt
+                                        settingsMessage = "合成probe完了。応答とUsage台帳を以下に表示します。会話履歴には追加していません。"
+                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: ProviderModelChatFailure) {
+                                        settingsMessage = when (failure.kind) {
+                                            ProviderFailureKind.AUTHENTICATION, ProviderFailureKind.CREDENTIAL_INVALID -> "認証に失敗しました。キーを確認してください。自動再送はありません。"
+                                            ProviderFailureKind.USAGE_CREDITS_EXHAUSTED -> "無料利用枠を確認できないか使い切りました。有料利用や別モデルへの切替は行いません。"
+                                            ProviderFailureKind.RATE_LIMITED -> "Providerのrate limitです。時間をおいてUsage状態を確認してください。自動再送はありません。"
+                                            ProviderFailureKind.MODEL_UNAVAILABLE, ProviderFailureKind.FORBIDDEN -> "アカウントでgemma4を利用できません。別モデルへ切り替えず停止しました。"
+                                            ProviderFailureKind.TIMEOUT, ProviderFailureKind.NETWORK -> "通信結果を確認できません。UsageでOUTCOME_UNKNOWNを確認し、再送しないでください。"
+                                            else -> "Cloud probeが失敗しました。Usage状態を確認してください。再送は明示操作のみです。"
+                                        }
+                                    } catch (_: Exception) {
+                                        settingsMessage = "Cloud probeが失敗しました。Usage状態を確認してください。自動再送はありません。"
+                                    } finally {
+                                        cloudProbeRunning = false
+                                        freeAllowanceConfirmed = false
+                                    }
+                                }
+                            }, enabled = !cloudProbeRunning) { Text("この内容を確認して1回送信") }
+                        },
+                        dismissButton = { TextButton(onClick = { cloudProbeConfirmationVisible = false }) { Text("キャンセル") } },
+                    )
+                }
                 TextButton(onClick = { previewVisible = !previewVisible }) { Text(if (previewVisible) "送信予定プレビューを閉じる" else "送信予定内容をプレビュー") }
                 if (previewVisible) {
                     val contextPreview = ChatContextBuilder.build(state.conversation.messages, state.input.trim(), state.conversation.id)
@@ -1198,23 +1380,25 @@ internal fun ChatScreen(
                     }
                 }
                 if (settingsMessage.isNotEmpty()) Text(settingsMessage, style = MaterialTheme.typography.bodySmall)
-                Text("Freeプランの利用枠とモデル数には上限があります。通常会話のCloud送信はOwnerポリシー承認まで無効です。",
+                Text("Freeプランの利用枠とモデル数には上限があります。固定probe以外の通常会話のCloud送信は無効です。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                HorizontalDivider()
-                if (privateGoogleAuthorizationViewModel != null) {
-                    app.serea.android.googleauth.PrivateGoogleAuthorizationPanel(
-                        viewModel = privateGoogleAuthorizationViewModel,
-                        onOpenCalendar = onOpenGoogleCalendarDemo,
-                    )
-                } else if (googleAuthorizationDemoViewModel == null) {
-                    app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
-                        onOpenCalendar = onOpenGoogleCalendarDemo,
-                    )
-                } else {
-                    app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
-                        viewModel = googleAuthorizationDemoViewModel,
-                        onOpenCalendar = onOpenGoogleCalendarDemo,
-                    )
+                if (!diagnosticOnly) {
+                    HorizontalDivider()
+                    if (privateGoogleAuthorizationViewModel != null) {
+                        app.serea.android.googleauth.PrivateGoogleAuthorizationPanel(
+                            viewModel = privateGoogleAuthorizationViewModel,
+                            onOpenCalendar = onOpenGoogleCalendarDemo,
+                        )
+                    } else if (googleAuthorizationDemoViewModel == null) {
+                        app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
+                            onOpenCalendar = onOpenGoogleCalendarDemo,
+                        )
+                    } else {
+                        app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
+                            viewModel = googleAuthorizationDemoViewModel,
+                            onOpenCalendar = onOpenGoogleCalendarDemo,
+                        )
+                    }
                 }
                 if (onSettingsClosed == null) {
                     Button(onClick = {
@@ -1236,7 +1420,7 @@ internal fun ChatScreen(
                 if (!compactChat) Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
-                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else
+                    Text(if (state.isRestoring) "会話を復元しています…" else if (diagnosticOnly) "合成会話 · このセッションのメモリ内だけに保持されます。" else
                         if (compactChat) "端末内のデモ会話 · Cloud送信なし" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
                         style = if (compactChat) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
                 }
@@ -1246,7 +1430,7 @@ internal fun ChatScreen(
                         Surface(color = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             shape = MaterialTheme.shapes.medium) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Text(if (message.role == MessageRole.USER) "あなた · ${message.status}" else "デモ応答",
+                                Text(if (message.role == MessageRole.USER) "あなた · ${message.status}" else if (diagnosticOnly) "Mock AI応答" else "デモ応答",
                                     style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                 Text(message.text, style = MaterialTheme.typography.bodyLarge)
                             }
@@ -1255,7 +1439,7 @@ internal fun ChatScreen(
                     if (state.isLoading) item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
                         CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                        Text(if (state.isFinalizing) "応答を保存しています…" else "Demo応答を準備しています…",
+                        Text(if (state.isFinalizing) "応答を保存しています…" else if (diagnosticOnly) "Mock AI応答を準備しています…" else "Demo応答を準備しています…",
                             modifier = Modifier.padding(top = 8.dp))
                     } }
                 }
@@ -1291,7 +1475,7 @@ internal fun ChatScreen(
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                            supportingText = if (compactChat) null else ({ Text(if (diagnosticOnly) "合成入力専用。Mock AIのみで外部へ送信されず、履歴はディスク保存されません。" else "デモ専用。Cloudへは送信されません。") }))
                     }
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },

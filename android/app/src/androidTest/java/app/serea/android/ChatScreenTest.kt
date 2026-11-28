@@ -508,11 +508,13 @@ class ChatScreenTest {
         }
     }
 
-    @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
+    @Test fun fixedCloudProbePlanIsSeparateFromUnclassifiedChatPreview() {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
         compose.onNodeWithTag("open_settings").performClick()
-        compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
+        compose.onNodeWithText("固定probe予定本文: Reply with exactly: Serea cloud contract probe passed. · Chat入力/履歴/Google由来データは含めません。")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("固定Cloud probeを確認").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)
@@ -794,15 +796,15 @@ class ChatScreenTest {
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
-        dailyRequests.performTextInput("21")
+        dailyRequests.performTextInput("19")
         compose.waitUntil(5_000) {
-            runCatching { dailyRequests.assertTextContains("21") }.isSuccess
+            runCatching { dailyRequests.assertTextContains("19") }.isSuccess
         }
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("destination_back").performClick()
         compose.onNodeWithTag("open_settings").performClick()
-        compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("21")
+        compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("19")
     }
 
     @Test fun softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch() {
@@ -820,7 +822,7 @@ class ChatScreenTest {
         verifyInvalid("-1", "日次requests は1以上で入力してください。")
         verifyInvalid("abc", "日次requests はLong範囲内の整数で入力してください。")
         verifyInvalid("9223372036854775808", "日次requests はLong範囲内の整数で入力してください。")
-        verifyInvalid("101", "日次requestsは月次requests以下にしてください。")
+        verifyInvalid("201", "日次requestsは月次requests以下にしてください。")
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
@@ -828,7 +830,7 @@ class ChatScreenTest {
         val dailyTokens = compose.onNodeWithText("日次tokens")
         dailyTokens.performScrollTo()
         dailyTokens.performTextClearance()
-        dailyTokens.performTextInput("50001")
+        dailyTokens.performTextInput("1024001")
         compose.onNodeWithText("日次tokensは月次tokens以下にしてください。").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
     }

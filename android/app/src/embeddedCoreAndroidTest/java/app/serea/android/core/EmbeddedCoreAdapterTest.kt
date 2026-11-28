@@ -24,7 +24,23 @@ import java.util.concurrent.CompletableFuture
 
 @RunWith(AndroidJUnit4::class)
 class EmbeddedCoreAdapterTest {
-    @Test fun syntheticLifecycle() {
+    @Test fun processOwnerSurvivesAdapterReplacement(): Unit = synchronized(EmbeddedCoreTestLock.monitor) {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val first = EmbeddedCoreAdapter(context)
+        val second = EmbeddedCoreAdapter(context)
+        first.initialize().get(60, TimeUnit.SECONDS)
+        try {
+            assertThrows(ExecutionException::class.java) { second.initialize().get(10, TimeUnit.SECONDS) }
+            assertTrue(second.getStatus().get(10, TimeUnit.SECONDS))
+            assertTrue(second.schemaVersion().get(10, TimeUnit.SECONDS) > 0u)
+        } finally {
+            second.close().get(10, TimeUnit.SECONDS)
+        }
+        first.initialize().get(60, TimeUnit.SECONDS)
+        first.close().get(10, TimeUnit.SECONDS)
+    }
+
+    @Test fun syntheticLifecycle(): Unit = synchronized(EmbeddedCoreTestLock.monitor) {
         val adapter = EmbeddedCoreAdapter(ApplicationProvider.getApplicationContext<Context>())
         val heartbeat = CountDownLatch(1)
         lateinit var initial: CompletableFuture<ULong>

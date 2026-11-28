@@ -6,12 +6,34 @@ use serea_protocol::{
     ValueRejection,
 };
 use std::{
+    fs::{File, OpenOptions},
     path::Path,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 uniffi::setup_scaffolding!();
+
+#[cfg(feature = "s1b-diagnostic")]
+mod diagnostic_gate;
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_arm() -> Result<(), BridgeError> {
+    diagnostic_gate::arm()
+}
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_wait_entered() -> Result<(), BridgeError> {
+    diagnostic_gate::wait_entered()
+}
+
+#[cfg(feature = "s1b-diagnostic")]
+#[uniffi::export]
+pub fn diagnostic_release() -> Result<(), BridgeError> {
+    diagnostic_gate::release()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum BridgeError {
@@ -68,7 +90,7 @@ impl UlidSource for Ids {
 }
 struct State {
     next: u64,
-    current: Option<(u64, Core)>,
+    current: Option<(u64, Core, File)>,
 }
 static STATE: Mutex<State> = Mutex::new(State {
     next: 1,
@@ -81,6 +103,54 @@ pub fn initialize(path: String) -> Result<u64, BridgeError> {
     if state.current.is_some() {
         return Err(BridgeError::AlreadyInitialized);
     }
+    // Reserve the sidecar namespace so no bridge may open a lock as a DB.
+    const LOCK_SUFFIX: &str = ".serea-owner-lock";
+    let reserved = |name: &str| {
+        [LOCK_SUFFIX, "-wal", "-shm", "-journal"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+    };
+    if reserved(&path) {
+        return Err(BridgeError::StorageUnavailable);
+    }
+    // SQLite must be free to manage its own locks. Use a persistent sidecar
+    // next to the canonical database path; never remove it on close or failure.
+    // The DB directory must be private to cooperating callers: unlinking or
+    // replacing either file while owned would defeat path-based coordination.
+    let db = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|_| BridgeError::StorageUnavailable)?;
+    let metadata = db.metadata().map_err(|_| BridgeError::StorageUnavailable)?;
+    if !metadata.is_file() {
+        return Err(BridgeError::StorageUnavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err(BridgeError::StorageUnavailable);
+        }
+    }
+    let canonical = std::fs::canonicalize(&path).map_err(|_| BridgeError::StorageUnavailable)?;
+    if reserved(&canonical.as_os_str().to_string_lossy()) {
+        return Err(BridgeError::StorageUnavailable);
+    }
+    let mut lock_path = canonical.into_os_string();
+    lock_path.push(LOCK_SUFFIX);
+    let ownership = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .map_err(|_| BridgeError::StorageUnavailable)?;
+    ownership
+        .try_lock()
+        .map_err(|_| BridgeError::StorageUnavailable)?;
     let now = WallClock.now_ms().map_err(|_| BridgeError::Internal)?;
     let time = TimestampMs::new(u64::try_from(now.get()).map_err(|_| BridgeError::Internal)?)
         .map_err(|_| BridgeError::Internal)?;
@@ -96,13 +166,15 @@ pub fn initialize(path: String) -> Result<u64, BridgeError> {
         .map_err(|_| BridgeError::RecoveryFailed)?;
     let handle = state.next;
     state.next = handle.checked_add(1).ok_or(BridgeError::Internal)?;
-    state.current = Some((handle, core));
+    state.current = Some((handle, core, ownership));
     Ok(handle)
 }
 #[uniffi::export]
 pub fn get_status(handle: u64) -> Result<bool, BridgeError> {
     let state = STATE.lock().map_err(|_| BridgeError::Internal)?;
-    if state.current.as_ref().is_some_and(|(h, _)| *h == handle) {
+    if state.current.as_ref().is_some_and(|(h, _, _)| *h == handle) {
+        #[cfg(feature = "s1b-diagnostic")]
+        diagnostic_gate::checkpoint()?;
         Ok(true)
     } else {
         Err(BridgeError::InvalidHandle)
@@ -111,10 +183,10 @@ pub fn get_status(handle: u64) -> Result<bool, BridgeError> {
 #[uniffi::export]
 pub fn schema_version(handle: u64) -> Result<u32, BridgeError> {
     let state = STATE.lock().map_err(|_| BridgeError::Internal)?;
-    let (_, core) = state
+    let (_, core, _) = state
         .current
         .as_ref()
-        .filter(|(h, _)| *h == handle)
+        .filter(|(h, _, _)| *h == handle)
         .ok_or(BridgeError::InvalidHandle)?;
     core.schema_version()
         .map_err(|_| BridgeError::StorageUnavailable)
@@ -122,10 +194,10 @@ pub fn schema_version(handle: u64) -> Result<u32, BridgeError> {
 #[uniffi::export]
 pub fn close(handle: u64) -> Result<(), BridgeError> {
     let mut state = STATE.lock().map_err(|_| BridgeError::Internal)?;
-    if state.current.as_ref().is_none_or(|(h, _)| *h != handle) {
+    if state.current.as_ref().is_none_or(|(h, _, _)| *h != handle) {
         return Err(BridgeError::InvalidHandle);
     }
-    let (_, core) = state.current.take().ok_or(BridgeError::Internal)?;
+    let (_, core, _ownership) = state.current.take().ok_or(BridgeError::Internal)?;
     core.shutdown()
         .map_err(|_| BridgeError::StorageUnavailable)?;
     Ok(())

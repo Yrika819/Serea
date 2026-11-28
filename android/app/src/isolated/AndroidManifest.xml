@@ -4,6 +4,10 @@
     <uses-permission android:name="app.serea.android.r25testime.permission.DIAGNOSTICS" />
     <application
         android:networkSecurityConfig="@xml/loopback_network_security_config">
+        <!-- Exact opt-in identity attestation for persistent-AVD campaign namespaces. -->
+        <meta-data
+            android:name="app.serea.android.S1B_CAMPAIGN_PACKAGE"
+            android:value="${sereaS1bCampaignPackage}" />
         <activity
             android:name=".FakeGoogleProcessDeathHarnessActivity"
             android:exported="true"

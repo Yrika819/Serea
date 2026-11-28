@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.nio.file.Files
+import java.nio.file.LinkOption
 
 
 plugins {
@@ -46,7 +48,102 @@ if (privateBetaRequested && ciBuild && !privateBetaUnitTestOnlyInvocation) {
 }
 val embeddedCoreOptIn = providers.gradleProperty("sereaEmbeddedCore").orNull == "true"
 val embeddedCoreSignedDiagnostic = providers.gradleProperty("sereaEmbeddedCoreSignedDiagnostic").orNull == "true"
+
+// Local, disposable embedded-Core package per campaign on a persistent emulator.
+// Existing CI and product packages remain unchanged without explicit opt-in.
+val s1bCampaign = providers.gradleProperty("sereaEmbeddedCoreCampaign").orNull
+if (s1bCampaign != null) {
+    check(Regex("s1b[a-f0-9]{10}").matches(s1bCampaign)) {
+        "sereaEmbeddedCoreCampaign must match s1b plus ten lowercase hex digits."
+    }
+    check(embeddedCoreOptIn && embeddedCoreSignedDiagnostic && !ciBuild) {
+        "S1B campaign namespace requires local embedded Core + disposable signing opt-ins, never CI."
+    }
+}
+val s1bCampaignPackage = s1bCampaign?.let { "app.serea.android.isolated.$it" }
+// Local campaign signing reads the Owner-managed Keychain entry into memory only.
+// No password is accepted via project properties, command arguments, or files.
+fun s1bDiagnosticKeyStore(): File {
+    val configured = providers.environmentVariable("SEREA_S1B_DIAGNOSTIC_KEYSTORE").orNull
+        ?: error("S1B diagnostic keystore environment path is unavailable.")
+    val supplied = File(configured)
+    check(!Files.isSymbolicLink(supplied.toPath()) &&
+        Files.isRegularFile(supplied.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+        "S1B diagnostic keystore must be an existing regular file, not a symlink."
+    }
+    return supplied.canonicalFile
+}
+fun s1bDiagnosticKeychainPassword(): String {
+    check(System.getProperty("os.name") == "Mac OS X") { "S1B signing requires macOS Keychain." }
+    val process = ProcessBuilder(
+        "/usr/bin/security", "find-generic-password", "-s", "serea-s1b-diagnostic-2026",
+        "-a", System.getProperty("user.name"), "-w"
+    ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    val password = process.inputStream.bufferedReader().use { it.readText() }
+    check(process.waitFor() == 0) { "S1B diagnostic Keychain entry unavailable or access denied." }
+    val value = password.removeSuffix("\n").removeSuffix("\r")
+    check(value.isNotEmpty() && !value.contains('\n') && !value.contains('\r')) {
+        "S1B diagnostic Keychain entry is empty or malformed."
+    }
+    return value
+}
 check(!embeddedCoreSignedDiagnostic || embeddedCoreOptIn) { "Diagnostic signing requires sereaEmbeddedCore=true." }
+// Proposed local offline diagnostic lane; ordinary builds unchanged.
+val offlineDiagnostic = providers.gradleProperty("sereaEmbeddedCoreOffline").orNull == "true"
+check(!offlineDiagnostic || (embeddedCoreOptIn && embeddedCoreSignedDiagnostic &&
+    s1bCampaign != null && !ciBuild && gradle.startParameter.isOffline)) {
+    "Offline diagnostic requires local signed campaign and Gradle offline mode."
+}
+val offlineCargoTarget = if (offlineDiagnostic) {
+    providers.gradleProperty("sereaOfflineCargoTargetDir").orNull
+        ?: error("Missing reviewed offline Cargo target directory.")
+} else null
+val offlineRustToolchain = if (offlineDiagnostic) {
+    providers.gradleProperty("sereaOfflineRustToolchain").orNull
+        ?: error("Missing reviewed installed Rust toolchain.")
+} else null
+val reviewedOfflineCargoTarget = if (offlineDiagnostic) {
+    val cargoConfig = rootProject.projectDir.parentFile.resolve(".cargo/config.toml")
+    check(cargoConfig.isFile) { "Worktree-local .cargo/config.toml is required for offline S1B builds." }
+    var inBuildSection = false
+    val targetDirSettings = mutableListOf<String>()
+    cargoConfig.readLines().forEach { rawLine ->
+        val line = rawLine.substringBefore('#').trim()
+        if (line.startsWith("[")) {
+            inBuildSection = line == "[build]"
+        } else if (inBuildSection && line.startsWith("target-dir")) {
+            val value = Regex("""target-dir\s*=\s*"([^"]+)"""").matchEntire(line)?.groupValues?.get(1)
+            check(value != null) { "Worktree-local Cargo target-dir is malformed." }
+            targetDirSettings += value
+        }
+    }
+    check(targetDirSettings.size == 1) { "Worktree-local Cargo config must contain exactly one [build].target-dir." }
+    val rawConfiguredTarget = File(targetDirSettings.single())
+    val configuredOfflineTarget = (if (rawConfiguredTarget.isAbsolute) rawConfiguredTarget
+        else rootProject.projectDir.parentFile.resolve(rawConfiguredTarget)).canonicalFile
+    val requestedOfflineTarget = File(checkNotNull(offlineCargoTarget))
+    check(requestedOfflineTarget.canonicalFile == configuredOfflineTarget && configuredOfflineTarget.isDirectory) {
+        "Offline Cargo target must exactly match the existing worktree-local Cargo target directory."
+    }
+    configuredOfflineTarget
+} else null
+
+// A signed S1B invocation may only package the target/test APK pair. It cannot
+// install, connect, execute tests, or run any Android runtime task.
+val s1bSignedBuildOnlyTaskNames = setOf(
+    ":app:assembleIsolated",
+    ":app:assembleIsolatedAndroidTest",
+)
+if (offlineDiagnostic || embeddedCoreSignedDiagnostic) {
+    check(offlineDiagnostic && embeddedCoreSignedDiagnostic) {
+        "S1B offline packaging requires the isolated signed build-only lane."
+    }
+    check(requestedTaskNames.size == s1bSignedBuildOnlyTaskNames.size &&
+        requestedTaskNames.toSet() == s1bSignedBuildOnlyTaskNames) {
+        "S1B signed diagnostic permits only the isolated target/test APK assembly tasks."
+    }
+}
+
 val isolatedNativeRuntimeOptIn = providers.gradleProperty("sereaIsolatedNativeRuntime").orNull == "true"
 if (embeddedCoreOptIn && (isolatedNativeRuntimeOptIn || betaValidationHarness ||
         providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true")) {
@@ -103,6 +200,9 @@ android {
         } else {
             "app.serea.android.SereaIsolatedAndroidJUnitRunner"
         }
+        if (s1bCampaign != null) {
+            testInstrumentationRunnerArguments["sereaS1bCampaign"] = s1bCampaign
+        }
         buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
         buildConfigField("boolean", "OWNER_PRIVATE_BETA_GOOGLE_OAUTH_ENABLED", "false")
         buildConfigField("boolean", "PRIVATE_GOOGLE_AUTH_UI_ENABLED", "false")
@@ -124,11 +224,16 @@ android {
     signingConfigs {
         if (embeddedCoreSignedDiagnostic) {
             create("embeddedCoreDisposable") {
-                storeFile = rootProject.projectDir.parentFile.resolve("target/s1-android-home/diagnostic-only.p12")
+                check(s1bCampaign != null) { "Diagnostic signing requires an isolated campaign." }
+                check(!gradle.startParameter.isConfigurationCacheRequested) {
+                    "S1B diagnostic signing forbids configuration cache."
+                }
+                storeFile = s1bDiagnosticKeyStore()
                 storeType = "PKCS12"
-                storePassword = "synthetic-only"
-                keyAlias = "synthetic-diagnostic"
-                keyPassword = "synthetic-only"
+                val secret = s1bDiagnosticKeychainPassword()
+                storePassword = secret
+                keyAlias = "serea-s1b-diagnostic-2026"
+                keyPassword = secret
             }
         }
         if (updateTestSigningInputsReady) {
@@ -151,7 +256,8 @@ android {
             initWith(getByName("debug"))
             // Instrumentation's process-death harness uses `run-as` to inspect this app's
             // private database, so the disposable isolated target must remain debuggable.
-            applicationIdSuffix = ".isolated"
+            applicationIdSuffix = if (s1bCampaign == null) ".isolated" else ".isolated.$s1bCampaign"
+            manifestPlaceholders["sereaS1bCampaignPackage"] = s1bCampaignPackage ?: "disabled"
             // Signing is a separate explicit diagnostic-only opt-in using a disposable local key.
             if (embeddedCoreOptIn) signingConfig = if (embeddedCoreSignedDiagnostic) {
                 signingConfigs.getByName("embeddedCoreDisposable")
@@ -209,7 +315,7 @@ android {
         // application ID and therefore a separate app-private DB/Preferences area.
         getByName("isolated") {
             java.srcDir("src/debug/java")
-            manifest.srcFile("src/isolated/AndroidManifest.xml")
+            manifest.srcFile(if (s1bCampaign == null) "src/isolated/AndroidManifest.xml" else "src/s1bCampaign/AndroidManifest.xml")
         }
         if (embeddedCoreOptIn) {
             getByName("isolated") {
@@ -218,6 +324,10 @@ android {
                 jniLibs.srcDir(layout.buildDirectory.dir("generated/embeddedCore/jniLibs"))
             }
             getByName("androidTest") { java.srcDir("src/embeddedCoreAndroidTest/java") }
+            if (s1bCampaign != null) {
+                getByName("androidTest").manifest.srcFile("src/s1bCampaignAndroidTest/AndroidManifest.xml")
+            }
+            getByName("testIsolated") { java.srcDir("src/embeddedCoreUnitTest/java") }
         }
         if (isolatedNativeRuntimeOptIn) {
             // JNI ownership smoke tests are compiled only for the explicit native
@@ -272,8 +382,19 @@ if (embeddedCoreOptIn) {
         environment("PATH", safePath)
         environment("TMPDIR", System.getProperty("java.io.tmpdir"))
         environment("ANDROID_NDK_HOME", ndkHome)
-        environment("CARGO_BUILD_JOBS", "2")
-        commandLine("cargo", "ndk", "-t", "x86_64", "-t", "arm64-v8a", "-P", "26", "-o", buildDir.get().dir("jniLibs").asFile.absolutePath, "build", "-p", "serea-android-bridge", "--locked")
+        environment("CARGO_BUILD_JOBS", if (offlineDiagnostic) "1" else "2")
+        if (offlineDiagnostic) {
+            environment("CARGO_NET_OFFLINE", "true")
+            environment("CARGO_TARGET_DIR", checkNotNull(reviewedOfflineCargoTarget).absolutePath)
+            environment("RUSTUP_TOOLCHAIN", checkNotNull(offlineRustToolchain))
+        }
+        val cargoArgs = mutableListOf("cargo", "ndk", "-t", "x86_64", "-t", "arm64-v8a", "-P", "26", "-o", buildDir.get().dir("jniLibs").asFile.absolutePath, "build", "-p", "serea-android-bridge", "--locked")
+        if (offlineDiagnostic) cargoArgs.add("--offline")
+        commandLine(cargoArgs)
+        if (offlineDiagnostic) {
+            outputs.dir(buildDir.map { it.dir("jniLibs") })
+            outputs.upToDateWhen { false }
+        }
     }
     val bindings = tasks.register<Exec>("generateEmbeddedCoreBindings") {
         dependsOn(rustBuild)
@@ -294,10 +415,37 @@ if (embeddedCoreOptIn) {
             }
         }
         commandLine(generator.absolutePath, "generate", "--library", buildDir.get().file("jniLibs/x86_64/libserea_android_bridge.so").asFile.absolutePath, "--language", "kotlin", "--out-dir", buildDir.get().dir("kotlin").asFile.absolutePath, "--no-format")
+        if (offlineDiagnostic) {
+            inputs.file(generator)
+            inputs.file(buildDir.map { it.file("jniLibs/x86_64/libserea_android_bridge.so") })
+            outputs.dir(buildDir.map { it.dir("kotlin") })
+            outputs.upToDateWhen { false }
+        }
     }
     tasks.configureEach {
         if (name == "preIsolatedBuild") dependsOn(bindings)
     }
+}
+
+if (offlineDiagnostic || embeddedCoreSignedDiagnostic) {
+    gradle.taskGraph.addTaskExecutionGraphListener(
+        object : org.gradle.api.execution.TaskExecutionGraphListener {
+            override fun graphPopulated(graph: org.gradle.api.execution.TaskExecutionGraph) {
+                val requested = graph.allTasks.map { it.path }.toSet()
+                check(s1bSignedBuildOnlyTaskNames.all { it in requested }) {
+                    "S1B signed diagnostic build graph omitted an APK assembly task."
+                }
+                val runtimeTasks = graph.allTasks.filter { task ->
+                    val name = task.name.lowercase()
+                    name.startsWith("install") || name.startsWith("uninstall") ||
+                        name.startsWith("connected") || name.startsWith("device") || name.startsWith("test")
+                }
+                check(runtimeTasks.isEmpty()) {
+                    "S1B signed diagnostic build-only graph contains runtime tasks: ${runtimeTasks.map { it.path }}"
+                }
+            }
+        },
+    )
 }
 
 tasks.register("verifyLocalNativeRuntimeVariantIsolation") {
@@ -335,7 +483,10 @@ val copyIsolatedBaselineProfileAssets = tasks.register<Copy>("copyIsolatedBaseli
     }
 }
 android.sourceSets.getByName("isolated").assets.srcDir(isolatedBaselineProfileAssetDir)
-tasks.matching { it.name == "mergeIsolatedAssets" }.configureEach {
+tasks.matching {
+    it.name == "mergeIsolatedAssets" || it.name.contains("Isolated") &&
+        (it.name.startsWith("lint") || it.name.contains("Lint"))
+}.configureEach {
     dependsOn(copyIsolatedBaselineProfileAssets)
 }
 
@@ -437,7 +588,13 @@ dependencies {
     add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")
 }
 
-ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+ksp {
+    // Seed historical schemas into the private build directory before a diagnostic build.
+    // Actual KSP execution and schema completeness must be independently verified.
+    arg("room.schemaLocation", if (offlineDiagnostic)
+        layout.buildDirectory.dir("room-schemas").get().asFile.absolutePath
+    else "$projectDir/schemas")
+}
 
 dependencyLocking {
     if (embeddedCoreOptIn) lockFile = file("gradle-embedded-core.lockfile")
